@@ -34,7 +34,7 @@ Stop when you feel confident in being able to describe the facts of the goal out
 
 ### 3. Fact Sheet
 
-A fact is a simple description that describes the outcome of a goal. It should be easily testable and verifiable. May describe the function of a specific feature or aspect of a system. They describe UI and UX. Again, literally anything that can be tested and verified in automated or manual testing ways. Keep fact language simple. In a way, it's a design spec, but less verbose.
+A fact is a simple description of each outcome of a goal. It should be easily testable and verifiable. May describe the function of a specific feature or aspect of a system. They describe UI and UX. Again, literally anything that can be tested and verified in automated or manual testing ways. Keep fact language simple. In a way, it's a design spec, but less verbose.
 
 Create the goal directory and write `goals/<slug>/facts.md` — a flat list of bulleted facts. Each fact is one line. Add a minimal note only when the fact can't be stated clearly on its own.
 
