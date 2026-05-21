@@ -1,0 +1,228 @@
+/**
+ * Tests for detectSchema — TECH §2.1.
+ *
+ * Acceptance gate (per ID-20.7 PLAN):
+ *   "detectSchema unit tests cover all 3 known values + unknown rejection."
+ *
+ * Three-way schema discrimination:
+ *   - "Knowledge Hub Task List" → TaskListSchema parse → { kind: 'task-list', data }
+ *   - "Knowledge Hub Roadmap"   → RoadmapSchema parse  → { kind: 'roadmap', data }
+ *   - "Product Backlog"          → BacklogSchema parse  → { kind: 'backlog', data }
+ *   - Anything else (including unparseable input)        → { kind: 'unknown', documentName }
+ *
+ * PRODUCT inv 4 asymmetry: BacklogSchema.document_name is z.string().min(1)
+ * (not a z.literal), so detectSchema matches on the canonical VALUE
+ * "Product Backlog", not on schema field shape.
+ */
+import { describe, expect, test } from "bun:test";
+import { detectSchema } from "./detect-schema";
+
+// ── Minimal fixtures matching the vendored schemas ────────────────────────────
+
+const minimalTaskList = {
+  document_name: "Knowledge Hub Task List",
+  document_purpose: "Active + recently-closed structured work — Taskmaster JSON shape.",
+  last_updated: "kh-prod-readiness-S63 representative fixture",
+  related_documents: [],
+  tasks: [
+    {
+      id: "20",
+      title: "Per-Task .md mirror generator + render surface",
+      description: "Outer task description.",
+      status: "in_progress",
+      priority: "must",
+      dependencies: [],
+      subtasks: [],
+      updatedAt: "2026-05-21T15:30:00.000Z",
+      effort_estimate: "~2-3h",
+      owner: "Engineering",
+      priority_note: null,
+      status_note: null,
+      cross_doc_links: [],
+      session_refs: [],
+      commit_refs: [],
+    },
+  ],
+};
+
+const minimalRoadmap = {
+  document_name: "Knowledge Hub Roadmap",
+  document_purpose: "Forward-looking roadmap of Knowledge Hub phases and themes.",
+  date: "2026-05-21",
+  status: "Active",
+  forward_looking_only: true,
+  related_documents: [],
+  last_updated: "kh-prod-readiness-S63 representative fixture",
+  sections: [
+    {
+      id: "1",
+      parent_id: null,
+      number: "1",
+      title: "Foundation",
+      narrative: null,
+      spec_links: [],
+      owner: "Engineering",
+      table_columns: "item_desc_owner_effort_status",
+      items: [],
+    },
+  ],
+};
+
+const minimalBacklog = {
+  document_name: "Product Backlog",
+  document_purpose: "Forward-looking backlog of unscheduled work items.",
+  last_updated: "kh-prod-readiness-S63 representative fixture",
+  related_documents: [],
+  items: [
+    {
+      id: "1",
+      description: "Backlog item description.",
+      type: "feature",
+      status: "spec_needed",
+      effort_estimate: null,
+      priority: "should",
+      track: "platform",
+      dependencies: [],
+      session_refs: [],
+      commit_refs: [],
+      cross_doc_links: [],
+      notes: null,
+    },
+  ],
+};
+
+describe("detectSchema — known document_name values", () => {
+  test("routes 'Knowledge Hub Task List' to task-list kind with parsed data", () => {
+    const result = detectSchema(minimalTaskList);
+    expect(result.kind).toBe("task-list");
+    if (result.kind === "task-list") {
+      expect(result.data.document_name).toBe("Knowledge Hub Task List");
+      expect(result.data.tasks).toHaveLength(1);
+      expect(result.data.tasks[0].id).toBe("20");
+    }
+  });
+
+  test("routes 'Knowledge Hub Roadmap' to roadmap kind with parsed data", () => {
+    const result = detectSchema(minimalRoadmap);
+    expect(result.kind).toBe("roadmap");
+    if (result.kind === "roadmap") {
+      expect(result.data.document_name).toBe("Knowledge Hub Roadmap");
+      expect(result.data.sections).toHaveLength(1);
+    }
+  });
+
+  test("routes 'Product Backlog' to backlog kind with parsed data (value match, not schema literal)", () => {
+    const result = detectSchema(minimalBacklog);
+    expect(result.kind).toBe("backlog");
+    if (result.kind === "backlog") {
+      expect(result.data.document_name).toBe("Product Backlog");
+      expect(result.data.items).toHaveLength(1);
+    }
+  });
+});
+
+describe("detectSchema — unknown / invalid input", () => {
+  test("returns { kind: 'unknown' } with non-canonical document_name preserved", () => {
+    const result = detectSchema({ document_name: "Some Other Document" });
+    expect(result.kind).toBe("unknown");
+    if (result.kind === "unknown") {
+      expect(result.documentName).toBe("Some Other Document");
+    }
+  });
+
+  test("returns { kind: 'unknown', documentName: null } when document_name missing", () => {
+    const result = detectSchema({ some_other_field: "value" });
+    expect(result.kind).toBe("unknown");
+    if (result.kind === "unknown") {
+      expect(result.documentName).toBeNull();
+    }
+  });
+
+  test("returns { kind: 'unknown', documentName: null } when document_name is non-string", () => {
+    const result = detectSchema({ document_name: 42 });
+    expect(result.kind).toBe("unknown");
+    if (result.kind === "unknown") {
+      expect(result.documentName).toBeNull();
+    }
+  });
+
+  test("returns { kind: 'unknown', documentName: null } when input is null", () => {
+    const result = detectSchema(null);
+    expect(result.kind).toBe("unknown");
+    if (result.kind === "unknown") {
+      expect(result.documentName).toBeNull();
+    }
+  });
+
+  test("returns { kind: 'unknown', documentName: null } when input is not an object", () => {
+    const result = detectSchema("a string");
+    expect(result.kind).toBe("unknown");
+    if (result.kind === "unknown") {
+      expect(result.documentName).toBeNull();
+    }
+  });
+
+  test("throws ZodError when document_name matches Task List but body fails schema", () => {
+    // Per TECH §2.1: detectSchema runs the full schema parse on a match.
+    // Schema failures throw ZodError per inv 48 (formatted ZodError + non-zero exit).
+    expect(() =>
+      detectSchema({
+        document_name: "Knowledge Hub Task List",
+        // missing required fields
+      }),
+    ).toThrow();
+  });
+
+  test("throws ZodError when document_name matches Roadmap but body fails schema", () => {
+    expect(() =>
+      detectSchema({
+        document_name: "Knowledge Hub Roadmap",
+        // missing required fields
+      }),
+    ).toThrow();
+  });
+
+  test("throws ZodError when document_name matches Backlog value but body fails schema", () => {
+    expect(() =>
+      detectSchema({
+        document_name: "Product Backlog",
+        // missing required fields
+      }),
+    ).toThrow();
+  });
+});
+
+describe("detectSchema — discriminated union narrowing", () => {
+  test("task-list branch exposes typed TaskList data", () => {
+    const result = detectSchema(minimalTaskList);
+    if (result.kind === "task-list") {
+      // Type narrowing: result.data is typed as TaskList.
+      const firstTask = result.data.tasks[0];
+      expect(firstTask.priority).toBe("must");
+      expect(firstTask.owner).toBe("Engineering");
+    } else {
+      throw new Error("Expected task-list kind");
+    }
+  });
+
+  test("roadmap branch exposes typed Roadmap data", () => {
+    const result = detectSchema(minimalRoadmap);
+    if (result.kind === "roadmap") {
+      const firstSection = result.data.sections[0];
+      expect(firstSection.table_columns).toBe("item_desc_owner_effort_status");
+    } else {
+      throw new Error("Expected roadmap kind");
+    }
+  });
+
+  test("backlog branch exposes typed BacklogDocument data", () => {
+    const result = detectSchema(minimalBacklog);
+    if (result.kind === "backlog") {
+      const firstItem = result.data.items[0];
+      expect(firstItem.type).toBe("feature");
+      expect(firstItem.priority).toBe("should");
+    } else {
+      throw new Error("Expected backlog kind");
+    }
+  });
+});
