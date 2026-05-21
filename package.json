@@ -16,7 +16,7 @@
   "bugs": {
     "url": "https://github.com/liam-jons/task-view/issues"
   },
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": ["apps/*", "packages/*", "tests"],
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit -p packages/shared/tsconfig.json && tsc --noEmit -p packages/server/tsconfig.json && tsc --noEmit -p packages/ui/tsconfig.json && tsc --noEmit -p packages/schemas/tsconfig.json"

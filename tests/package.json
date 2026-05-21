@@ -1,0 +1,23 @@
+{
+  "name": "@task-view/tests",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Cross-package integration tests for task-view (PLAN §20.10 acceptance gate + future end-to-end suites).",
+  "scripts": {
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@task-view/schemas": "workspace:*",
+    "@task-view/ui": "workspace:*",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "typescript": "~5.8.2"
+  }
+}
