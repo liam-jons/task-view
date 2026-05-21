@@ -4,7 +4,8 @@
  * PRODUCT inv 7 (frontmatter + description + Subtasks + nav strip),
  *              8 (Subtask block: frontmatter + description + testStrategy
  *                 + details + journal styling),
- *              9 (empty Subtasks → `_No subtasks._`),
+ *              9 (empty Subtasks → italic "No subtasks." per Markdown
+ *                 shorthand `_No subtasks._` in spec),
  *              10 (CommonMark + GFM floor — delegated to MarkdownBody),
  *              11 (cross-doc-link broken-target marker),
  *              12 (Task dependency broken-target + page-top warning),
@@ -208,8 +209,12 @@ export const TaskListView: React.FC<{
       >
         <h2>Subtasks</h2>
         {task.subtasks.length === 0 ? (
+          // PRODUCT inv 9 — `_No subtasks._` is Markdown-italic shorthand;
+          // surface as <em>No subtasks.</em> with no literal underscores
+          // in the rendered DOM. (S63 WP5c Checker Finding-1 Option A
+          // ratification.)
           <p className="record-view-empty-subtasks" data-empty-subtasks>
-            <em>_No subtasks._</em>
+            <em>No subtasks.</em>
           </p>
         ) : (
           task.subtasks.map((subtask) => (

@@ -154,7 +154,7 @@ describe("PRODUCT inv 15 (per-section page: frontmatter + narrative + spec_links
 
 // ── PRODUCT inv 17 ────────────────────────────────────────────────────────────
 
-describe("PRODUCT inv 17 (empty section → `_No items in this section._`)", () => {
+describe("PRODUCT inv 17 (empty section → italic 'No items in this section.')", () => {
   test("renders the italic placeholder when items array is empty", () => {
     const section = mkSection({ items: [] });
     const ledger = buildLedgerContext({ roadmap: mkRoadmap([section]) });
@@ -162,7 +162,12 @@ describe("PRODUCT inv 17 (empty section → `_No items in this section._`)", () 
       <RoadmapSectionView section={section} ledger={ledger} nav={NAV} />,
     );
     expect(html).toContain("data-empty-section");
-    expect(html).toContain("_No items in this section._");
+    // S63 WP5c Finding-1 Option A regression: rendered DOM must contain
+    // an <em>No items in this section.</em> with no literal underscore
+    // characters (the spec's `_..._` shorthand denotes Markdown italics,
+    // not literal underscores in display).
+    expect(html).toMatch(/<em>No items in this section\.<\/em>/);
+    expect(html).not.toContain("_No items in this section._");
     // Items section heading still rendered (the section is NOT omitted)
     expect(html).toMatch(/<h2[^>]*>Items<\/h2>/);
   });

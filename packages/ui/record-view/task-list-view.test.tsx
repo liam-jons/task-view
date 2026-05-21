@@ -217,7 +217,7 @@ describe("PRODUCT inv 8 (Subtask block: frontmatter + description + testStrategy
 
 // ── PRODUCT inv 9 ─────────────────────────────────────────────────────────────
 
-describe("PRODUCT inv 9 (empty Subtasks → `_No subtasks._`)", () => {
+describe("PRODUCT inv 9 (empty Subtasks → italic 'No subtasks.')", () => {
   test("renders the italic placeholder when subtasks array is empty", () => {
     const task = mkTask({ subtasks: [] });
     const ledger = buildLedgerContext({ tasks: [task] });
@@ -228,7 +228,12 @@ describe("PRODUCT inv 9 (empty Subtasks → `_No subtasks._`)", () => {
     expect(html).toMatch(/<h2[^>]*>Subtasks<\/h2>/);
     // Empty-state marker present
     expect(html).toContain("data-empty-subtasks");
-    expect(html).toContain("_No subtasks._");
+    // S63 WP5c Finding-1 Option A regression: rendered DOM must contain
+    // an <em>No subtasks.</em> with no literal underscore characters
+    // (the spec's `_..._` shorthand denotes Markdown italics, not literal
+    // underscores in display).
+    expect(html).toMatch(/<em>No subtasks\.<\/em>/);
+    expect(html).not.toContain("_No subtasks._");
   });
 });
 

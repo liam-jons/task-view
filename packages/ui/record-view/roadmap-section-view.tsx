@@ -6,7 +6,9 @@
  *              page selected from that index.
  *              15 (per-section: frontmatter + narrative + spec_links +
  *              items table),
- *              17 (empty section → `_No items in this section._`),
+ *              17 (empty section → italic "No items in this section."
+ *                  per Markdown shorthand `_No items in this section._`
+ *                  in spec),
  *              19 (forward_looking_only honoured: no shipped-framing UI).
  * TECH §4.1 RecordFrontmatterCard (Roadmap), §4.2 Roadmap column.
  */
@@ -101,11 +103,15 @@ export const RoadmapSectionView: React.FC<{
       >
         <h2>Items</h2>
         {section.items.length === 0 ? (
+          // PRODUCT inv 17 — `_No items in this section._` is Markdown-
+          // italic shorthand; surface as <em>No items in this section.</em>
+          // with no literal underscores in the rendered DOM. (S63 WP5c
+          // Checker Finding-1 Option A ratification.)
           <p
             className="record-view-empty-section"
             data-empty-section
           >
-            <em>_No items in this section._</em>
+            <em>No items in this section.</em>
           </p>
         ) : (
           <ItemsTable
