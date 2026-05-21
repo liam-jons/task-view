@@ -70,6 +70,7 @@
         "@radix-ui/react-popover": "^1.1.15",
         "@radix-ui/react-tooltip": "^1.2.8",
         "@tanstack/react-table": "^8.21.3",
+        "@task-view/schemas": "workspace:*",
         "@task-view/shared": "workspace:*",
         "@viz-js/viz": "^3.25.0",
         "diff": "^8.0.3",
