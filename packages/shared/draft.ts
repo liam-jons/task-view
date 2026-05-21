@@ -1,7 +1,7 @@
 /**
  * Draft Storage
  *
- * Persists annotation drafts to ~/.plannotator/drafts/ so they survive
+ * Persists annotation drafts to ~/.task-view/drafts/ so they survive
  * server crashes. Each draft is keyed by a content hash of the plan/diff
  * it was created against.
  *
@@ -17,7 +17,7 @@ import { createHash } from "crypto";
  * Get the drafts directory, creating it if needed.
  */
 export function getDraftDir(): string {
-  const dir = join(homedir(), ".plannotator", "drafts");
+  const dir = join(homedir(), ".task-view", "drafts");
   mkdirSync(dir, { recursive: true });
   return dir;
 }

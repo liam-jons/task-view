@@ -9,7 +9,7 @@ import { isRemoteSession, getServerHostname, getServerPort } from "./remote";
 
 // Save and restore env between tests
 const savedEnv: Record<string, string | undefined> = {};
-const envKeys = ["PLANNOTATOR_REMOTE", "PLANNOTATOR_PORT", "SSH_TTY", "SSH_CONNECTION"];
+const envKeys = ["TASK_VIEW_REMOTE", "TASK_VIEW_PORT", "SSH_TTY", "SSH_CONNECTION"];
 
 function clearEnv() {
   for (const key of envKeys) {
@@ -34,40 +34,40 @@ describe("isRemoteSession", () => {
     expect(isRemoteSession()).toBe(false);
   });
 
-  test("true when PLANNOTATOR_REMOTE=1", () => {
+  test("true when TASK_VIEW_REMOTE=1", () => {
     clearEnv();
-    process.env.PLANNOTATOR_REMOTE = "1";
+    process.env.TASK_VIEW_REMOTE = "1";
     expect(isRemoteSession()).toBe(true);
   });
 
-  test("true when PLANNOTATOR_REMOTE=true", () => {
+  test("true when TASK_VIEW_REMOTE=true", () => {
     clearEnv();
-    process.env.PLANNOTATOR_REMOTE = "true";
+    process.env.TASK_VIEW_REMOTE = "true";
     expect(isRemoteSession()).toBe(true);
   });
 
-  test("false when PLANNOTATOR_REMOTE=0", () => {
+  test("false when TASK_VIEW_REMOTE=0", () => {
     clearEnv();
-    process.env.PLANNOTATOR_REMOTE = "0";
+    process.env.TASK_VIEW_REMOTE = "0";
     expect(isRemoteSession()).toBe(false);
   });
 
-  test("false when PLANNOTATOR_REMOTE=false", () => {
+  test("false when TASK_VIEW_REMOTE=false", () => {
     clearEnv();
-    process.env.PLANNOTATOR_REMOTE = "false";
+    process.env.TASK_VIEW_REMOTE = "false";
     expect(isRemoteSession()).toBe(false);
   });
 
-  test("PLANNOTATOR_REMOTE=false overrides SSH_TTY", () => {
+  test("TASK_VIEW_REMOTE=false overrides SSH_TTY", () => {
     clearEnv();
-    process.env.PLANNOTATOR_REMOTE = "false";
+    process.env.TASK_VIEW_REMOTE = "false";
     process.env.SSH_TTY = "/dev/pts/0";
     expect(isRemoteSession()).toBe(false);
   });
 
-  test("PLANNOTATOR_REMOTE=0 overrides SSH_CONNECTION", () => {
+  test("TASK_VIEW_REMOTE=0 overrides SSH_CONNECTION", () => {
     clearEnv();
-    process.env.PLANNOTATOR_REMOTE = "0";
+    process.env.TASK_VIEW_REMOTE = "0";
     process.env.SSH_CONNECTION = "192.168.1.1 12345 192.168.1.2 22";
     expect(isRemoteSession()).toBe(false);
   });
@@ -93,45 +93,45 @@ describe("getServerPort", () => {
 
   test("returns 19432 for remote session", () => {
     clearEnv();
-    process.env.PLANNOTATOR_REMOTE = "1";
+    process.env.TASK_VIEW_REMOTE = "1";
     expect(getServerPort()).toBe(19432);
   });
 
-  test("returns 0 when PLANNOTATOR_REMOTE=false overrides SSH", () => {
+  test("returns 0 when TASK_VIEW_REMOTE=false overrides SSH", () => {
     clearEnv();
-    process.env.PLANNOTATOR_REMOTE = "false";
+    process.env.TASK_VIEW_REMOTE = "false";
     process.env.SSH_TTY = "/dev/pts/0";
     expect(getServerPort()).toBe(0);
   });
 
-  test("explicit PLANNOTATOR_PORT overrides everything", () => {
+  test("explicit TASK_VIEW_PORT overrides everything", () => {
     clearEnv();
-    process.env.PLANNOTATOR_PORT = "8080";
+    process.env.TASK_VIEW_PORT = "8080";
     expect(getServerPort()).toBe(8080);
   });
 
   test("explicit port overrides remote default", () => {
     clearEnv();
-    process.env.PLANNOTATOR_REMOTE = "1";
-    process.env.PLANNOTATOR_PORT = "3000";
+    process.env.TASK_VIEW_REMOTE = "1";
+    process.env.TASK_VIEW_PORT = "3000";
     expect(getServerPort()).toBe(3000);
   });
 
   test("ignores invalid port (falls back to default)", () => {
     clearEnv();
-    process.env.PLANNOTATOR_PORT = "not-a-number";
+    process.env.TASK_VIEW_PORT = "not-a-number";
     expect(getServerPort()).toBe(0);
   });
 
   test("ignores out-of-range port", () => {
     clearEnv();
-    process.env.PLANNOTATOR_PORT = "99999";
+    process.env.TASK_VIEW_PORT = "99999";
     expect(getServerPort()).toBe(0);
   });
 
   test("ignores zero port", () => {
     clearEnv();
-    process.env.PLANNOTATOR_PORT = "0";
+    process.env.TASK_VIEW_PORT = "0";
     expect(getServerPort()).toBe(0);
   });
 });
@@ -144,7 +144,7 @@ describe("getServerHostname", () => {
 
   test("returns all interfaces for remote sessions", () => {
     clearEnv();
-    process.env.PLANNOTATOR_REMOTE = "1";
+    process.env.TASK_VIEW_REMOTE = "1";
     expect(getServerHostname()).toBe("0.0.0.0");
   });
 });

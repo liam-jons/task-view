@@ -9,7 +9,7 @@
  * Add new settings here. Cookie-only settings omit serverKey.
  */
 
-import type { DiffLineBgIntensity } from '@plannotator/shared/config';
+import type { DiffLineBgIntensity } from '@task-view/shared/config';
 import { storage } from '../utils/storage';
 import { generateIdentity } from '../utils/generateIdentity';
 

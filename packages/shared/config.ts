@@ -1,7 +1,7 @@
 /**
- * Plannotator Config
+ * task-view Config
  *
- * Reads/writes ~/.plannotator/config.json for persistent user settings.
+ * Reads/writes ~/.task-view/config.json for persistent user settings.
  * Runtime-agnostic: uses only node:fs, node:os, node:child_process.
  */
 
@@ -95,7 +95,7 @@ export function mergePromptConfig(
   return result as PromptConfig;
 }
 
-export interface PlannotatorConfig {
+export interface TaskViewConfig {
   displayName?: string;
   diffOptions?: DiffOptions;
   prompts?: PromptConfig;
@@ -112,13 +112,13 @@ export interface PlannotatorConfig {
   verifyAttestation?: boolean;
   /**
    * Enable Jina Reader for URL-to-markdown conversion during annotation.
-   * When true (default), `plannotator annotate <url>` routes through
+   * When true (default), `task-view annotate <url>` routes through
    * r.jina.ai for better JS-rendered page support and reader-mode extraction.
    * Set to false to always use plain fetch + Turndown.
    */
   jina?: boolean;
   /**
-   * Inject a Plannotator Flavored Markdown reminder into every EnterPlanMode
+   * Inject a Task-View Flavored Markdown reminder into every EnterPlanMode
    * call so the agent is aware it can enrich plans with code-file links,
    * callouts, tables, diagrams, task lists, and the other PFM extensions.
    * Read by the `improve-context` PreToolUse handler. Default: false.
@@ -126,30 +126,30 @@ export interface PlannotatorConfig {
   pfmReminder?: boolean;
 }
 
-const CONFIG_DIR = join(homedir(), ".plannotator");
+const CONFIG_DIR = join(homedir(), ".task-view");
 const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 
 /**
- * Load config from ~/.plannotator/config.json.
+ * Load config from ~/.task-view/config.json.
  * Returns {} on missing file or malformed JSON.
  */
-export function loadConfig(): PlannotatorConfig {
+export function loadConfig(): TaskViewConfig {
   try {
     if (!existsSync(CONFIG_PATH)) return {};
     const raw = readFileSync(CONFIG_PATH, "utf-8");
     const parsed = JSON.parse(raw);
     return typeof parsed === "object" && parsed !== null ? parsed : {};
   } catch (e) {
-    process.stderr.write(`[plannotator] Warning: failed to read config.json: ${e}\n`);
+    process.stderr.write(`[task-view] Warning: failed to read config.json: ${e}\n`);
     return {};
   }
 }
 
 /**
  * Save config by merging partial values into the existing file.
- * Creates ~/.plannotator/ directory if needed.
+ * Creates ~/.task-view/ directory if needed.
  */
-export function saveConfig(partial: Partial<PlannotatorConfig>): void {
+export function saveConfig(partial: Partial<TaskViewConfig>): void {
   try {
     const current = loadConfig();
     const mergedDiffOptions = (current.diffOptions || partial.diffOptions)
@@ -165,7 +165,7 @@ export function saveConfig(partial: Partial<PlannotatorConfig>): void {
     mkdirSync(CONFIG_DIR, { recursive: true });
     writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2) + "\n", "utf-8");
   } catch (e) {
-    process.stderr.write(`[plannotator] Warning: failed to write config.json: ${e}\n`);
+    process.stderr.write(`[task-view] Warning: failed to write config.json: ${e}\n`);
   }
 }
 
@@ -206,7 +206,7 @@ export function getServerConfig(gitUser: string | null): {
 /**
  * Read the user's preferred default diff type from config, falling back to 'unstaged'.
  */
-export function resolveDefaultDiffType(cfg?: PlannotatorConfig): DefaultDiffType {
+export function resolveDefaultDiffType(cfg?: TaskViewConfig): DefaultDiffType {
   const v = cfg?.diffOptions?.defaultDiffType as string | undefined;
   if (v === 'branch') return 'merge-base';
   return v === 'uncommitted' || v === 'unstaged' || v === 'staged' || v === 'merge-base' || v === 'all' ? v : 'unstaged';
@@ -218,7 +218,7 @@ export function resolveDefaultDiffType(cfg?: PlannotatorConfig): DefaultDiffType
  * Priority (highest wins):
  *   --no-jina CLI flag  →  PLANNOTATOR_JINA env var  →  config.jina  →  default true
  */
-export function resolveUseJina(cliNoJina: boolean, config: PlannotatorConfig): boolean {
+export function resolveUseJina(cliNoJina: boolean, config: TaskViewConfig): boolean {
   // CLI flag has highest priority
   if (cliNoJina) return false;
 

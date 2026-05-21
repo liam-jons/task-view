@@ -9,7 +9,7 @@ import {
   resolveCodeNav,
   validateCodeNavRequest,
   extractChangedFiles,
-} from "@plannotator/shared/code-nav";
+} from "@task-view/shared/code-nav";
 
 export type { CodeNavRequest, CodeNavResponse };
 

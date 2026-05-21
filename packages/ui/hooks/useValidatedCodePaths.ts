@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { extractCandidateCodePaths } from "@plannotator/shared/extract-code-paths";
+import { extractCandidateCodePaths } from "@task-view/shared/extract-code-paths";
 
 export type ValidationEntry =
 	| { status: "found"; resolved: string }

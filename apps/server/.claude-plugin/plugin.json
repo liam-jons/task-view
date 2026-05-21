@@ -1,10 +1,10 @@
 {
-  "name": "plannotator",
-  "description": "Interactive Plan Review: Mark up and refine your plans using a UI, easily share for team collaboration, automatically integrates with plan mode hooks.",
-  "version": "0.19.18",
+  "name": "task-view",
+  "description": "Browser viewer + editor for Knowledge Hub-style task / roadmap / backlog ledger JSON files. The actual /task-view slash command + manifest details land in ID-20.11.",
+  "version": "0.1.0-task-view-prep",
   "author": {
-    "name": "backnotprop"
+    "name": "Knowledge Hub team"
   },
-  "repository": "https://github.com/backnotprop/plannotator",
-  "keywords": ["planning", "review", "hooks", "ExitPlanMode", "collaboration"]
+  "repository": "https://github.com/liam-jons/task-view",
+  "keywords": ["task-list", "roadmap", "backlog", "ledger", "json", "view", "edit"]
 }

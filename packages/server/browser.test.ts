@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { shouldTryRemoteBrowserFallback } from "./browser";
 
 const savedEnv: Record<string, string | undefined> = {};
-const envKeys = ["PLANNOTATOR_BROWSER", "BROWSER"];
+const envKeys = ["TASK_VIEW_BROWSER", "BROWSER"];
 
 function clearEnv() {
   for (const key of envKeys) {
@@ -38,9 +38,9 @@ describe("shouldTryRemoteBrowserFallback", () => {
     expect(shouldTryRemoteBrowserFallback(true)).toBe(false);
   });
 
-  test("false for remote sessions with PLANNOTATOR_BROWSER configured", () => {
+  test("false for remote sessions with TASK_VIEW_BROWSER configured", () => {
     clearEnv();
-    process.env.PLANNOTATOR_BROWSER = "/usr/bin/browser";
+    process.env.TASK_VIEW_BROWSER = "/usr/bin/browser";
     expect(shouldTryRemoteBrowserFallback(true)).toBe(false);
   });
 });

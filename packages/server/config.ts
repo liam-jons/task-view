@@ -3,6 +3,6 @@ export {
   saveConfig,
   detectGitUser,
   getServerConfig,
-  type PlannotatorConfig,
+  type TaskViewConfig,
   type DiffOptions,
-} from "@plannotator/shared/config";
+} from "@task-view/shared/config";

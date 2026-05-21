@@ -3,8 +3,8 @@
  *
  * The real SPA lands in ID-20.9 (read mode) + ID-20.10 (edit mode). For
  * Subtask 20.6 (fork prep) this is a stub so the Vite build target still
- * has a valid mount point; the deleted `@plannotator/editor` import that
- * lived here has been removed.
+ * has a valid mount point; the deleted upstream `@plannotator/editor`
+ * import that lived here has been removed.
  */
 import React from 'react';
 import ReactDOM from 'react-dom/client';

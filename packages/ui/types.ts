@@ -200,16 +200,9 @@ export interface VaultNode {
   children?: VaultNode[];
 }
 
-export type { EditorAnnotation } from '@plannotator/shared/types';
-
-export type {
-  ExternalAnnotationEvent,
-} from '@plannotator/shared/external-annotation';
-
-export type {
-  AgentJobInfo,
-  AgentJobEvent,
-  AgentJobStatus,
-  AgentCapability,
-  AgentCapabilities,
-} from '@plannotator/shared/agent-jobs';
+// The upstream Plannotator re-exported EditorAnnotation /
+// ExternalAnnotationEvent / AgentJob* types from @plannotator/shared
+// here. The §1.2 strip removed those modules (annotation pipeline
+// stripped). When ID-20.9 / 20.10 author the record-edit surface, the
+// task-view-specific patch types land alongside their consumers, not in
+// this barrel.

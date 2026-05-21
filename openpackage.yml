@@ -1,8 +1,8 @@
-name: plannotator
-version: 0.19.18
-description: Annotate Claude Code and other agent plans and review code visually. Share with your team, and send feedback to your agent with one click
-author: backnotprop
+name: task-view
+version: 0.1.0-task-view-prep
+description: Browser viewer + editor for Knowledge Hub-style workflow ledgers (task-list / roadmap / backlog JSON). Per-record markdown mirrors + patch server + CLI + Claude plugin.
+author: Knowledge Hub team
 license: MIT/Apache2.0
 
 includes:
-  - apps/hook/**/*
+  - apps/server/**/*

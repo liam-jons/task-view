@@ -18,8 +18,9 @@ import {
  *
  * Upstream Plannotator's shortcut tests asserted plan-review, annotate,
  * and code-review shortcut registries that lived in the deleted
- * `@plannotator/editor` and `@plannotator/review-editor` workspace
- * packages. task-view's actual shortcut scopes (Tab / Enter / Esc /
+ * upstream `@plannotator/editor` and `@plannotator/review-editor`
+ * workspace packages (removed by the §1.2 strip ledger). task-view's
+ * actual shortcut scopes (Tab / Enter / Esc /
  * Cmd+Enter per PRODUCT inv 53) are defined in ID-20.9 / ID-20.10
  * alongside the viewer surface. This file retains the framework-level
  * tests so the formatter/dispatcher/validator helpers stay regression-

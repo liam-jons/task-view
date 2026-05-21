@@ -7,11 +7,11 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
 
-const IPC_REGISTRY = path.join(os.homedir(), ".plannotator", "vscode-ipc.json");
+const IPC_REGISTRY = path.join(os.homedir(), ".task-view", "vscode-ipc.json");
 
 /**
  * Try opening URL via VS Code extension IPC registry.
- * Falls back when env vars (PLANNOTATOR_BROWSER) aren't available to the process.
+ * Falls back when env vars (TASK_VIEW_BROWSER) aren't available to the process.
  */
 async function tryVscodeIpc(url: string): Promise<boolean> {
   try {
@@ -69,14 +69,14 @@ export async function isWSL(): Promise<boolean> {
 /**
  * Open a URL in the browser
  *
- * Uses PLANNOTATOR_BROWSER env var if set, otherwise uses system default.
+ * Uses TASK_VIEW_BROWSER env var if set, otherwise uses system default.
  * - macOS: Set to app name ("Google Chrome") or path ("/Applications/Firefox.app")
  * - Linux/Windows/WSL: Set to executable path ("/usr/bin/firefox")
  *
  * Fails silently if browser can't be opened
  */
 export function shouldTryRemoteBrowserFallback(isRemote: boolean): boolean {
-  return isRemote && !process.env.PLANNOTATOR_BROWSER && !process.env.BROWSER;
+  return isRemote && !process.env.TASK_VIEW_BROWSER && !process.env.BROWSER;
 }
 
 export async function openBrowser(
@@ -84,7 +84,7 @@ export async function openBrowser(
   options?: { isRemote?: boolean }
 ): Promise<boolean> {
   try {
-    const browser = process.env.PLANNOTATOR_BROWSER || process.env.BROWSER;
+    const browser = process.env.TASK_VIEW_BROWSER || process.env.BROWSER;
     if (shouldTryRemoteBrowserFallback(options?.isRemote ?? false)) {
       const openedViaIpc = await tryVscodeIpc(url);
       if (openedViaIpc) {
@@ -96,15 +96,15 @@ export async function openBrowser(
     const wsl = await isWSL();
 
     if (browser) {
-      const plannotatorBrowser = process.env.PLANNOTATOR_BROWSER;
-      if (plannotatorBrowser && platform === "darwin") {
-        if (plannotatorBrowser.includes("/") && !plannotatorBrowser.endsWith(".app")) {
-          await $`${plannotatorBrowser} ${url}`.quiet();
+      const taskViewBrowser = process.env.TASK_VIEW_BROWSER;
+      if (taskViewBrowser && platform === "darwin") {
+        if (taskViewBrowser.includes("/") && !taskViewBrowser.endsWith(".app")) {
+          await $`${taskViewBrowser} ${url}`.quiet();
         } else {
-          await $`open -a ${plannotatorBrowser} ${url}`.quiet();
+          await $`open -a ${taskViewBrowser} ${url}`.quiet();
         }
-      } else if ((platform === "win32" || wsl) && plannotatorBrowser) {
-        await $`cmd.exe /c start "" ${plannotatorBrowser} ${url}`.quiet();
+      } else if ((platform === "win32" || wsl) && taskViewBrowser) {
+        await $`cmd.exe /c start "" ${taskViewBrowser} ${url}`.quiet();
       } else {
         await $`${browser} ${url}`.quiet();
       }

@@ -3,7 +3,6 @@ import { Block } from "../types";
 import { InlineMarkdown } from "./InlineMarkdown";
 import { ListMarker } from "./ListMarker";
 import { CodeBlock } from "./blocks/CodeBlock";
-import { HtmlBlock } from "./blocks/HtmlBlock";
 import { Callout } from "./blocks/Callout";
 import { AlertBlock } from "./blocks/AlertBlock";
 import { TableBlock } from "./blocks/TableBlock";
@@ -135,7 +134,11 @@ export const BlockRenderer: React.FC<{
       return <hr className="border-border/30 my-8" data-block-id={block.id} />;
 
     case 'html':
-      return <HtmlBlock block={block} imageBaseDir={imageBaseDir} onOpenLinkedDoc={onOpenLinkedDoc} onOpenCodeFile={onOpenCodeFile} onNavigateAnchor={onNavigateAnchor} />;
+      // HtmlBlock was removed in the §1.2 strip (annotation-coupled
+      // path-validation + ImageThumbnail deps). ID-20.9 wires a
+      // task-view-shaped HTML renderer if mirror frontmatter ever
+      // surfaces raw HTML — currently mirrors are CommonMark + YAML.
+      return <pre className="text-xs text-muted-foreground" data-block-id={block.id}>{block.content}</pre>;
 
     case 'directive': {
       const kind = block.directiveKind || 'note';

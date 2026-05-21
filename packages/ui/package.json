@@ -17,7 +17,6 @@
   "dependencies": {
     "@pierre/diffs": "^1.1.12",
     "@task-view/shared": "workspace:*",
-    "@plannotator/web-highlighter": "^0.8.1",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-popover": "^1.1.15",
     "@radix-ui/react-tooltip": "^1.2.8",
