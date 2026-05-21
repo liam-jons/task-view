@@ -25,10 +25,7 @@ import { resolveMirrorDir } from "./mirror-generator";
 import type {
   BacklogItem,
 } from "@task-view/schemas/backlog";
-import type {
-  Roadmap,
-  RoadmapSection,
-} from "@task-view/schemas/roadmap";
+import type { Roadmap } from "@task-view/schemas/roadmap";
 import type { Task } from "@task-view/schemas/task-list";
 
 export type LedgerKindExceptUnknown = Exclude<
@@ -169,5 +166,3 @@ function escapePipe(s: string): string {
   return s.replace(/\|/g, "\\|");
 }
 
-// Re-export `RoadmapSection` to satisfy lint when only types are used.
-export type { RoadmapSection };

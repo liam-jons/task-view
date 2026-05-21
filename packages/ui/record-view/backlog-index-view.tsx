@@ -17,10 +17,7 @@
  */
 import React from "react";
 import type { BacklogItem } from "@task-view/schemas/backlog";
-import {
-  BacklogItemType,
-  BacklogStatus,
-} from "@task-view/schemas/backlog";
+import { BacklogStatus } from "@task-view/schemas/backlog";
 import { Priority } from "@task-view/schemas/work-status";
 import { backlogItemHref } from "./anchors";
 import {

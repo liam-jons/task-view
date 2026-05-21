@@ -17,10 +17,7 @@ import type {
   RoadmapItem,
   RoadmapSection,
 } from "@task-view/schemas/roadmap";
-import {
-  MaybeCrossDocLink,
-  PageTopWarning,
-} from "./broken-target";
+import { MaybeCrossDocLink } from "./broken-target";
 import { NavStrip } from "./nav-strip";
 import {
   RecordFrontmatterCard,
@@ -268,8 +265,3 @@ function columnsForColumnSet(
 // Re-exported for any external code (e.g. roadmap-item-view) that wants
 // to use the same column descriptors.
 export { columnsForColumnSet };
-
-// Silence unused-import warning — PageTopWarning is exported here for the
-// roadmap-item-view; the section view itself has no aggregated missing
-// list at this level.
-export { PageTopWarning };
