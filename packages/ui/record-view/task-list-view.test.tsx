@@ -1,0 +1,353 @@
+/**
+ * task-list-view.test.tsx — verifies Task-list mode rendering against
+ * PRODUCT inv 7-13 (covers TECH §4.1, §4.2 Task-list column, §4.4, §4.5).
+ *
+ * Maps to TECH "Testing and validation" table rows:
+ *   - inv 7 → tests/integration/task-list-render.test.ts
+ *   - inv 8 → tests/integration/subtask-block.test.ts
+ *   - inv 9 → tests/integration/empty-subtasks.test.ts
+ *   - inv 12 → tests/integration/dependency-links.test.ts
+ *   - inv 13 → tests/integration/sibling-subtask-deps.test.ts
+ *
+ * Colocated here per repo convention (packages/ui/utils/*.test.ts).
+ */
+import { describe, expect, test } from "bun:test";
+import { renderToStaticMarkup } from "react-dom/server";
+import type { Subtask, Task } from "@task-view/schemas/task-list";
+import { buildLedgerContext, type NavStripData } from "./types";
+import { TaskListView } from "./task-list-view";
+
+// ── Fixtures ──────────────────────────────────────────────────────────────────
+
+const NAV: NavStripData = {
+  prevHref: null,
+  prevLabel: null,
+  nextHref: "/record/ID-21",
+  nextLabel: "ID-21",
+  indexHref: "/",
+  indexLabel: "Back to ledger index",
+};
+
+const mkSubtask = (overrides: Partial<Subtask> = {}): Subtask => ({
+  id: 1,
+  title: "Subtask title",
+  description: "Subtask description.",
+  status: "pending",
+  dependencies: [],
+  details: "Details body.",
+  testStrategy: "Acceptance prose.",
+  updatedAt: "2026-05-21T15:30:00.000Z",
+  ...overrides,
+});
+
+const mkTask = (overrides: Partial<Task> = {}): Task => ({
+  id: "20",
+  title: "Task title",
+  description: "Task description.",
+  status: "in_progress",
+  priority: "must",
+  dependencies: [],
+  subtasks: [mkSubtask()],
+  updatedAt: "2026-05-21T15:30:00.000Z",
+  effort_estimate: "~2h",
+  owner: "Engineering",
+  priority_note: null,
+  status_note: null,
+  cross_doc_links: [],
+  session_refs: ["kh-prod-readiness-S63"],
+  commit_refs: ["abc1234"],
+  ...overrides,
+});
+
+// ── PRODUCT inv 7 ─────────────────────────────────────────────────────────────
+
+describe("PRODUCT inv 7 (Task-list mode: frontmatter + description + Subtasks + nav strip)", () => {
+  test("renders all required frontmatter rows + body + nav strip", () => {
+    const task = mkTask();
+    const ledger = buildLedgerContext({ tasks: [task] });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    // Title heading
+    expect(html).toContain("ID-20: Task title");
+    // Frontmatter rows (per inv 7)
+    expect(html).toContain('data-frontmatter-row="status"');
+    expect(html).toContain('data-frontmatter-row="priority"');
+    expect(html).toContain('data-frontmatter-row="effort_estimate"');
+    expect(html).toContain('data-frontmatter-row="owner"');
+    expect(html).toContain('data-frontmatter-row="updated"');
+    expect(html).toContain('data-frontmatter-row="session_refs"');
+    expect(html).toContain('data-frontmatter-row="commit_refs"');
+    expect(html).toContain('data-frontmatter-row="dependencies"');
+    expect(html).toContain('data-frontmatter-row="cross_doc_links"');
+    // Description body present
+    expect(html).toContain("Task description");
+    // Subtasks section heading
+    expect(html).toMatch(/<h2[^>]*>Subtasks<\/h2>/);
+    // Nav strip present
+    expect(html).toContain("data-nav-strip");
+  });
+
+  test("renders commit refs as GitHub links when githubBaseUrl is provided", () => {
+    const task = mkTask({ commit_refs: ["abc1234", "def5678"] });
+    const ledger = buildLedgerContext({ tasks: [task] });
+    const html = renderToStaticMarkup(
+      <TaskListView
+        task={task}
+        ledger={ledger}
+        nav={NAV}
+        githubBaseUrl="https://github.com/example/repo"
+      />,
+    );
+    expect(html).toContain(
+      'href="https://github.com/example/repo/commit/abc1234"',
+    );
+    expect(html).toContain('data-commit-ref="abc1234"');
+    expect(html).toContain(
+      'href="https://github.com/example/repo/commit/def5678"',
+    );
+  });
+
+  test("renders commit refs as plain code when no GitHub URL", () => {
+    const task = mkTask({ commit_refs: ["abc1234"] });
+    const ledger = buildLedgerContext({ tasks: [task] });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain("<code>abc1234</code>");
+    expect(html).not.toContain("github.com");
+  });
+
+  test("renders priority_note and status_note when populated", () => {
+    const task = mkTask({
+      priority_note: "Bumped to Must in S62.",
+      status_note: "Waiting on review feedback.",
+    });
+    const ledger = buildLedgerContext({ tasks: [task] });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain("Priority note:");
+    expect(html).toContain("Bumped to Must");
+    expect(html).toContain("Status note:");
+    expect(html).toContain("Waiting on review");
+    expect(html).toContain("data-priority-note");
+    expect(html).toContain("data-status-note");
+  });
+
+  test("omits priority_note / status_note paragraphs when null", () => {
+    const task = mkTask({ priority_note: null, status_note: null });
+    const ledger = buildLedgerContext({ tasks: [task] });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).not.toContain("data-priority-note");
+    expect(html).not.toContain("data-status-note");
+  });
+});
+
+// ── PRODUCT inv 8 ─────────────────────────────────────────────────────────────
+
+describe("PRODUCT inv 8 (Subtask block: frontmatter + description + testStrategy + details + journal)", () => {
+  test("renders each Subtask as a level-3 heading with ID prefix + frontmatter", () => {
+    const task = mkTask({
+      subtasks: [
+        mkSubtask({ id: 1, title: "First sub" }),
+        mkSubtask({ id: 2, title: "Second sub" }),
+      ],
+    });
+    const ledger = buildLedgerContext({ tasks: [task] });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain('<h3>ID-20.1: First sub</h3>');
+    expect(html).toContain('<h3>ID-20.2: Second sub</h3>');
+    expect(html).toContain('data-subtask-id="1"');
+    expect(html).toContain('data-subtask-id="2"');
+    expect(html).toContain('id="subtask-1"');
+    expect(html).toContain('id="subtask-2"');
+  });
+
+  test("renders Subtask testStrategy when non-null", () => {
+    const task = mkTask({
+      subtasks: [mkSubtask({ testStrategy: "Must pass X." })],
+    });
+    const ledger = buildLedgerContext({ tasks: [task] });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain("Test strategy:");
+    expect(html).toContain("Must pass X");
+    expect(html).toContain("data-test-strategy");
+  });
+
+  test("omits Test-strategy paragraph when null", () => {
+    const task = mkTask({
+      subtasks: [mkSubtask({ testStrategy: null })],
+    });
+    const ledger = buildLedgerContext({ tasks: [task] });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).not.toContain("data-test-strategy");
+  });
+
+  test("renders details body verbatim with journal-block visual distinction", () => {
+    const task = mkTask({
+      subtasks: [
+        mkSubtask({
+          details:
+            "Pre-journal.\n\n<info added on 2026-05-21T15:00:00.000Z>\nShipped.\n</info added on 2026-05-21T15:00:00.000Z>",
+        }),
+      ],
+    });
+    const ledger = buildLedgerContext({ tasks: [task] });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain("Pre-journal");
+    expect(html).toContain('data-segment="prose"');
+    expect(html).toContain('data-segment="journal"');
+    expect(html).toContain('data-journal-timestamp="2026-05-21T15:00:00.000Z"');
+    expect(html).toContain("Shipped");
+    // The "Journal" label is visible
+    expect(html).toContain("Journal");
+  });
+});
+
+// ── PRODUCT inv 9 ─────────────────────────────────────────────────────────────
+
+describe("PRODUCT inv 9 (empty Subtasks → `_No subtasks._`)", () => {
+  test("renders the italic placeholder when subtasks array is empty", () => {
+    const task = mkTask({ subtasks: [] });
+    const ledger = buildLedgerContext({ tasks: [task] });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    // The Subtasks section is NOT omitted (per inv 9 last sentence)
+    expect(html).toMatch(/<h2[^>]*>Subtasks<\/h2>/);
+    // Empty-state marker present
+    expect(html).toContain("data-empty-subtasks");
+    expect(html).toContain("_No subtasks._");
+  });
+});
+
+// ── PRODUCT inv 12 ────────────────────────────────────────────────────────────
+
+describe("PRODUCT inv 12 (Task dependency links + missing-target + page-top warning)", () => {
+  test("live deps render as links to ID-{depId}.md", () => {
+    const a = mkTask({ id: "20", dependencies: ["19"] });
+    const b = mkTask({ id: "19" });
+    const ledger = buildLedgerContext({ tasks: [a, b] });
+    const html = renderToStaticMarkup(
+      <TaskListView task={a} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain('href="ID-19.md"');
+    expect(html).toContain(">ID-19<");
+    // No page-top warning when all deps are live
+    expect(html).not.toContain("data-page-top-warning");
+  });
+
+  test("missing deps render with '(missing)' marker + page-top warning", () => {
+    const a = mkTask({ id: "20", dependencies: ["19", "999"] });
+    const live = mkTask({ id: "19" });
+    const ledger = buildLedgerContext({ tasks: [a, live] });
+    const html = renderToStaticMarkup(
+      <TaskListView task={a} ledger={ledger} nav={NAV} />,
+    );
+    // Live dep is a link
+    expect(html).toContain('href="ID-19.md"');
+    // Missing dep has strikethrough + "(missing)" suffix
+    expect(html).toContain("(missing)");
+    expect(html).toContain("line-through");
+    // Page-top warning lists the missing id
+    expect(html).toContain("data-page-top-warning");
+    expect(html).toContain("ID-999");
+  });
+});
+
+// ── PRODUCT inv 13 ────────────────────────────────────────────────────────────
+
+describe("PRODUCT inv 13 (sibling-Subtask deps → in-page anchor)", () => {
+  test("sibling deps render as #subtask-{id} fragment links", () => {
+    const task = mkTask({
+      subtasks: [
+        mkSubtask({ id: 1, dependencies: [] }),
+        mkSubtask({ id: 2, dependencies: [1] }),
+      ],
+    });
+    const ledger = buildLedgerContext({ tasks: [task] });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    // The dep link href is the in-page anchor
+    expect(html).toContain('href="#subtask-1"');
+    // Label shows ID-20.1
+    expect(html).toContain(">ID-20.1<");
+    // The Subtask 1 block carries the matching anchor id
+    expect(html).toContain('id="subtask-1"');
+  });
+
+  test("stray cross-Task dep renders with '(missing)' marker", () => {
+    // Schema's superRefine would reject this in normal validation, but the
+    // renderer must defensively flag any sibling id not in the parent.
+    const task = mkTask({
+      subtasks: [
+        mkSubtask({ id: 1, dependencies: [99] }), // 99 is not a sibling
+      ],
+    });
+    const ledger = buildLedgerContext({ tasks: [task] });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain("ID-20.99");
+    expect(html).toContain("(missing)");
+    expect(html).toContain("line-through");
+  });
+});
+
+// ── PRODUCT inv 11 ────────────────────────────────────────────────────────────
+
+describe("PRODUCT inv 11 (cross-doc-link rendering + broken-target marker)", () => {
+  test("renders live cross-doc link when path is in existingPaths", () => {
+    const task = mkTask({
+      cross_doc_links: [
+        {
+          path: "docs/specs/foo.md",
+          anchor: null,
+          raw: "foo spec",
+        },
+      ],
+    });
+    const ledger = buildLedgerContext({
+      tasks: [task],
+      existingPaths: new Set(["docs/specs/foo.md"]),
+    });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain('href="docs/specs/foo.md"');
+    expect(html).toContain(">foo spec<");
+  });
+
+  test("renders missing cross-doc link with '(missing target)' marker", () => {
+    const task = mkTask({
+      cross_doc_links: [
+        {
+          path: "docs/specs/missing.md",
+          anchor: null,
+          raw: "missing spec",
+        },
+      ],
+    });
+    const ledger = buildLedgerContext({
+      tasks: [task],
+      existingPaths: new Set(["docs/specs/foo.md"]),
+    });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain("(missing target)");
+    expect(html).toContain("line-through");
+  });
+});
