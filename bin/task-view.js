@@ -4,10 +4,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const repoRoot = path.resolve(path.dirname(__filename), "..");
-const sourceEntry = path.join(repoRoot, "apps", "hook", "server", "index.ts");
+const sourceEntry = path.join(repoRoot, "apps", "server", "index.ts");
 
 if (!fs.existsSync(sourceEntry)) {
-  console.error(`Could not find Plannotator source entry at ${sourceEntry}`);
+  console.error(`Could not find task-view source entry at ${sourceEntry}`);
   process.exit(1);
 }
 

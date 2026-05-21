@@ -1,5 +1,5 @@
 {
-  "name": "@plannotator/shared",
+  "name": "@task-view/shared",
   "version": "0.0.1",
   "private": true,
   "exports": {

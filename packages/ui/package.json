@@ -1,5 +1,5 @@
 {
-  "name": "@plannotator/ui",
+  "name": "@task-view/ui",
   "version": "0.0.1",
   "type": "module",
   "exports": {
@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@pierre/diffs": "^1.1.12",
-    "@plannotator/shared": "workspace:*",
+    "@task-view/shared": "workspace:*",
     "@plannotator/web-highlighter": "^0.8.1",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-popover": "^1.1.15",
