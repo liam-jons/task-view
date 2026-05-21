@@ -1,6 +1,4 @@
 import { describe, expect, it } from 'bun:test';
-import { annotateSettingsShortcutRegistry, planEditorShortcuts, planReviewSettingsShortcutRegistry } from '../editor/shortcuts';
-import { reviewSettingsShortcutRegistry } from '../review-editor/shortcuts';
 import {
   createShortcutRegistry,
   defineShortcutScope,
@@ -15,7 +13,20 @@ import {
   validateShortcutRegistry,
 } from './shortcuts';
 
-describe('shortcuts', () => {
+/**
+ * Tests for the shortcut framework (core + runtime).
+ *
+ * Upstream Plannotator's shortcut tests asserted plan-review, annotate,
+ * and code-review shortcut registries that lived in the deleted
+ * `@plannotator/editor` and `@plannotator/review-editor` workspace
+ * packages. task-view's actual shortcut scopes (Tab / Enter / Esc /
+ * Cmd+Enter per PRODUCT inv 53) are defined in ID-20.9 / ID-20.10
+ * alongside the viewer surface. This file retains the framework-level
+ * tests so the formatter/dispatcher/validator helpers stay regression-
+ * guarded across the fork.
+ */
+
+describe('shortcuts framework', () => {
   it('formats bindings for docs and keycaps', () => {
     expect(formatShortcutBindingText('Mod+Enter')).toBe('Cmd/Ctrl+Enter');
     expect(formatShortcutBindingText('Alt hold')).toBe('Hold Alt');
@@ -66,45 +77,6 @@ describe('shortcuts', () => {
     expect(() => createShortcutRegistry([duplicateScope, duplicateScope])).toThrow();
   });
 
-  it('lists plan review, annotate, and review sections from assembled registries', () => {
-    const planReviewSections = listRegistryShortcutSections(planReviewSettingsShortcutRegistry);
-    const annotateSections = listRegistryShortcutSections(annotateSettingsShortcutRegistry);
-    const reviewSections = listRegistryShortcutSections(reviewSettingsShortcutRegistry);
-
-    expect(planReviewSections.map(section => section.title)).toEqual([
-      'Actions',
-      'Input Method',
-      'Annotations',
-      'Image Annotator',
-    ]);
-
-    expect(annotateSections.map(section => section.title)).toEqual([
-      'Actions',
-      'Input Method',
-      'Annotations',
-      'Image Annotator',
-    ]);
-
-    expect(getShortcut(planReviewSettingsShortcutRegistry, 'plan-review-editor-settings', 'submitPlan')?.description).toBe('Approve / Send feedback');
-    expect(getShortcut(planReviewSettingsShortcutRegistry, 'plan-review-editor-settings', 'submitAnnotations')).toBeUndefined();
-    expect(getShortcut(annotateSettingsShortcutRegistry, 'annotate-editor-settings', 'submitAnnotations')?.description).toBe('Send annotations');
-    expect(getShortcut(annotateSettingsShortcutRegistry, 'annotate-editor-settings', 'submitPlan')).toBeUndefined();
-
-    expect(reviewSections.map(section => section.title)).toEqual([
-      'Actions',
-      'Search',
-      'Layout',
-      'File Actions',
-      'File Navigation',
-      'All-Files View',
-      'Annotations',
-      'Suggestion Editor',
-      'AI Assistant',
-      'PR Comments',
-      'Tour',
-    ]);
-  });
-
   it('matches normalized runtime bindings', () => {
     const submitEvent = { key: 'Enter', ctrlKey: true, metaKey: false, shiftKey: false, altKey: false, code: 'Enter' } as KeyboardEvent;
     const reverseSearchEvent = { key: 'F3', ctrlKey: false, metaKey: false, shiftKey: true, altKey: false, code: 'F3' } as KeyboardEvent;
@@ -122,45 +94,33 @@ describe('shortcuts', () => {
   });
 
   it('dispatches matching registry actions', () => {
+    const submitScope = defineShortcutScope({
+      id: 'submit-scope',
+      title: 'Submit',
+      shortcuts: {
+        submitPlan: {
+          description: 'Submit plan',
+          bindings: ['Mod+Enter'],
+          section: 'Actions',
+        },
+        quickSave: {
+          description: 'Quick save',
+          bindings: ['Mod+S'],
+          section: 'Actions',
+        },
+      },
+    });
+
     const calls: string[] = [];
     const event = { key: 'Enter', ctrlKey: true, metaKey: false, shiftKey: false, altKey: false } as KeyboardEvent;
 
-    const handled = dispatchShortcutEvent(planReviewSettingsShortcutRegistry[0], {
+    const handled = dispatchShortcutEvent(submitScope, {
       submitPlan: () => calls.push('submitPlan'),
       quickSave: () => calls.push('quickSave'),
     }, event);
 
     expect(handled).toBe(true);
     expect(calls).toEqual(['submitPlan']);
-  });
-
-  it('can dispatch annotate submit after plan submit declines the same binding', () => {
-    const calls: string[] = [];
-    const event = {
-      key: 'Enter',
-      ctrlKey: true,
-      metaKey: false,
-      shiftKey: false,
-      altKey: false,
-      preventDefault: () => calls.push('preventDefault'),
-    } as unknown as KeyboardEvent;
-
-    const handled = dispatchShortcutEvent(planEditorShortcuts, {
-      submitPlan: {
-        when: () => false,
-        handle: () => calls.push('submitPlan'),
-      },
-      submitAnnotations: {
-        when: () => true,
-        handle: () => {
-          event.preventDefault();
-          calls.push('submitAnnotations');
-        },
-      },
-    }, event);
-
-    expect(handled).toBe(true);
-    expect(calls).toEqual(['preventDefault', 'submitAnnotations']);
   });
 
   it('supports guarded handlers and continues after a failed guard', () => {
@@ -213,8 +173,8 @@ describe('shortcuts', () => {
     expect(parseDoubleTapBinding('Shift Shift')).toBe('Shift');
     expect(parseDoubleTapBinding('Alt hold')).toBeNull();
     expect(parseDoubleTapBinding('Mod+Enter')).toBeNull();
-    expect(parseDoubleTapBinding('Alt Shift')).toBeNull(); // different keys
-    expect(parseDoubleTapBinding('Alt+Shift Alt+Shift')).toBeNull(); // multi-key groups
+    expect(parseDoubleTapBinding('Alt Shift')).toBeNull();
+    expect(parseDoubleTapBinding('Alt+Shift Alt+Shift')).toBeNull();
   });
 
   it('matches key names for sequential binding support', () => {
@@ -267,5 +227,30 @@ describe('shortcuts', () => {
 
     expect(handled).toBe(false);
     expect(preventDefaultCalls).toBe(0);
+  });
+
+  it('lists registry sections from a scope', () => {
+    const scope = defineShortcutScope({
+      id: 'list-sections',
+      title: 'List sections',
+      shortcuts: {
+        save: {
+          description: 'Save',
+          bindings: ['Mod+S'],
+          section: 'Actions',
+        },
+        zoom: {
+          description: 'Zoom in',
+          bindings: ['Mod+='],
+          section: 'View',
+        },
+      },
+    });
+
+    const sections = listRegistryShortcutSections([scope]);
+    const titles = sections.map(section => section.title);
+    expect(titles).toContain('Actions');
+    expect(titles).toContain('View');
+    expect(getShortcut([scope], 'list-sections', 'save')?.description).toBe('Save');
   });
 });

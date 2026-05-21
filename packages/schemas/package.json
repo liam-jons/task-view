@@ -1,0 +1,16 @@
+{
+  "name": "@task-view/schemas",
+  "version": "0.1.0-task-view-prep",
+  "private": true,
+  "type": "module",
+  "description": "Vendored Knowledge Hub ledger Zod schemas (task-list / roadmap / backlog / work-status). Frozen copies — see CONTRIBUTING.md for re-vendoring procedure.",
+  "exports": {
+    "./task-list": "./src/task-list-schema.ts",
+    "./roadmap": "./src/roadmap-schema.ts",
+    "./backlog": "./src/backlog-schema.ts",
+    "./work-status": "./src/work-status.ts"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  }
+}
