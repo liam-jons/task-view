@@ -4,7 +4,7 @@
  * Each SettingDef describes:
  *   - defaultValue: fallback (can be a lazy factory for expensive defaults)
  *   - fromCookie/toCookie: serialization to/from cookie storage
- *   - serverKey + fromServer/toServer: opt-in sync to ~/.plannotator/config.json
+ *   - serverKey + fromServer/toServer: opt-in sync to ~/.task-view/config.json
  *
  * Add new settings here. Cookie-only settings omit serverKey.
  */
@@ -31,8 +31,8 @@ export interface SettingDef<T> {
 export const SETTINGS = {
   displayName: {
     defaultValue: () => generateIdentity(),
-    fromCookie: () => storage.getItem('plannotator-identity') || undefined,
-    toCookie: (v: string) => storage.setItem('plannotator-identity', v),
+    fromCookie: () => storage.getItem('task-view-identity') || undefined,
+    toCookie: (v: string) => storage.setItem('task-view-identity', v),
     serverKey: 'displayName',
     fromServer: (sc: Record<string, unknown>) =>
       typeof sc.displayName === 'string' && sc.displayName ? sc.displayName : undefined,
@@ -44,11 +44,11 @@ export const SETTINGS = {
   defaultDiffType: {
     defaultValue: 'unstaged' as 'uncommitted' | 'unstaged' | 'staged' | 'merge-base' | 'all',
     fromCookie: () => {
-      const v = storage.getItem('plannotator-default-diff-type');
+      const v = storage.getItem('task-view-default-diff-type');
       if (v === 'branch') return 'merge-base' as const;
       return v === 'uncommitted' || v === 'unstaged' || v === 'staged' || v === 'merge-base' || v === 'all' ? v : undefined;
     },
-    toCookie: (v: string) => storage.setItem('plannotator-default-diff-type', v),
+    toCookie: (v: string) => storage.setItem('task-view-default-diff-type', v),
     serverKey: 'diffOptions',
     fromServer: (sc: Record<string, unknown>) => {
       const v = (sc.diffOptions as Record<string, unknown> | undefined)?.defaultDiffType;
@@ -61,10 +61,10 @@ export const SETTINGS = {
   diffStyle: {
     defaultValue: 'split' as 'split' | 'unified',
     fromCookie: () => {
-      const v = storage.getItem('plannotator-diff-style') ?? storage.getItem('review-diff-style');
+      const v = storage.getItem('task-view-diff-style') ?? storage.getItem('review-diff-style');
       return v === 'split' || v === 'unified' ? v : undefined;
     },
-    toCookie: (v: string) => storage.setItem('plannotator-diff-style', v),
+    toCookie: (v: string) => storage.setItem('task-view-diff-style', v),
     serverKey: 'diffOptions',
     fromServer: (sc: Record<string, unknown>) => {
       const v = (sc.diffOptions as Record<string, unknown> | undefined)?.diffStyle;
@@ -76,10 +76,10 @@ export const SETTINGS = {
   diffOverflow: {
     defaultValue: 'scroll' as 'scroll' | 'wrap',
     fromCookie: () => {
-      const v = storage.getItem('plannotator-diff-overflow');
+      const v = storage.getItem('task-view-diff-overflow');
       return v === 'scroll' || v === 'wrap' ? v : undefined;
     },
-    toCookie: (v: string) => storage.setItem('plannotator-diff-overflow', v),
+    toCookie: (v: string) => storage.setItem('task-view-diff-overflow', v),
     serverKey: 'diffOptions',
     fromServer: (sc: Record<string, unknown>) => {
       const v = (sc.diffOptions as Record<string, unknown> | undefined)?.overflow;
@@ -91,10 +91,10 @@ export const SETTINGS = {
   diffIndicators: {
     defaultValue: 'bars' as 'bars' | 'classic' | 'none',
     fromCookie: () => {
-      const v = storage.getItem('plannotator-diff-indicators');
+      const v = storage.getItem('task-view-diff-indicators');
       return v === 'bars' || v === 'classic' || v === 'none' ? v : undefined;
     },
-    toCookie: (v: string) => storage.setItem('plannotator-diff-indicators', v),
+    toCookie: (v: string) => storage.setItem('task-view-diff-indicators', v),
     serverKey: 'diffOptions',
     fromServer: (sc: Record<string, unknown>) => {
       const v = (sc.diffOptions as Record<string, unknown> | undefined)?.diffIndicators;
@@ -106,10 +106,10 @@ export const SETTINGS = {
   diffLineDiffType: {
     defaultValue: 'word-alt' as 'word-alt' | 'word' | 'char' | 'none',
     fromCookie: () => {
-      const v = storage.getItem('plannotator-diff-line-diff-type');
+      const v = storage.getItem('task-view-diff-line-diff-type');
       return v === 'word-alt' || v === 'word' || v === 'char' || v === 'none' ? v : undefined;
     },
-    toCookie: (v: string) => storage.setItem('plannotator-diff-line-diff-type', v),
+    toCookie: (v: string) => storage.setItem('task-view-diff-line-diff-type', v),
     serverKey: 'diffOptions',
     fromServer: (sc: Record<string, unknown>) => {
       const v = (sc.diffOptions as Record<string, unknown> | undefined)?.lineDiffType;
@@ -121,10 +121,10 @@ export const SETTINGS = {
   diffShowLineNumbers: {
     defaultValue: true as boolean,
     fromCookie: () => {
-      const v = storage.getItem('plannotator-diff-show-line-numbers');
+      const v = storage.getItem('task-view-diff-show-line-numbers');
       return v === 'true' ? true : v === 'false' ? false : undefined;
     },
-    toCookie: (v: boolean) => storage.setItem('plannotator-diff-show-line-numbers', String(v)),
+    toCookie: (v: boolean) => storage.setItem('task-view-diff-show-line-numbers', String(v)),
     serverKey: 'diffOptions',
     fromServer: (sc: Record<string, unknown>) => {
       const v = (sc.diffOptions as Record<string, unknown> | undefined)?.showLineNumbers;
@@ -136,10 +136,10 @@ export const SETTINGS = {
   diffShowBackground: {
     defaultValue: true as boolean,
     fromCookie: () => {
-      const v = storage.getItem('plannotator-diff-show-background');
+      const v = storage.getItem('task-view-diff-show-background');
       return v === 'true' ? true : v === 'false' ? false : undefined;
     },
-    toCookie: (v: boolean) => storage.setItem('plannotator-diff-show-background', String(v)),
+    toCookie: (v: boolean) => storage.setItem('task-view-diff-show-background', String(v)),
     serverKey: 'diffOptions',
     fromServer: (sc: Record<string, unknown>) => {
       const v = (sc.diffOptions as Record<string, unknown> | undefined)?.showDiffBackground;
@@ -150,8 +150,8 @@ export const SETTINGS = {
 
   diffFontFamily: {
     defaultValue: '' as string, // empty = theme default
-    fromCookie: () => storage.getItem('plannotator-diff-font-family') || undefined,
-    toCookie: (v: string) => storage.setItem('plannotator-diff-font-family', v),
+    fromCookie: () => storage.getItem('task-view-diff-font-family') || undefined,
+    toCookie: (v: string) => storage.setItem('task-view-diff-font-family', v),
     serverKey: 'diffOptions',
     fromServer: (sc: Record<string, unknown>) => {
       const v = (sc.diffOptions as Record<string, unknown> | undefined)?.fontFamily;
@@ -163,10 +163,10 @@ export const SETTINGS = {
   diffHideWhitespace: {
     defaultValue: false as boolean,
     fromCookie: () => {
-      const v = storage.getItem('plannotator-diff-hide-whitespace');
+      const v = storage.getItem('task-view-diff-hide-whitespace');
       return v === 'true' ? true : v === 'false' ? false : undefined;
     },
-    toCookie: (v: boolean) => storage.setItem('plannotator-diff-hide-whitespace', String(v)),
+    toCookie: (v: boolean) => storage.setItem('task-view-diff-hide-whitespace', String(v)),
     serverKey: 'diffOptions',
     fromServer: (sc: Record<string, unknown>) => {
       const v = (sc.diffOptions as Record<string, unknown> | undefined)?.hideWhitespace;
@@ -177,8 +177,8 @@ export const SETTINGS = {
 
   diffFontSize: {
     defaultValue: '' as string, // empty = theme default
-    fromCookie: () => storage.getItem('plannotator-diff-font-size') || undefined,
-    toCookie: (v: string) => storage.setItem('plannotator-diff-font-size', v),
+    fromCookie: () => storage.getItem('task-view-diff-font-size') || undefined,
+    toCookie: (v: string) => storage.setItem('task-view-diff-font-size', v),
     serverKey: 'diffOptions',
     fromServer: (sc: Record<string, unknown>) => {
       const v = (sc.diffOptions as Record<string, unknown> | undefined)?.fontSize;
@@ -189,11 +189,11 @@ export const SETTINGS = {
   diffTabSize: {
     defaultValue: 2 as number,
     fromCookie: () => {
-      const v = storage.getItem('plannotator-diff-tab-size');
+      const v = storage.getItem('task-view-diff-tab-size');
       const n = v ? parseInt(v, 10) : NaN;
       return Number.isFinite(n) && n >= 1 && n <= 8 ? n : undefined;
     },
-    toCookie: (v: number) => storage.setItem('plannotator-diff-tab-size', String(v)),
+    toCookie: (v: number) => storage.setItem('task-view-diff-tab-size', String(v)),
     serverKey: 'diffOptions',
     fromServer: (sc: Record<string, unknown>) => {
       const v = (sc.diffOptions as Record<string, unknown> | undefined)?.tabSize;
@@ -204,11 +204,11 @@ export const SETTINGS = {
   diffLineBgIntensity: {
     defaultValue: 'subtle' as DiffLineBgIntensity,
     fromCookie: () => {
-      const v = storage.getItem('plannotator-diff-line-bg-intensity');
+      const v = storage.getItem('task-view-diff-line-bg-intensity');
       return isDiffLineBgIntensity(v) ? v : undefined;
     },
     toCookie: (v: DiffLineBgIntensity) =>
-      storage.setItem('plannotator-diff-line-bg-intensity', v),
+      storage.setItem('task-view-diff-line-bg-intensity', v),
     serverKey: 'diffOptions',
     fromServer: (sc: Record<string, unknown>) => {
       const v = (sc.diffOptions as Record<string, unknown> | undefined)?.lineBgIntensity;
@@ -219,10 +219,10 @@ export const SETTINGS = {
   conventionalComments: {
     defaultValue: false as boolean,
     fromCookie: () => {
-      const v = storage.getItem('plannotator-conventional-comments');
+      const v = storage.getItem('task-view-conventional-comments');
       return v === 'true' ? true : v === 'false' ? false : undefined;
     },
-    toCookie: (v: boolean) => storage.setItem('plannotator-conventional-comments', String(v)),
+    toCookie: (v: boolean) => storage.setItem('task-view-conventional-comments', String(v)),
     serverKey: 'conventionalComments',
     fromServer: (sc: Record<string, unknown>) => {
       const v = sc.conventionalComments;
@@ -231,13 +231,13 @@ export const SETTINGS = {
     toServer: (v: boolean) => ({ conventionalComments: v }),
   },
   /** JSON-serialized array of label configs, or null for defaults.
-   *  Synced to ~/.plannotator/config.json as a parsed array (not a string). */
+   *  Synced to ~/.task-view/config.json as a parsed array (not a string). */
   conventionalLabels: {
     defaultValue: null as string | null,
-    fromCookie: () => storage.getItem('plannotator-cc-labels') || undefined,
+    fromCookie: () => storage.getItem('task-view-cc-labels') || undefined,
     toCookie: (v: string | null) => {
-      if (v) storage.setItem('plannotator-cc-labels', v);
-      else storage.removeItem('plannotator-cc-labels');
+      if (v) storage.setItem('task-view-cc-labels', v);
+      else storage.removeItem('task-view-cc-labels');
     },
     serverKey: 'conventionalLabels',
     fromServer: (sc: Record<string, unknown>) => {

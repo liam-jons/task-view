@@ -56,7 +56,7 @@ function escapeRegex(str: string): string {
  * Values: 'off' | '0' (immediate) | '3' | '5' (seconds)
  * Legacy 'true' maps to '0' for backward compatibility.
  */
-const AUTO_CLOSE_KEY = 'plannotator-auto-close';
+const AUTO_CLOSE_KEY = 'task-view-auto-close';
 
 export type AutoCloseDelay = 'off' | '0' | '3' | '5';
 

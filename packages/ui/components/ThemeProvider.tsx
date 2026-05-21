@@ -23,7 +23,7 @@ const ThemeProviderContext = createContext<ThemeProviderState>({
   mode: 'dark',
   setMode: () => null,
   resolvedMode: 'dark',
-  colorTheme: 'plannotator',
+  colorTheme: 'task-view',
   setColorTheme: () => null,
   availableThemes: BUILT_IN_THEMES,
 });
@@ -73,9 +73,9 @@ interface ThemeProviderProps {
 export function ThemeProvider({
   children,
   defaultTheme = 'dark',
-  defaultColorTheme = 'plannotator',
-  storageKey = 'plannotator-theme',
-  colorThemeStorageKey = 'plannotator-color-theme',
+  defaultColorTheme = 'task-view',
+  storageKey = 'task-view-theme',
+  colorThemeStorageKey = 'task-view-color-theme',
 }: ThemeProviderProps) {
   const [mode, setModeState] = useState<Mode>(
     () => (storage.getItem(storageKey) as Mode) || defaultTheme

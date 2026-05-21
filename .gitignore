@@ -16,22 +16,6 @@ dist-ssr
 # npm pack output
 *.tgz
 
-# VS Code extension package
-*.vsix
-
-# OpenCode plugin build artifacts (generated from hook/review dist)
-apps/opencode-plugin/plannotator.html
-apps/opencode-plugin/review-editor.html
-
-# Pi extension build artifacts (generated from hook/review dist + shared packages)
-apps/pi-extension/plannotator.html
-apps/pi-extension/review-editor.html
-apps/pi-extension/storage.ts
-apps/pi-extension/draft.ts
-apps/pi-extension/project.ts
-apps/pi-extension/feedback-templates.ts
-apps/pi-extension/review-core.ts
-
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -49,7 +33,9 @@ apps/pi-extension/review-core.ts
 *.sln
 *.sw?
 opencode.json
-plannotator-local
+task-view-local
 # Local research/reference docs (not for repo)
 /reference/
 *.bun-build
+# CocoIndex Code (ccc) index cache
+/.cocoindex_code/

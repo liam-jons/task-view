@@ -1,7 +1,7 @@
-/* Plannotator Theme System — imports all themes, provides Tailwind bridge + base styles */
+/* task-view Theme System — imports all themes, provides Tailwind bridge + base styles */
 
 /* Theme files — each defines .theme-{name} (dark) and .theme-{name}.light */
-@import "./themes/plannotator.css";
+@import "./themes/task-view.css";
 @import "./themes/claude-plus.css";
 @import "./themes/soft-pop.css";
 @import "./themes/adwaita.css";
@@ -128,7 +128,7 @@ body {
 /* ------------------------------------------------------------------ */
 /*
  * Primary scroll containers are wrapped in <OverlayScrollArea> and styled
- * through the `os-theme-plannotator` theme below. Unwrapped surfaces
+ * through the `os-theme-task-view` theme below. Unwrapped surfaces
  * (third-party libraries, not-yet-migrated panels, small inline scrollers)
  * fall back to a thin native scrollbar.
  *
@@ -148,12 +148,12 @@ body {
   scrollbar-color: var(--border) transparent;
 }
 
-/* OverlayScrollbars theme — "os-theme-plannotator".
+/* OverlayScrollbars theme — "os-theme-task-view".
  * The library renders .os-scrollbar elements with CSS variables we can
  * override. Widths are 10px at rest / 14px on hover, colors are translucent
  * muted-foreground so they track whatever theme is active.
  */
-.os-theme-plannotator {
+.os-theme-task-view {
   --os-size: 10px;
   --os-padding-perpendicular: 2px;
   --os-padding-axis: 2px;
@@ -169,9 +169,9 @@ body {
 }
 
 /* Widen on hover — width animates via the library's internal transition. */
-.os-theme-plannotator.os-scrollbar-horizontal:hover,
-.os-theme-plannotator.os-scrollbar-vertical:hover,
-.os-theme-plannotator.os-scrollbar-handle-interactive:hover {
+.os-theme-task-view.os-scrollbar-horizontal:hover,
+.os-theme-task-view.os-scrollbar-vertical:hover,
+.os-theme-task-view.os-scrollbar-handle-interactive:hover {
   --os-size: 14px;
 }
 
@@ -180,8 +180,8 @@ body {
      motion is on, which kills the scrollbar element's own opacity/visibility
      transitions. This block kills the remaining hover color + width/height
      transitions on the track and handle so state changes are instant. */
-  .os-theme-plannotator .os-scrollbar-track,
-  .os-theme-plannotator .os-scrollbar-handle {
+  .os-theme-task-view .os-scrollbar-track,
+  .os-theme-task-view .os-scrollbar-handle {
     transition: none !important;
   }
 }

@@ -2,19 +2,19 @@
  *
  * Two-pronged approach:
  *   1. @media print — standard print styles
- *   2. .plannotator-print — class added via JS beforeprint/afterprint events
+ *   2. .task-view-print — class added via JS beforeprint/afterprint events
  *      to guarantee overrides that @media print alone cannot achieve
  *      (e.g. beating Tailwind layers + hljs github-dark theme).
  */
 
 /* ============================================================
  * CLASS-BASED OVERRIDES — applied via beforeprint/afterprint JS
- * These use .plannotator-print on <html> for maximum specificity.
+ * These use .task-view-print on <html> for maximum specificity.
  * ============================================================ */
 
 /* Code blocks: override github-dark.css .hljs{background:#0d1117} */
-.plannotator-print pre,
-.plannotator-print pre[class] {
+.task-view-print pre,
+.task-view-print pre[class] {
   background: #f5f5f5 !important;
   background-color: #f5f5f5 !important;
   color: #1a1a1a !important;
@@ -22,19 +22,19 @@
   border-left: 3px solid #888 !important;
 }
 
-.plannotator-print pre code,
-.plannotator-print code.hljs,
-.plannotator-print pre code.hljs,
-.plannotator-print .hljs {
+.task-view-print pre code,
+.task-view-print code.hljs,
+.task-view-print pre code.hljs,
+.task-view-print .hljs {
   background: transparent !important;
   background-color: transparent !important;
   color: #1a1a1a !important;
 }
 
-.plannotator-print pre span,
-.plannotator-print pre code span,
-.plannotator-print .hljs span,
-.plannotator-print [class*="hljs-"] {
+.task-view-print pre span,
+.task-view-print pre code span,
+.task-view-print .hljs span,
+.task-view-print [class*="hljs-"] {
   color: #1a1a1a !important;
   background: transparent !important;
   background-color: transparent !important;
@@ -43,7 +43,7 @@
 }
 
 /* Inline code */
-.plannotator-print code {
+.task-view-print code {
   background: #e8e8e8 !important;
   background-color: #e8e8e8 !important;
   color: #1a1a1a !important;
@@ -51,7 +51,7 @@
 }
 
 /* Inline code inside pre should be transparent (not gray pill) */
-.plannotator-print pre code {
+.task-view-print pre code {
   background: transparent !important;
   background-color: transparent !important;
   border: none !important;

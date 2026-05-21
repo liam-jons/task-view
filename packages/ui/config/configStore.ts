@@ -1,5 +1,5 @@
 /**
- * ConfigStore — Unified config resolver for Plannotator
+ * ConfigStore — Unified config resolver for task-view
  *
  * Singleton that resolves settings with precedence:
  *   server config file > cookie > default
@@ -7,7 +7,7 @@
  * Works both inside and outside React. React components subscribe
  * via useSyncExternalStore (see useConfig.ts).
  *
- * Server-synced settings automatically write back to ~/.plannotator/config.json
+ * Server-synced settings automatically write back to ~/.task-view/config.json
  * via a debounced POST /api/config.
  */
 

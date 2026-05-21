@@ -20,8 +20,8 @@ export interface ThemeInfo {
 
 export const BUILT_IN_THEMES: ThemeInfo[] = [
   {
-    id: 'plannotator',
-    name: 'Plannotator',
+    id: 'task-view',
+    name: 'task-view',
     builtIn: true,
     modeSupport: 'both',
     colors: {

@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "plannotator",
+      "name": "task-view",
       "dependencies": {
         "@pierre/diffs": "^1.1.20",
         "diff": "^8.0.4",
