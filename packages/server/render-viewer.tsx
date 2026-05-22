@@ -1,0 +1,250 @@
+/**
+ * render-viewer.tsx — SSR entry point for the per-record viewer (Subtask 20.17).
+ *
+ * Closes the SPA wiring gap surfaced by the S66 manual smoke-test plan:
+ * the patch-server previously served only JSON; GET / 404'd. This module
+ * renders the existing read-mode record-view components to static HTML so
+ * the loopback server can serve a viewer surface against any of the three
+ * ledger shapes (task-list / roadmap / backlog).
+ *
+ * Routing:
+ *   - GET /?record=                         → index view for the ledger kind
+ *   - GET /?record=ID-N                     → per-Task / per-Backlog-item page
+ *   - GET /?record=section-<id>             → per-Roadmap-section page
+ *   - GET /?record=<dotted-decimal-id>      → per-Roadmap-item page
+ *
+ * Backlog mode honours PRODUCT inv 23 — `?track=…&status=…&priority=…`
+ * query-string filter state is decoded via the canonical
+ * `decodeBacklogFilters` helper and threaded into `BacklogIndexView`.
+ *
+ * Scope:
+ *   - SSR only — pure read-mode markup. Pencil-edit interactivity needs a
+ *     client hydration layer; that lands in a follow-on Subtask alongside
+ *     the existing edit-affordance test coverage (PRODUCT inv 26–35).
+ *     The SSR HTML still carries every `data-*` hook those components emit
+ *     so the eventual hydration layer can attach without a re-render.
+ */
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { TaskListIndexView } from "@task-view/ui/record-view/task-list-index-view";
+import { TaskListView } from "@task-view/ui/record-view/task-list-view";
+import { BacklogIndexView } from "@task-view/ui/record-view/backlog-index-view";
+import { BacklogItemView } from "@task-view/ui/record-view/backlog-item-view";
+import { RoadmapIndexView } from "@task-view/ui/record-view/roadmap-index-view";
+import { RoadmapSectionView } from "@task-view/ui/record-view/roadmap-section-view";
+import { RoadmapItemView } from "@task-view/ui/record-view/roadmap-item-view";
+import {
+  buildLedgerContext,
+  type NavStripData,
+} from "@task-view/ui/record-view/types";
+import { decodeBacklogFilters } from "@task-view/ui/record-view/url-state";
+import type { DetectSchemaResult } from "./detect-schema";
+import type {
+  Task,
+  RoadmapSection,
+  RoadmapItem,
+  BacklogItem,
+} from "@task-view/ui/record-view/types";
+
+export type KnownDetected = Exclude<DetectSchemaResult, { kind: "unknown" }>;
+
+export interface RenderViewerInput {
+  detected: KnownDetected;
+  search: URLSearchParams;
+}
+
+export interface RenderViewerResult {
+  status: 200 | 404;
+  html: string;
+}
+
+const SECTION_PREFIX = "section-";
+
+export function renderViewer(input: RenderViewerInput): RenderViewerResult {
+  const body = renderBody(input);
+  return { status: body.status, html: wrapHtml(body.markup) };
+}
+
+interface RenderedBody {
+  status: 200 | 404;
+  markup: string;
+}
+
+function renderBody({ detected, search }: RenderViewerInput): RenderedBody {
+  const recordParam = search.get("record");
+
+  if (detected.kind === "task-list") {
+    const tasks = detected.data.tasks;
+    if (recordParam === null) {
+      return {
+        status: 200,
+        markup: renderToStaticMarkup(<TaskListIndexView tasks={tasks} />),
+      };
+    }
+    const task = tasks.find((t) => t.id === recordParam);
+    if (!task) return renderNotFound("task", recordParam);
+    const ledger = buildLedgerContext({ tasks });
+    const nav = computeTaskNav(tasks, task);
+    return {
+      status: 200,
+      markup: renderToStaticMarkup(
+        <TaskListView task={task} ledger={ledger} nav={nav} />,
+      ),
+    };
+  }
+
+  if (detected.kind === "backlog") {
+    const items = detected.data.items;
+    if (recordParam === null) {
+      const filters = decodeBacklogFilters(search);
+      return {
+        status: 200,
+        markup: renderToStaticMarkup(
+          <BacklogIndexView items={items} filters={filters} />,
+        ),
+      };
+    }
+    const item = items.find((i) => i.id === recordParam);
+    if (!item) return renderNotFound("backlog-item", recordParam);
+    const ledger = buildLedgerContext({ backlogItems: items });
+    const nav = computeBacklogNav(items, item);
+    return {
+      status: 200,
+      markup: renderToStaticMarkup(
+        <BacklogItemView item={item} ledger={ledger} nav={nav} />,
+      ),
+    };
+  }
+
+  // roadmap
+  if (recordParam === null) {
+    return {
+      status: 200,
+      markup: renderToStaticMarkup(<RoadmapIndexView roadmap={detected.data} />),
+    };
+  }
+  const ledger = buildLedgerContext({ roadmap: detected.data });
+  const sections = detected.data.sections;
+
+  if (recordParam.startsWith(SECTION_PREFIX)) {
+    const sectionId = recordParam.slice(SECTION_PREFIX.length);
+    const section = sections.find((s) => s.id === sectionId);
+    if (!section) return renderNotFound("roadmap-section", recordParam);
+    const nav = computeSectionNav(sections, section);
+    return {
+      status: 200,
+      markup: renderToStaticMarkup(
+        <RoadmapSectionView section={section} ledger={ledger} nav={nav} />,
+      ),
+    };
+  }
+
+  const allItems = sections.flatMap((s) => s.items);
+  const item = allItems.find((i) => i.id === recordParam);
+  if (!item) return renderNotFound("roadmap-item", recordParam);
+  const nav = computeRoadmapItemNav(allItems, item);
+  return {
+    status: 200,
+    markup: renderToStaticMarkup(
+      <RoadmapItemView item={item} ledger={ledger} nav={nav} />,
+    ),
+  };
+}
+
+function renderNotFound(kind: string, requested: string): RenderedBody {
+  const markup = renderToStaticMarkup(
+    <article className="record-view-not-found" data-record-kind="not-found">
+      <h1>Record not found</h1>
+      <p>
+        No {kind} record matches <code>{requested}</code> in the active ledger.
+        <a href="/">Back to index</a>
+      </p>
+    </article>,
+  );
+  return { status: 404, markup };
+}
+
+function computeTaskNav(tasks: readonly Task[], current: Task): NavStripData {
+  const idx = tasks.findIndex((t) => t.id === current.id);
+  const prev = idx > 0 ? tasks[idx - 1] : null;
+  const next = idx >= 0 && idx < tasks.length - 1 ? tasks[idx + 1] : null;
+  return {
+    prevHref: prev ? recordHref(prev.id) : null,
+    prevLabel: prev ? `ID-${prev.id}: ${prev.title}` : null,
+    nextHref: next ? recordHref(next.id) : null,
+    nextLabel: next ? `ID-${next.id}: ${next.title}` : null,
+    indexHref: "/",
+    indexLabel: "Back to ledger index",
+  };
+}
+
+function computeBacklogNav(
+  items: readonly BacklogItem[],
+  current: BacklogItem,
+): NavStripData {
+  const idx = items.findIndex((i) => i.id === current.id);
+  const prev = idx > 0 ? items[idx - 1] : null;
+  const next = idx >= 0 && idx < items.length - 1 ? items[idx + 1] : null;
+  return {
+    prevHref: prev ? recordHref(prev.id) : null,
+    prevLabel: prev ? `#${prev.id}: ${prev.description}` : null,
+    nextHref: next ? recordHref(next.id) : null,
+    nextLabel: next ? `#${next.id}: ${next.description}` : null,
+    indexHref: "/",
+    indexLabel: "Back to backlog index",
+  };
+}
+
+function computeSectionNav(
+  sections: readonly RoadmapSection[],
+  current: RoadmapSection,
+): NavStripData {
+  const idx = sections.findIndex((s) => s.id === current.id);
+  const prev = idx > 0 ? sections[idx - 1] : null;
+  const next = idx >= 0 && idx < sections.length - 1 ? sections[idx + 1] : null;
+  return {
+    prevHref: prev ? recordHref(`${SECTION_PREFIX}${prev.id}`) : null,
+    prevLabel: prev ? `§${prev.id}: ${prev.title}` : null,
+    nextHref: next ? recordHref(`${SECTION_PREFIX}${next.id}`) : null,
+    nextLabel: next ? `§${next.id}: ${next.title}` : null,
+    indexHref: "/",
+    indexLabel: "Back to roadmap index",
+  };
+}
+
+function computeRoadmapItemNav(
+  items: readonly RoadmapItem[],
+  current: RoadmapItem,
+): NavStripData {
+  const idx = items.findIndex((i) => i.id === current.id);
+  const prev = idx > 0 ? items[idx - 1] : null;
+  const next = idx >= 0 && idx < items.length - 1 ? items[idx + 1] : null;
+  return {
+    prevHref: prev ? recordHref(prev.id) : null,
+    prevLabel: prev ? `${prev.id}: ${prev.title}` : null,
+    nextHref: next ? recordHref(next.id) : null,
+    nextLabel: next ? `${next.id}: ${next.title}` : null,
+    indexHref: "/",
+    indexLabel: "Back to roadmap index",
+  };
+}
+
+function recordHref(recordId: string): string {
+  return `/?record=${encodeURIComponent(recordId)}`;
+}
+
+function wrapHtml(body: string): string {
+  return (
+    "<!doctype html>\n" +
+    '<html lang="en">\n' +
+    "<head>\n" +
+    '<meta charset="utf-8">\n' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
+    "<title>task-view</title>\n" +
+    "</head>\n" +
+    '<body data-app="task-view">\n' +
+    body +
+    "\n</body>\n" +
+    "</html>\n"
+  );
+}

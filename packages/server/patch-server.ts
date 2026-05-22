@@ -86,6 +86,7 @@ import {
   LOOPBACK_HOSTNAME,
   resolveServerHostname,
 } from "./loopback-bind";
+import { renderViewer } from "./render-viewer";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -219,6 +220,55 @@ function computeMirrorFilename(
  */
 function serialiseLedger(detected: Exclude<DetectSchemaResult, { kind: "unknown" }>): string {
   return JSON.stringify(detected.data, null, 2);
+}
+
+/**
+ * GET / — SSR-rendered viewer (Subtask 20.17).
+ *
+ * Reads the canonical via the same `readCanonical` gate the JSON endpoints
+ * use, then defers shape-specific rendering to {@link renderViewer}.
+ *
+ * Routing:
+ *   /                           → ledger index page
+ *   /?record=ID-N               → per-record page
+ *   /?record=section-<id>       → roadmap section page
+ *   /?track=…&status=…&priority=… → backlog index with filter state (PRODUCT inv 23)
+ *
+ * Responses:
+ *   200 text/html on success.
+ *   404 text/html when ?record=… does not resolve.
+ *   422 application/json when document_name is unknown (matches the
+ *       JSON endpoints' shape — clients can disambiguate by Content-Type).
+ *   500 application/json on ledger read failure.
+ */
+async function handleGetRoot(
+  ctx: RequestContext,
+  search: URLSearchParams,
+): Promise<Response> {
+  let canonical;
+  try {
+    canonical = await readCanonical(ctx.ledgerPath);
+  } catch (err) {
+    return jsonResponse(
+      { ok: false, error: "ledger-read-failed", detail: (err as Error).message },
+      { status: 500 },
+    );
+  }
+  if (canonical.detected.kind === "unknown") {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "unknown-document-name",
+        documentName: canonical.detected.documentName,
+      },
+      { status: 422 },
+    );
+  }
+  const result = renderViewer({ detected: canonical.detected, search });
+  return new Response(result.html, {
+    status: result.status,
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
 }
 
 async function handleGetLedger(ctx: RequestContext): Promise<Response> {
@@ -547,6 +597,11 @@ function buildFetchHandler(ctx: RequestContext) {
   return async function fetchHandler(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
+
+    // GET / → SSR-rendered viewer (Subtask 20.17).
+    if (path === "/" && request.method === "GET") {
+      return handleGetRoot(ctx, url.searchParams);
+    }
 
     // GET /api/ledger
     if (path === "/api/ledger" && request.method === "GET") {
