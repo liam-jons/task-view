@@ -133,6 +133,19 @@ export const BacklogItemSchema = z.object({
   /** Optional prose notes, nullable. */
   notes: z.string().nullable(),
 
+  /**
+   * Within-priority deterministic ordering. Lower integer = higher rank
+   * within tier. Default null; pre-existing items omit. Schema does NOT
+   * enforce uniqueness or contiguity within tier (roadmap-backlog-
+   * consolidation PRODUCT inv 3). Curator skill maintains discipline
+   * (Subtask 30.5 + P-OQ-3 auto-shift default). Per TECH §3.1 (30.6).
+   *
+   * Re-vendored from upstream KH `lib/validation/backlog-schema.ts` for
+   * Subtask 30.8 (per-task-mirror 20.14 extension); kept in sync via
+   * CONTRIBUTING.md re-vendoring procedure.
+   */
+  rank: z.number().int().nullable().optional(),
+
   // ── New optional fields per PRODUCT inv 38 ──────────────────────────────
 
   /**

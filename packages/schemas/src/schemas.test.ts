@@ -170,6 +170,49 @@ describe("Vendored schemas: parse acceptance", () => {
   });
 });
 
+// ── Backlog `rank` field per roadmap-backlog-consolidation PRODUCT inv 3 ─────
+// Subtask 30.8 vendor sync.
+
+describe("BacklogItemSchema rank field (roadmap-backlog-consolidation inv 3)", () => {
+  const mkItemWithRank = (rank: unknown) => ({
+    ...minimalBacklog,
+    items: [{ ...minimalBacklog.items[0], rank }],
+  });
+
+  test("item omitting rank parses (field is optional)", () => {
+    const result = BacklogSchema.safeParse(minimalBacklog);
+    expect(result.success).toBe(true);
+  });
+
+  test("item with rank: null parses", () => {
+    const result = BacklogSchema.safeParse(mkItemWithRank(null));
+    expect(result.success).toBe(true);
+  });
+
+  test("item with rank: 10 parses", () => {
+    const result = BacklogSchema.safeParse(mkItemWithRank(10));
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.items[0].rank).toBe(10);
+    }
+  });
+
+  test("item with rank: -5 parses (no schema-level positive constraint — discipline only)", () => {
+    const result = BacklogSchema.safeParse(mkItemWithRank(-5));
+    expect(result.success).toBe(true);
+  });
+
+  test("item with rank: '10' (string) fails (non-integer)", () => {
+    const result = BacklogSchema.safeParse(mkItemWithRank("10"));
+    expect(result.success).toBe(false);
+  });
+
+  test("item with rank: 1.5 fails (non-integer)", () => {
+    const result = BacklogSchema.safeParse(mkItemWithRank(1.5));
+    expect(result.success).toBe(false);
+  });
+});
+
 describe("Vendored work-status: master enum + per-surface subsets", () => {
   test("WorkStatus master accepts all canonical values", () => {
     const allValues = [

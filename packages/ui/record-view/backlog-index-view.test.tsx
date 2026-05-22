@@ -31,8 +31,8 @@ const NO_FILTERS = { track: null, status: null, priority: null };
 
 // ── PRODUCT inv 20 ────────────────────────────────────────────────────────────
 
-describe("PRODUCT inv 20 (Backlog index columns + sorted by track / status / id)", () => {
-  test("renders all required columns", () => {
+describe("PRODUCT inv 20 (Backlog index columns) + roadmap-backlog-consolidation inv 10 (sort by priority → rank → id)", () => {
+  test("renders all required columns including the new Rank column (30.8)", () => {
     const items = [mkItem()];
     const html = renderToStaticMarkup(
       <BacklogIndexView items={items} filters={NO_FILTERS} />,
@@ -42,27 +42,29 @@ describe("PRODUCT inv 20 (Backlog index columns + sorted by track / status / id)
     expect(html).toContain('<th scope="col">Type</th>');
     expect(html).toContain('<th scope="col">Status</th>');
     expect(html).toContain('<th scope="col">Priority</th>');
+    expect(html).toContain('<th scope="col">Rank</th>');
     expect(html).toContain('<th scope="col">Track</th>');
     expect(html).toContain('<th scope="col">Effort</th>');
   });
 
-  test("sorts by track, then status, then numeric id", () => {
+  test("sort overridden per roadmap-backlog-consolidation inv 10 — priority → rank (nulls last) → id (NOT track/status/id)", () => {
+    // Per inv 10: "the existing sort (track, then status, then id per
+    // per-task-mirror inv 20) becomes priority, then rank (nulls last),
+    // then id to match inv 4 on this surface specifically."
     const items = [
-      mkItem({ id: "10", track: "Bid", status: "ready" }),
-      mkItem({ id: "2", track: "Bid", status: "ready" }),
-      mkItem({ id: "3", track: "Bid", status: "blocked" }),
-      mkItem({ id: "4", track: "Procurement", status: "ready" }),
+      mkItem({ id: "10", priority: "high", rank: null }),
+      mkItem({ id: "2", priority: "high", rank: 1 }),
+      mkItem({ id: "3", priority: "must", rank: null }),
+      mkItem({ id: "4", priority: "must", rank: 2 }),
     ];
     const html = renderToStaticMarkup(
       <BacklogIndexView items={items} filters={NO_FILTERS} />,
     );
-    // Extract row id sequence
     const matches = [...html.matchAll(/data-backlog-row="(\d+)"/g)].map(
       (m) => m[1],
     );
-    // Expected: track Bid/blocked first (id 3), then Bid/ready (2 then 10),
-    // then Procurement/ready (4)
-    expect(matches).toEqual(["3", "2", "10", "4"]);
+    // must/2 → must/null → high/1 → high/null
+    expect(matches).toEqual(["4", "3", "2", "10"]);
   });
 
   test("renders each row as a link to the per-item page", () => {
@@ -189,5 +191,152 @@ describe("PRODUCT inv 47 (empty Backlog ledger → empty-state page)", () => {
     expect(html).toContain("Backlog ledger is empty");
     // No record-creation flow surfaced
     expect(html).not.toMatch(/<button[^>]*>[^<]*Add[^<]*<\/button>/i);
+  });
+});
+
+// ── roadmap-backlog-consolidation PRODUCT inv 10 (rank-edit + drag-reorder) ──
+// Subtask 30.8 — per-task-mirror 20.14 extension.
+
+describe("inv 10 — rank column, integer-input affordance, drag handle", () => {
+  test("renders a Rank column header on the index table", () => {
+    const html = renderToStaticMarkup(
+      <BacklogIndexView items={[mkItem()]} filters={NO_FILTERS} />,
+    );
+    expect(html).toContain('<th scope="col">Rank</th>');
+  });
+
+  test("renders the rank value when set, and '—' (em-dash) when null/absent", () => {
+    const items = [
+      mkItem({ id: "1", rank: 5 }),
+      mkItem({ id: "2", rank: null }),
+      mkItem({ id: "3" }), // rank undefined / absent
+    ];
+    const html = renderToStaticMarkup(
+      <BacklogIndexView items={items} filters={NO_FILTERS} />,
+    );
+    // Rank cell carries data-rank-value for SPA hook + visible rank
+    expect(html).toMatch(/data-rank-value="5"/);
+    expect(html).toMatch(/data-rank-value=""/);
+  });
+
+  test("rank cell exposes data-edit-field hook for the SPA pencil affordance", () => {
+    const html = renderToStaticMarkup(
+      <BacklogIndexView items={[mkItem({ id: "45", rank: 3 })]} filters={NO_FILTERS} />,
+    );
+    // Field path matches TECH §5.1 convention: ['items', itemId, 'rank'].
+    // React HTML-escapes `>` to `&gt;` in attribute values; assert the
+    // serialised form so the SPA's `data-edit-field` reader sees the
+    // expected string after browser-side `getAttribute()` decoding.
+    expect(html).toContain('data-edit-field="items&gt;45&gt;rank"');
+    // The pencil button is present per inv 30 visual treatment
+    expect(html).toContain('data-edit-action="open"');
+  });
+
+  test("rank affordance is a button (keyboard-operable per inv 14 WCAG 2.1 AA)", () => {
+    const html = renderToStaticMarkup(
+      <BacklogIndexView items={[mkItem({ id: "1", rank: 1 })]} filters={NO_FILTERS} />,
+    );
+    // Pencil button is a <button> not a div — Tab + Enter operable.
+    // React serialises `>` as `&gt;` in attribute values, hence the
+    // escaped form in the regex.
+    expect(html).toMatch(
+      /<button[^>]*data-edit-field="items&gt;1&gt;rank"[^>]*>/,
+    );
+  });
+
+  test("each row carries a drag handle with keyboard-operable affordance", () => {
+    const items = [
+      mkItem({ id: "1", priority: "high", rank: 1 }),
+      mkItem({ id: "2", priority: "high", rank: 2 }),
+    ];
+    const html = renderToStaticMarkup(
+      <BacklogIndexView items={items} filters={NO_FILTERS} />,
+    );
+    // Drag handle exposes data-drag-handle + aria-grabbed + tabIndex 0
+    expect(html).toMatch(/data-drag-handle="1"/);
+    expect(html).toMatch(/data-drag-handle="2"/);
+    // Keyboard operability: tabIndex=0 + aria-label
+    expect(html).toMatch(/data-drag-handle="1"[^>]*tabindex="0"/i);
+    expect(html).toMatch(/aria-label="Reorder backlog item 1"/);
+  });
+
+  test("drag handle uses semantic role and ARIA for keyboard reorder", () => {
+    const html = renderToStaticMarkup(
+      <BacklogIndexView items={[mkItem({ id: "1", priority: "high" })]} filters={NO_FILTERS} />,
+    );
+    // role=button + data-keyboard-shortcut for arrow keys
+    expect(html).toMatch(/data-drag-handle="1"[^>]*role="button"/);
+    expect(html).toMatch(/data-keyboard-shortcut="arrow-up,arrow-down,enter"/);
+  });
+
+  test("rows are sorted by priority → rank (nulls last) → id per inv 10", () => {
+    const items = [
+      mkItem({ id: "1", priority: "could", rank: 1 }),
+      mkItem({ id: "2", priority: "must", rank: null }),
+      mkItem({ id: "3", priority: "must", rank: 5 }),
+      mkItem({ id: "4", priority: "must", rank: 1 }),
+    ];
+    const html = renderToStaticMarkup(
+      <BacklogIndexView items={items} filters={NO_FILTERS} />,
+    );
+    const rows = [...html.matchAll(/data-backlog-row="(\d+)"/g)].map(
+      (m) => m[1],
+    );
+    // must/1 → must/5 → must/null → could/1
+    expect(rows).toEqual(["4", "3", "2", "1"]);
+  });
+
+  test("priority tier markers are emitted on each row to anchor drag-within-tier logic", () => {
+    const items = [
+      mkItem({ id: "1", priority: "must" }),
+      mkItem({ id: "2", priority: "high" }),
+    ];
+    const html = renderToStaticMarkup(
+      <BacklogIndexView items={items} filters={NO_FILTERS} />,
+    );
+    // data-priority-tier on each row so the SPA + drag logic know the tier
+    expect(html).toMatch(/data-priority-tier="must"/);
+    expect(html).toMatch(/data-priority-tier="high"/);
+  });
+
+  test("the table header carries data-supports-drag-reorder so SPA wires drag handler once at mount", () => {
+    const html = renderToStaticMarkup(
+      <BacklogIndexView items={[mkItem()]} filters={NO_FILTERS} />,
+    );
+    expect(html).toContain('data-supports-drag-reorder="true"');
+  });
+});
+
+// ── roadmap-backlog-consolidation PRODUCT inv 11 (no Promote button) ─────────
+
+describe("inv 11 — NO Promote-to-task-list affordance on the Backlog index", () => {
+  test("does not render a Promote button at any level", () => {
+    const items = [mkItem({ id: "1" }), mkItem({ id: "2", status: "ready" })];
+    const html = renderToStaticMarkup(
+      <BacklogIndexView items={items} filters={NO_FILTERS} />,
+    );
+    expect(html).not.toMatch(/<button[^>]*>[^<]*Promote[^<]*<\/button>/i);
+    expect(html).not.toMatch(/data-testid="promote-button"/);
+    expect(html).not.toMatch(/data-promote-affordance/);
+  });
+});
+
+// ── roadmap-backlog-consolidation PRODUCT inv 14 (Warm Meridian — semantic tokens) ─
+
+describe("inv 14 — no raw Tailwind colour classes in the rendered markup", () => {
+  test("rendered HTML contains no raw Tailwind colour classes", () => {
+    const items = [
+      mkItem({ id: "1", priority: "high", rank: 1 }),
+      mkItem({ id: "2", priority: "high", rank: null }),
+    ];
+    const html = renderToStaticMarkup(
+      <BacklogIndexView items={items} filters={NO_FILTERS} />,
+    );
+    // Tailwind colour utilities to reject: bg-{colour}-{shade},
+    // text-{colour}-{shade}, border-{colour}-{shade}, ring-{colour}-{shade}
+    // Catches e.g. bg-red-500, text-blue-700, border-gray-300, ring-amber-400.
+    const rawTailwindColour =
+      /(?:bg|text|border|ring|fill|stroke|from|to|via)-(?:red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|slate|gray|grey|zinc|neutral|stone)-(?:50|100|200|300|400|500|600|700|800|900|950)/;
+    expect(html).not.toMatch(rawTailwindColour);
   });
 });

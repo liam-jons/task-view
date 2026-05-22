@@ -2,18 +2,33 @@
  * record-view/backlog-index-view.tsx — Backlog index page renderer.
  *
  * PRODUCT inv 20 (index page lists every item with columns ID /
- *              Description / Type / Status / Priority / Track / Effort;
- *              sorted by track, then status, then id),
+ *              Description / Type / Status / Priority / Rank / Track /
+ *              Effort — Rank column added per roadmap-backlog-
+ *              consolidation inv 10 / Subtask 30.8),
  *              23 (filter dropdowns Track / Status / Priority + URL
  *              query string state),
  *              47 (empty ledger → empty-state page).
+ * roadmap-backlog-consolidation PRODUCT inv 10 (rank-edit affordance +
+ *              drag handle + sort priority → rank (nulls last) → id),
+ *              inv 11 (NO Promote button),
+ *              inv 14 (semantic tokens — no raw Tailwind colour classes).
  * TECH §4.3 index page implementation.
  *
  * Pure render — the filter dropdowns are rendered as `<select>`
  * elements with `data-*` attributes the SPA can hook into for change
  * handling. The renderer DOES apply the supplied filter state to the
  * rendered table so a server-rendered + URL-driven first paint matches
- * what the SPA hydrate would produce.
+ * what the SPA hydrate would produce. The rank affordance + drag handle
+ * follow the same SSR-markup-with-hooks convention as
+ * `edit-affordances.tsx` per PRODUCT inv 30 — the SPA hydration layer
+ * wires up real behaviour against these stable `data-*` attributes.
+ *
+ * SUBTASK 30.8 SCOPE NOTE: this file emits the markup; the SPA
+ * hydration layer (`apps/server/web/index.tsx`) is the consumer that
+ * wires keydown / drag events to the patch-server. The Backlog index
+ * page can be rendered server-side and the affordances are operable
+ * via direct PATCH calls to the patch-server API. Interactive drag and
+ * keyboard reorder land with the SPA mount, which is out of 30.8 scope.
  */
 import React from "react";
 import type { BacklogItem } from "@task-view/schemas/backlog";
@@ -25,6 +40,7 @@ import {
   FILTER_ALL,
   type BacklogFilterState,
 } from "./url-state";
+import { sortBacklogItemsForIndex } from "./backlog-sort";
 
 export interface BacklogIndexViewProps {
   items: readonly BacklogItem[];
@@ -51,7 +67,10 @@ export const BacklogIndexView: React.FC<BacklogIndexViewProps> = ({
   const priorityValues = Priority.options;
 
   const filtered = applyBacklogFilters(items, filters);
-  const sorted = sortBacklogItems(filtered);
+  // Per roadmap-backlog-consolidation inv 10 the sort on THIS surface
+  // is priority → rank (nulls last) → id (overrides per-task-mirror
+  // inv 20's track/status/id default for the Backlog index).
+  const sorted = sortBacklogItemsForIndex(filtered);
 
   return (
     <article
@@ -116,44 +135,106 @@ export const BacklogIndexView: React.FC<BacklogIndexViewProps> = ({
         <table
           className="record-view-backlog-table"
           data-backlog-table
+          data-supports-drag-reorder="true"
         >
           <thead>
             <tr>
+              <th scope="col" aria-label="Reorder" />
               <th scope="col">ID</th>
               <th scope="col">Description</th>
               <th scope="col">Type</th>
               <th scope="col">Status</th>
               <th scope="col">Priority</th>
+              <th scope="col">Rank</th>
               <th scope="col">Track</th>
               <th scope="col">Effort</th>
             </tr>
           </thead>
           <tbody>
             {sorted.map((item) => (
-              <tr
-                key={item.id}
-                data-backlog-row={item.id}
-              >
-                <td>
-                  <a
-                    href={backlogItemHref(item.id)}
-                    data-item-link={item.id}
-                  >
-                    {item.id}
-                  </a>
-                </td>
-                <td>{item.description}</td>
-                <td>{item.type}</td>
-                <td>{item.status}</td>
-                <td>{item.priority}</td>
-                <td>{item.track}</td>
-                <td>{item.effort_estimate ?? "—"}</td>
-              </tr>
+              <BacklogItemRow key={item.id} item={item} />
             ))}
           </tbody>
         </table>
       )}
     </article>
+  );
+};
+
+/**
+ * Single row of the Backlog index. Owns the rank affordance + drag
+ * handle markup contracts (PRODUCT inv 10).
+ *
+ * Markup contracts (consumed by the SPA hydration layer):
+ *   - `data-backlog-row="<id>"` on the `<tr>` so the SPA can locate it.
+ *   - `data-priority-tier="<priority>"` on the `<tr>` so drag-within-
+ *     tier logic can refuse drops across tiers per inv 10.
+ *   - `data-drag-handle="<id>"` + `role="button"` + `tabindex="0"` +
+ *     `data-keyboard-shortcut="arrow-up,arrow-down,enter"` on the
+ *     drag handle for keyboard operability per inv 14 WCAG 2.1 AA.
+ *   - `data-rank-value="<rank or empty>"` on the rank cell so the SPA
+ *     knows the current value without re-parsing the rendered text.
+ *   - `data-edit-field="items>{id}>rank"` + `data-edit-action="open"`
+ *     on the pencil button (per `edit-affordances.tsx` convention) so
+ *     the SPA promotes the cell to an integer input on click. The
+ *     "(unset)" option (clear-to-null) is emitted by the SPA's edit-
+ *     mode form per per-task-mirror inv 30 visual treatment; this row
+ *     just exposes the affordance.
+ */
+const BacklogItemRow: React.FC<{ item: BacklogItem }> = ({ item }) => {
+  const rankValue = item.rank ?? null;
+  const fieldKey = `items>${item.id}>rank`;
+  return (
+    <tr
+      data-backlog-row={item.id}
+      data-priority-tier={item.priority}
+    >
+      <td className="record-view-drag-cell">
+        <span
+          data-drag-handle={item.id}
+          role="button"
+          tabIndex={0}
+          aria-label={`Reorder backlog item ${item.id}`}
+          data-keyboard-shortcut="arrow-up,arrow-down,enter"
+          // The visible glyph is U+2630 TRIGRAM FOR HEAVEN (≡-like
+          // drag affordance). Hidden from AT — the aria-label supplies
+          // accessible naming.
+        >
+          <span aria-hidden="true">{"☰"}</span>
+        </span>
+      </td>
+      <td>
+        <a
+          href={backlogItemHref(item.id)}
+          data-item-link={item.id}
+        >
+          {item.id}
+        </a>
+      </td>
+      <td>{item.description}</td>
+      <td>{item.type}</td>
+      <td>{item.status}</td>
+      <td>{item.priority}</td>
+      <td
+        className="record-view-rank-cell"
+        data-rank-value={rankValue === null ? "" : String(rankValue)}
+      >
+        <span className="record-view-rank-value">
+          {rankValue === null ? "—" : rankValue}
+        </span>
+        <button
+          type="button"
+          className="record-view-pencil-button"
+          data-edit-action="open"
+          data-edit-field={fieldKey}
+          aria-label={`Edit rank for backlog item ${item.id}`}
+        >
+          <span aria-hidden="true">{"✎"}</span>
+        </button>
+      </td>
+      <td>{item.track}</td>
+      <td>{item.effort_estimate ?? "—"}</td>
+    </tr>
   );
 };
 
@@ -192,31 +273,3 @@ const FilterSelect: React.FC<{
     </label>
   );
 };
-
-/**
- * Sort backlog items by `track`, then `status`, then `id` per inv 20.
- * Stable order — ties on all three keys retain input order.
- */
-function sortBacklogItems(items: readonly BacklogItem[]): BacklogItem[] {
-  // Decorate-sort-undecorate to maintain stability.
-  const decorated = items.map((item, idx) => ({ item, idx }));
-  decorated.sort((a, b) => {
-    if (a.item.track !== b.item.track) {
-      return a.item.track < b.item.track ? -1 : 1;
-    }
-    if (a.item.status !== b.item.status) {
-      return a.item.status < b.item.status ? -1 : 1;
-    }
-    if (a.item.id !== b.item.id) {
-      // Numeric-friendly compare so 10 sorts after 2 (backlog ids are bare digits).
-      const an = Number.parseInt(a.item.id, 10);
-      const bn = Number.parseInt(b.item.id, 10);
-      if (!Number.isNaN(an) && !Number.isNaN(bn)) {
-        return an - bn;
-      }
-      return a.item.id < b.item.id ? -1 : 1;
-    }
-    return a.idx - b.idx;
-  });
-  return decorated.map((d) => d.item);
-}
