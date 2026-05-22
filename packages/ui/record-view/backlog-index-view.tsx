@@ -139,7 +139,16 @@ export const BacklogIndexView: React.FC<BacklogIndexViewProps> = ({
         >
           <thead>
             <tr>
-              <th scope="col" aria-label="Reorder" />
+              <th scope="col">
+                {/*
+                 * axe-core rule `empty-table-header` rejects an empty
+                 * `<th>` even with aria-label, so we render the label
+                 * inside a `.sr-only` (visually-hidden) span. The
+                 * column visually appears as a slim drag-handle gutter
+                 * but screen readers announce "Reorder".
+                 */}
+                <span className="sr-only">Reorder</span>
+              </th>
               <th scope="col">ID</th>
               <th scope="col">Description</th>
               <th scope="col">Type</th>
