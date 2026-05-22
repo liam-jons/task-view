@@ -1,0 +1,31 @@
+{
+  "document_name": "Knowledge Hub Task List",
+  "document_purpose": "Broken-deps fixture for task-view 20.16 manual smoke-test: one Task with missing ledger-level dependency id + broken cross-doc link path. Used to verify PRODUCT inv 11 (broken cross-doc link missing-target marker) + inv 12 (broken Task.dependencies missing-target marker + page-top warning).",
+  "last_updated": "kh-prod-readiness-S68 task-view-20.16 fixture",
+  "related_documents": [],
+  "tasks": [
+    {
+      "id": "1",
+      "title": "Task with broken dependency + broken cross-doc link",
+      "description": "This Task references a non-existent dependency Task id `999` and carries a cross-doc link to a path that does not exist (`missing-document.md#section`). The mirror generator must still write the mirror; the viewer must render the dependency + link with the visually distinct missing-target marker per PRODUCT inv 11 + inv 12.",
+      "status": "pending",
+      "priority": "should",
+      "dependencies": ["999"],
+      "subtasks": [],
+      "updatedAt": "2026-05-22T00:00:00.000Z",
+      "effort_estimate": null,
+      "owner": null,
+      "priority_note": null,
+      "status_note": null,
+      "cross_doc_links": [
+        {
+          "path": "missing-document.md",
+          "anchor": "#section",
+          "raw": "missing-document.md §section"
+        }
+      ],
+      "session_refs": [],
+      "commit_refs": []
+    }
+  ]
+}

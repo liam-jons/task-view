@@ -1,0 +1,25 @@
+{
+  "document_name": "Knowledge Hub Task List",
+  "document_purpose": "Multi-ledger fixture file (task-list) for task-view CWD-scan verification (PRODUCT inv 43).",
+  "last_updated": "kh-prod-readiness-S68 task-view-20.16 fixture",
+  "related_documents": [],
+  "tasks": [
+    {
+      "id": "1",
+      "title": "Multi-ledger scan canary — task-list",
+      "description": "Minimal valid Task used to populate the multi-ledger directory for PRODUCT inv 43 CWD-scan exercise.",
+      "status": "pending",
+      "priority": "should",
+      "dependencies": [],
+      "subtasks": [],
+      "updatedAt": "2026-05-22T00:00:00.000Z",
+      "effort_estimate": null,
+      "owner": null,
+      "priority_note": null,
+      "status_note": null,
+      "cross_doc_links": [],
+      "session_refs": [],
+      "commit_refs": []
+    }
+  ]
+}

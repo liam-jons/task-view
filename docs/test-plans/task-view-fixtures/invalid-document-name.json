@@ -1,0 +1,7 @@
+{
+  "document_name": "Unknown Document Type",
+  "document_purpose": "Fixture with an unrecognised `document_name` literal. Used to verify PRODUCT inv 4 — task-view must reject this on load and exit non-zero (no readiness line, no port bind).",
+  "last_updated": "kh-prod-readiness-S68 task-view-20.16 fixture",
+  "related_documents": [],
+  "tasks": []
+}

@@ -1,0 +1,22 @@
+{
+  "document_name": "Knowledge Hub Roadmap",
+  "document_purpose": "Multi-ledger fixture file (roadmap) for task-view CWD-scan verification (PRODUCT inv 43). Conforms to vendored RoadmapSchema (sections[] shape — note: live KH ledger migrated to themes[] under PR-C 30.12 and is no longer parseable by the vendored schema; see smoke-test side-observations).",
+  "date": "2026-05-22",
+  "status": "Active",
+  "forward_looking_only": true,
+  "last_updated": "kh-prod-readiness-S68 task-view-20.16 fixture",
+  "related_documents": [],
+  "sections": [
+    {
+      "id": "1",
+      "parent_id": null,
+      "number": "1",
+      "title": "Multi-ledger scan canary — roadmap",
+      "narrative": "Single-section fixture used to populate the multi-ledger directory for PRODUCT inv 43 CWD-scan exercise.",
+      "spec_links": [],
+      "owner": null,
+      "table_columns": "item_desc_owner_effort_status",
+      "items": []
+    }
+  ]
+}

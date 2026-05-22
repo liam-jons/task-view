@@ -1,0 +1,2 @@
+{"ok":false,"error":"schema-error","issues":[{"code":"invalid_value","values":["done","pending","in_progress","blocked","deferred","cancelled","spec_needed","imp_deferred"],"path":["tasks",9,"status"],"message":"Invalid option: expected one of \"done\"|\"pending\"|\"in_progress\"|\"blocked\"|\"deferred\"|\"cancelled\"|\"spec_needed\"|\"imp_deferred\""}]}
+HTTP 422

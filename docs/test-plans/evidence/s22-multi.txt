@@ -1,0 +1,7 @@
+Found 3 ledger JSON files in /Users/liamj/Documents/development/task-view/.claude/worktrees/task-view-20-16-17/docs/test-plans/task-view-fixtures/multi-ledger:
+  [1] /Users/liamj/Documents/development/task-view/.claude/worktrees/task-view-20-16-17/docs/test-plans/task-view-fixtures/multi-ledger/product-roadmap.json  (Knowledge Hub Roadmap)
+  [2] /Users/liamj/Documents/development/task-view/.claude/worktrees/task-view-20-16-17/docs/test-plans/task-view-fixtures/multi-ledger/product-backlog.json  (Product Backlog)
+  [3] /Users/liamj/Documents/development/task-view/.claude/worktrees/task-view-20-16-17/docs/test-plans/task-view-fixtures/multi-ledger/task-list.json  (Knowledge Hub Task List)
+
+Launching against [1]. Re-invoke with explicit path to choose another.
+task-view --check: roadmap OK (1 mirrors written, 0 orphans deleted).

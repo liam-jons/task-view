@@ -1,0 +1,22 @@
+{
+  "document_name": "Product Backlog",
+  "document_purpose": "Multi-ledger fixture file (backlog) for task-view CWD-scan verification (PRODUCT inv 43).",
+  "last_updated": "kh-prod-readiness-S68 task-view-20.16 fixture",
+  "related_documents": [],
+  "items": [
+    {
+      "id": "1",
+      "description": "Multi-ledger scan canary — backlog",
+      "type": "feature",
+      "status": "spec_needed",
+      "effort_estimate": "TBD",
+      "priority": "low",
+      "track": "internal",
+      "dependencies": [],
+      "session_refs": [],
+      "commit_refs": [],
+      "cross_doc_links": [],
+      "notes": null
+    }
+  ]
+}

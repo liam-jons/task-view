@@ -1,0 +1,13 @@
+Usage:
+  task-view [<path-to-ledger.json>] [--no-browser] [--port <N>] [--check]
+  task-view --help
+  task-view --version, -v
+
+Flags:
+  --no-browser   Do not auto-open the browser; print the URL only.
+  --port <N>     Bind the requested port (default: OS-assigned random).
+  --check        Run one-shot mirror-regen sanity pass; exit non-zero on drift.
+
+Without a path argument, task-view scans the current working directory
+for `document_name`-bearing JSON files (task-list.json, product-roadmap.json,
+product-backlog.json).

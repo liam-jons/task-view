@@ -1,0 +1,4 @@
+{"patches":[
+  {"fieldPath":["tasks","20","status_note"],"newValue":"S66 multi-field a"},
+  {"fieldPath":["tasks","20","priority_note"],"newValue":"S66 multi-field b"}
+],"baseMtime":"2026-05-22T22:24:09.266Z"}

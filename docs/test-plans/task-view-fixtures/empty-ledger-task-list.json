@@ -1,0 +1,25 @@
+{
+  "document_name": "Knowledge Hub Task List",
+  "document_purpose": "Empty-ledger fixture for task-view 20.16 manual smoke-test: one Task, zero Subtasks. Used to verify PRODUCT inv 9 empty-Subtasks rendering and inv 47 empty-state path.",
+  "last_updated": "kh-prod-readiness-S68 task-view-20.16 fixture",
+  "related_documents": [],
+  "tasks": [
+    {
+      "id": "1",
+      "title": "Atomic empty-Subtasks Task fixture",
+      "description": "A single Task with zero Subtasks. The viewer must render an empty-Subtasks section per PRODUCT inv 9 (`_No subtasks._`).",
+      "status": "pending",
+      "priority": "should",
+      "dependencies": [],
+      "subtasks": [],
+      "updatedAt": "2026-05-22T00:00:00.000Z",
+      "effort_estimate": null,
+      "owner": null,
+      "priority_note": null,
+      "status_note": null,
+      "cross_doc_links": [],
+      "session_refs": [],
+      "commit_refs": []
+    }
+  ]
+}

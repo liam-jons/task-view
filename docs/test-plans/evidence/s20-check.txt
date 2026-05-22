@@ -1,0 +1,1 @@
+task-view --check: task-list OK (30 mirrors written, 0 orphans deleted).
