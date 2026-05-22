@@ -7,6 +7,13 @@
     "./components/ImageAnnotator": "./components/ImageAnnotator/index.tsx",
     "./components/sidebar/*": "./components/sidebar/*.tsx",
     "./components/plan-diff/*": "./components/plan-diff/*.tsx",
+    "./record-view/*": {
+      "tsx": "./record-view/*.tsx",
+      "ts": "./record-view/*.ts",
+      "default": "./record-view/*.tsx"
+    },
+    "./record-view/types": "./record-view/types.ts",
+    "./record-view/url-state": "./record-view/url-state.ts",
     "./utils/*": "./utils/*.ts",
     "./hooks/*": "./hooks/*.ts",
     "./shortcuts": "./shortcuts/index.ts",

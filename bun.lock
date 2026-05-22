@@ -52,6 +52,13 @@
       "dependencies": {
         "@task-view/schemas": "workspace:*",
         "@task-view/shared": "workspace:*",
+        "@task-view/ui": "workspace:*",
+        "react": "^19.2.3",
+        "react-dom": "^19.2.3",
+      },
+      "devDependencies": {
+        "@types/react": "^19.2.0",
+        "@types/react-dom": "^19.2.0",
       },
       "peerDependencies": {
         "bun": ">=1.0.0",
