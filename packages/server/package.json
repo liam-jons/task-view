@@ -9,7 +9,13 @@
     ".": "./index.ts",
     "./browser": "./browser.ts",
     "./repo": "./repo.ts",
-    "./project": "./project.ts"
+    "./project": "./project.ts",
+    "./detect-schema": "./detect-schema.ts",
+    "./mirror-generator": "./mirror-generator.ts",
+    "./path-resolution": "./path-resolution.ts",
+    "./ledger": "./ledger.ts",
+    "./patch-server": "./patch-server.ts",
+    "./loopback-bind": "./loopback-bind.ts"
   },
   "files": [
     "*.ts"
