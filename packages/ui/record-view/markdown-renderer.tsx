@@ -5,11 +5,11 @@
  *
  * For 20.9 (read mode) the description / narrative / notes / details
  * bodies render via the upstream `parseMarkdownToBlocks` + `BlockRenderer`
- * pipeline already shipped in `packages/ui/components/`. To keep the
- * record-view module self-contained (no React-DOM dependency in test
- * paths that don't need it), this file re-exports a minimal `MarkdownBody`
- * that delegates to the existing pipeline when used at runtime, but for
- * the SSR test paths in 20.9 we use a small block-tree-to-HTML walk.
+ * pipeline already shipped in `packages/ui/components/`. The earlier
+ * 20.9 implementation used a `<pre>` placeholder; the S64 W1 close-out
+ * carryforward (Finding-4) rewires `MarkdownBody` to the full pipeline
+ * so pipe-formatted tables, code blocks, headings, lists, and inline
+ * emphasis all render correctly.
  *
  * For Subtask details that may contain `<info added on ...>` journal
  * blocks (PRODUCT inv 8 last bullet), the renderer wraps each journal
@@ -18,13 +18,54 @@
  * `<info added on TIMESTAMP> ... </info added on TIMESTAMP>` literal
  * boundary in the raw `details` string.
  *
- * For the production SPA render path the upstream BlockRenderer handles
- * CommonMark + GFM. For the SSR test path here we emit a `<pre>` block
- * containing the raw markdown so tests can assert on content presence
- * without requiring a full DOM mount. The CSS classes are stable so the
- * Checker can hook the visual treatment in a follow-up.
+ * Both `MarkdownBody` and `DetailsBodyWithJournal` route through the
+ * same upstream BlockRenderer pipeline. The previous `<pre>` rendering
+ * path is GONE — that was a 20.9 placeholder, not a deliberate fallback.
  */
 import React from "react";
+
+import {
+  parseMarkdownToBlocks,
+  computeListIndices,
+} from "../utils/parser";
+import { BlockRenderer } from "../components/BlockRenderer";
+import type { Block } from "../types";
+
+/**
+ * Group consecutive list-item blocks into a single render group. Matches
+ * the Viewer.tsx convention so ordered-list numbering is correct (per
+ * `computeListIndices`) and list items share a container.
+ *
+ * The Viewer.tsx version of this helper is internal — replicated here
+ * to keep the record-view package self-contained without forcing an
+ * extra public-API surface on the components package.
+ */
+type RenderGroup =
+  | { type: "single"; block: Block }
+  | { type: "list-group"; blocks: Block[]; key: string };
+
+function groupBlocks(blocks: Block[]): RenderGroup[] {
+  const groups: RenderGroup[] = [];
+  let i = 0;
+  while (i < blocks.length) {
+    if (blocks[i].type === "list-item") {
+      const listBlocks: Block[] = [];
+      while (i < blocks.length && blocks[i].type === "list-item") {
+        listBlocks.push(blocks[i]);
+        i++;
+      }
+      groups.push({
+        type: "list-group",
+        blocks: listBlocks,
+        key: `list-${listBlocks[0].id}`,
+      });
+    } else {
+      groups.push({ type: "single", block: blocks[i] });
+      i++;
+    }
+  }
+  return groups;
+}
 
 const JOURNAL_OPEN_RE = /<info added on ([^>]+)>/g;
 
@@ -95,22 +136,52 @@ function escapeRegex(s: string): string {
 }
 
 /**
- * Render a Markdown body to HTML. For 20.9 (SSR test path) we emit the
- * raw markdown inside a stable container with a CSS class — the
- * production SPA path swaps in the upstream BlockRenderer pipeline. The
- * Checker can verify content presence + CSS class hooks without needing
- * a full CommonMark assertion (which is already covered by upstream
- * parser tests per PRODUCT inv 10).
+ * Render a Markdown body to HTML via the upstream CommonMark + GFM
+ * pipeline. Routes through `parseMarkdownToBlocks` → `groupBlocks` →
+ * `BlockRenderer` so pipe tables, code blocks, headings, lists, and
+ * inline emphasis all render correctly (PRODUCT inv 10 floor).
+ *
+ * Empty markdown renders an empty container — no `<pre>` placeholder.
+ *
+ * The container retains the `record-view-markdown-body` class +
+ * `data-markdown-body` attribute as a stable hook for CSS / tests.
  */
 export const MarkdownBody: React.FC<{ markdown: string }> = ({
   markdown,
 }) => {
+  const blocks = parseMarkdownToBlocks(markdown);
   return (
     <div className="record-view-markdown-body" data-markdown-body>
-      <pre className="record-view-markdown-raw">{markdown}</pre>
+      {renderBlockGroups(blocks)}
     </div>
   );
 };
+
+/**
+ * Iterate parsed blocks → grouped render units → BlockRenderer calls.
+ * Extracted as a helper so DetailsBodyWithJournal can reuse it for the
+ * prose segments without duplicating the group + BlockRenderer call
+ * fan-out.
+ */
+function renderBlockGroups(blocks: Block[]): React.ReactElement[] {
+  return groupBlocks(blocks).map((group) => {
+    if (group.type === "list-group") {
+      const indices = computeListIndices(group.blocks);
+      return (
+        <div key={group.key} data-render-group="list">
+          {group.blocks.map((block, i) => (
+            <BlockRenderer
+              key={block.id}
+              block={block}
+              orderedIndex={indices[i]}
+            />
+          ))}
+        </div>
+      );
+    }
+    return <BlockRenderer key={group.block.id} block={group.block} />;
+  });
+}
 
 /**
  * Render a Subtask `details` body with journal-block visual distinction
@@ -127,13 +198,18 @@ export const DetailsBodyWithJournal: React.FC<{ details: string }> = ({
     <div className="record-view-details" data-details-with-journal>
       {segments.map((seg, i) => {
         if (seg.kind === "prose") {
+          // Prose segments route through the same CommonMark + GFM
+          // pipeline as MarkdownBody — empty / whitespace-only segments
+          // are skipped to avoid stray empty containers between
+          // adjacent journal blocks.
+          if (seg.text.trim() === "") return null;
           return (
             <div
               key={`p${i}`}
               className="record-view-details-prose"
               data-segment="prose"
             >
-              <pre className="record-view-markdown-raw">{seg.text}</pre>
+              {renderBlockGroups(parseMarkdownToBlocks(seg.text))}
             </div>
           );
         }
@@ -151,7 +227,9 @@ export const DetailsBodyWithJournal: React.FC<{ details: string }> = ({
                 ({seg.timestamp})
               </span>
             </header>
-            <pre className="record-view-markdown-raw">{seg.text}</pre>
+            <div className="record-view-details-journal-body">
+              {renderBlockGroups(parseMarkdownToBlocks(seg.text))}
+            </div>
           </aside>
         );
       })}

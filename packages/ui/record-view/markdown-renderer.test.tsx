@@ -90,4 +90,75 @@ describe("MarkdownBody", () => {
     expect(html).toContain("Hello");
     expect(html).toContain("World");
   });
+
+  // ── S64 W1 carryforward (Finding-4): MarkdownBody CommonMark rewire ─────
+  // Per task-executor brief: "Make sure pipe-formatted tables, code blocks,
+  // inline emphasis all render correctly."
+
+  test("renders headings via the BlockRenderer pipeline (no <pre> placeholder)", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownBody markdown={"# Top heading\n\n## Sub heading"} />,
+    );
+    expect(html).toContain("<h1");
+    expect(html).toContain("Top heading");
+    expect(html).toContain("<h2");
+    expect(html).toContain("Sub heading");
+    // The old `<pre>` placeholder MUST be gone.
+    expect(html).not.toContain('<pre class="record-view-markdown-raw">');
+  });
+
+  test("renders inline emphasis — bold + italic + code spans", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownBody
+        markdown={"This is **bold**, this is *italic*, this is `code`."}
+      />,
+    );
+    expect(html).toContain("<strong>bold</strong>");
+    expect(html).toContain("<em>italic</em>");
+    expect(html).toContain("<code>code</code>");
+  });
+
+  test("renders pipe-formatted tables via TableBlock", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownBody
+        markdown={
+          "| col1 | col2 |\n| --- | --- |\n| val1 | val2 |\n| val3 | val4 |"
+        }
+      />,
+    );
+    // Table cells should appear inside table markup
+    expect(html).toContain("<table");
+    expect(html).toContain("col1");
+    expect(html).toContain("val1");
+    expect(html).toContain("val4");
+  });
+
+  test("renders fenced code blocks via CodeBlock", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownBody
+        markdown={"```ts\nconst x = 42;\nconsole.log(x);\n```"}
+      />,
+    );
+    // CodeBlock renders the body — content must survive
+    expect(html).toContain("const x = 42");
+    expect(html).toContain("console.log(x)");
+  });
+
+  test("renders unordered list items", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownBody markdown={"- alpha\n- beta\n- gamma"} />,
+    );
+    expect(html).toContain("alpha");
+    expect(html).toContain("beta");
+    expect(html).toContain("gamma");
+    expect(html).toContain('data-render-group="list"');
+  });
+
+  test("renders inline links as <a> elements", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownBody markdown={"See [docs](https://example.com/x)."} />,
+    );
+    expect(html).toContain('href="https://example.com/x"');
+    expect(html).toContain("docs</a>");
+  });
 });
