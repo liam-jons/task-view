@@ -262,6 +262,3 @@ function columnsForColumnSet(
   }
 }
 
-// Re-exported for any external code (e.g. roadmap-item-view) that wants
-// to use the same column descriptors.
-export { columnsForColumnSet };
