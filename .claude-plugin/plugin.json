@@ -1,0 +1,17 @@
+{
+  "name": "task-view",
+  "version": "0.1.0",
+  "description": "Render and edit Knowledge Hub workflow ledgers (task-list / roadmap / backlog) in the browser. Loopback-only server with atomic write + mtime-collision detection.",
+  "author": {
+    "name": "Knowledge Hub team"
+  },
+  "repository": "https://github.com/liam-jons/task-view",
+  "keywords": ["task-list", "roadmap", "backlog", "ledger", "json", "view", "edit"],
+  "commands": [
+    {
+      "name": "/task-view",
+      "description": "Launch task-view against the current project's ledger. Optional path argument: /task-view <path-to-ledger.json>.",
+      "script": "node_modules/.bin/task-view"
+    }
+  ]
+}
