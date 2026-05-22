@@ -378,3 +378,18 @@ body:has([data-popout="true"]) .os-scrollbar {
 .directive-warning .directive-title { color: #f59e0b; }
 .directive-danger, .directive-caution { background: color-mix(in srgb, #ef4444 10%, transparent); border-color: color-mix(in srgb, #ef4444 40%, transparent); }
 .directive-danger .directive-title, .directive-caution .directive-title { color: #ef4444; }
+
+/* Screen-reader-only utility — matches Tailwind sr-only semantics. Used by
+   visually-hidden labels (e.g. drag-handle column header) so AT users get
+   text content while sighted users see only the visual gutter. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
