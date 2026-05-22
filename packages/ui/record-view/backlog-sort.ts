@@ -41,7 +41,7 @@ export const PRIORITY_ORDINALS: Readonly<Record<Priority, number>> = {
   trigger: 7,
 };
 
-type Priority = (typeof Priority.options)[number];
+type PriorityValue = (typeof Priority.options)[number];
 
 /**
  * Sort Backlog items by `priority → rank (nulls last) → id`. Stable —
@@ -56,8 +56,8 @@ export function sortBacklogItemsForIndex(
   const decorated = items.map((item, idx) => ({ item, idx }));
   decorated.sort((a, b) => {
     // 1. Priority ordinal.
-    const pa = PRIORITY_ORDINALS[a.item.priority as Priority];
-    const pb = PRIORITY_ORDINALS[b.item.priority as Priority];
+    const pa = PRIORITY_ORDINALS[a.item.priority as PriorityValue];
+    const pb = PRIORITY_ORDINALS[b.item.priority as PriorityValue];
     if (pa !== pb) return pa - pb;
 
     // 2. Rank within tier; nulls last.
