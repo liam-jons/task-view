@@ -531,6 +531,25 @@ describe("applyRoadmapPatches — theme field replacement (ID-20.19)", () => {
       expect(result.detail).toContain("single field");
     }
   });
+
+  // ── ID-20.26: optional-field guard fix ──────────────────────────────────────
+
+  test("ID-20.26: typo'd field on Theme still errors — not a silent no-op", () => {
+    // RoadmapThemeSchema uses .strict() so a typo'd field would produce a
+    // schema-error at re-parse even without the guard. After the fix
+    // (schema-keyset guard) it surfaces as a walk-error before Zod runs —
+    // either way the result must NOT be ok. Exercises the guard path for the
+    // roadmap surface (mirrors the Task/Subtask/Backlog typo cases).
+    const snapshot = makeRoadmap();
+    const result = applyRoadmapPatches(snapshot, [
+      { fieldPath: ["themes", "1", "statsu_notes"], newValue: "typo" }, // deliberate typo
+    ]);
+    expect(result.ok).toBe(false);
+    expect(["walk-error", "schema-error"]).toContain(result.ok ? "ok" : result.kind);
+    if (!result.ok && result.kind === "walk-error") {
+      expect(result.detail).toContain("statsu_notes");
+    }
+  });
 });
 
 // ── Backlog patches ───────────────────────────────────────────────────────────
@@ -599,6 +618,19 @@ describe("applyBacklogPatches — item field replacement", () => {
     ]);
     if (!result.ok) throw new Error(`expected ok; got kind=${result.kind} detail=${result.kind === "walk-error" ? result.detail : ""}`);
     expect(result.parsed.items[0].details).toBe("Expanded brief for this item.");
+  });
+
+  test("ID-20.26: SET testStrategy (optional, absent on live records) succeeds", () => {
+    // 'testStrategy' is z.string().nullable().optional() — absent on the
+    // makeBacklog() fixture item. The schema-keyset guard must permit the
+    // write even though hasOwnProperty would have returned false.
+    const snapshot = makeBacklog();
+    expect("testStrategy" in snapshot.items[0]).toBe(false);
+    const result = applyBacklogPatches(snapshot, [
+      { fieldPath: ["items", "30", "testStrategy"], newValue: "Acceptance: item ships when X." },
+    ]);
+    if (!result.ok) throw new Error(`expected ok; got kind=${result.kind} detail=${result.kind === "walk-error" ? result.detail : ""}`);
+    expect(result.parsed.items[0].testStrategy).toBe("Acceptance: item ships when X.");
   });
 
   test("ID-20.26: typo'd field on BacklogItem still errors — not a silent no-op", () => {
