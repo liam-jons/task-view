@@ -135,9 +135,28 @@ function openEditor(openButton: HTMLElement): void {
   const originalNodes = Array.from(container.childNodes).map((n) =>
     n.cloneNode(true),
   );
-  const currentValue = readDisplayedValue(container);
+  // ID-20.25: prefer the raw-source hook on the affordance so textarea
+  // fields (description / details / notes) pre-populate with the RAW
+  // Markdown source — incl. `<info added on …>` journal blocks — rather
+  // than the rendered textContent (PRODUCT inv 27-28). Falls back to the
+  // existing rank/textContent resolution when the hook is absent.
+  const rawValueAttr = openButton.getAttribute("data-edit-raw-value");
+  const currentValue =
+    rawValueAttr !== null ? rawValueAttr : readDisplayedValue(container);
 
-  const { wrapper, input } = buildEditForm(kind, fieldAttr ?? "", currentValue);
+  // ID-20.25: enum affordances carry their allowed values on a
+  // `data-edit-options` hook (comma-separated enum literals — every enum
+  // value is a simple token with no comma, so comma is a safe delimiter).
+  // The dispatcher builds the `<select>` from these (inv 31), with every
+  // value selectable (inv 32 — no state-machine gating).
+  const optionsAttr = openButton.getAttribute("data-edit-options");
+
+  const { wrapper, input } = buildEditForm(
+    kind,
+    fieldAttr ?? "",
+    currentValue,
+    optionsAttr,
+  );
   clearChildren(container);
   container.appendChild(wrapper);
   input.focus();
@@ -174,6 +193,7 @@ function buildEditForm(
   kind: DispatchKind,
   fieldAttr: string,
   currentValue: string,
+  optionsAttr?: string | null,
 ): {
   wrapper: HTMLFormElement;
   input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
@@ -192,6 +212,32 @@ function buildEditForm(
     ta.value = currentValue;
     ta.addEventListener("input", () => autosize(ta));
     input = ta;
+  } else if (kind === "enum" || kind === "enum-nullable") {
+    // ID-20.25: enum dropdown built from the `data-edit-options` hook
+    // (PRODUCT inv 30-32). For `enum-nullable` an empty-value "(unset)"
+    // sentinel is prepended; `buildPatchForKind` serialises that ""
+    // back to `null` on save. Every option is selectable regardless of
+    // the current value (inv 32 — no state-machine transition gating).
+    const select = document.createElement("select");
+    select.className = "record-view-enum-dropdown";
+    if (kind === "enum-nullable") {
+      const unset = document.createElement("option");
+      unset.value = "";
+      unset.setAttribute("data-nullable-sentinel", "");
+      unset.textContent = "(unset)";
+      select.appendChild(unset);
+    }
+    for (const opt of parseOptionsAttr(optionsAttr)) {
+      const option = document.createElement("option");
+      option.value = opt;
+      option.textContent = opt;
+      select.appendChild(option);
+    }
+    // Pre-select the current value. happy-dom + browsers both honour
+    // assigning `.value` to the matching option; when no option matches
+    // (e.g. an unset nullable), the empty sentinel stays selected.
+    select.value = currentValue;
+    input = select;
   } else {
     const el = document.createElement("input");
     el.type =
@@ -230,6 +276,20 @@ function makeActionButton(
 function autosize(ta: HTMLTextAreaElement): void {
   ta.style.height = "auto";
   ta.style.height = `${ta.scrollHeight}px`;
+}
+
+/**
+ * Parse the `data-edit-options` hook into the list of enum literals.
+ * Comma-separated (enum values are simple tokens — no commas); empty
+ * entries are dropped. An absent/empty attr yields no options (the
+ * `<select>` then carries only the nullable sentinel, if any).
+ */
+function parseOptionsAttr(attr: string | null | undefined): string[] {
+  if (typeof attr !== "string" || attr === "") return [];
+  return attr
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 }
 
 // ── Cancel: restore original display ─────────────────────────────────────────
