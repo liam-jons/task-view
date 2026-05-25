@@ -1,0 +1,371 @@
+{
+  "document_name": "Knowledge Hub Roadmap",
+  "document_purpose": "**Date:** 06/05/2026. **Status:** Active. Forward-looking only — no completed\nitems. For shipped capability state see `state-of-the-product.md`; for\nsession-by-session narrative see the per-§ change-log files at\n`state-of-the-product-change-log-section-{5,8,9}.md`.",
+  "date": "2026-05-06",
+  "status": "Active",
+  "forward_looking_only": true,
+  "related_documents": [
+    "state-of-the-product.md",
+    "product-backlog.json"
+  ],
+  "last_updated": "kh-main-S262 — canonical-pipeline theme: added ID-45 (T7 full-corpus) + ID-46 (T14 absorption cleanup) to linked_tasks; Phew full-corpus note added",
+  "themes": [
+    {
+      "id": "1",
+      "title": "Knowledge base foundations",
+      "description": "The Knowledge Hub product is built on a single canonical knowledge base — entities, content items, classification metadata, embeddings, taxonomy, and the surrounding RLS / governance discipline. This theme covers the data-shape work that every other capability depends on: schema invariants, classification correctness, RLS enforcement, taxonomy curation, and the context graph (citation tracking, bid-outcome linking, win-based surfacing) that turns the KB into a learning system.\n\nOutcome shape: every domain application (procurement, sales proposals, future) reads from one canonical KB. Classification is consistent across pipelines and surfaces; RLS prevents cross-tenant leakage; the context graph reveals which content drove which outcomes; taxonomy changes propagate cleanly via the canonical pipeline.\n\nScope boundary: this theme owns the data foundations themselves. Domain-specific consumers (bid drafting, eval rubrics, ingestion UI) belong to their respective themes; this one is the substrate.",
+      "time_horizon": "now",
+      "status": "in_progress",
+      "linked_tasks": [
+        "15",
+        "29"
+      ],
+      "linked_backlog": [
+        "40",
+        "42",
+        "43",
+        "44",
+        "45",
+        "46",
+        "77",
+        "92",
+        "93",
+        "106",
+        "132",
+        "136",
+        "137",
+        "138",
+        "139",
+        "140"
+      ],
+      "session_refs": [
+        "kh-prod-readiness-S68"
+      ],
+      "commit_refs": [],
+      "cross_doc_links": [
+        {
+          "path": "docs/reference/SCHEMA-QUICK-REFERENCE.md",
+          "anchor": null,
+          "raw": "Schema quick reference"
+        }
+      ],
+      "notes": "Bid-outcome linking + win-based surfacing (backlog 136-139) sit here rather than under Procurement because they are KB-wide signals; classifier-quality items (92, 93) ship behavioural improvements to the classification pipeline; performance (132) covers embedding-cache choices that affect every KB consumer."
+    },
+    {
+      "id": "2",
+      "title": "Procurement (bid drafting)",
+      "description": "The first domain application of the Knowledge Hub: end-to-end UK SMB bid drafting. Question routing, regeneration affordances, opportunity-feed integration, mobile-friendly bid sessions, and the procurement-template asset library (RFP / PQQ / G-Cloud / opportunity scan). This is the proof-of-value capability — if Procurement does not delight a real SMB bid team, the KB foundations are not delivering on their promise.\n\nOutcome shape: a procurement team opens a bid, sees what changed since their last session, navigates by question posture, regenerates answers with templated instructions, and ships a competitive response without leaving the surface. Templates (RFP/PQQ/G-Cloud) are authored once and re-used; XLSX import handles Q&A ingestion; the bid lifecycle is observable end-to-end.\n\nScope boundary: bid-outcome linking + win-based content surfacing belong to Knowledge base foundations (KB-wide signals). This theme owns the bid-drafting UX surface and procurement-specific asset library.",
+      "time_horizon": "now",
+      "status": "pending",
+      "linked_tasks": [],
+      "linked_backlog": [
+        "54",
+        "55",
+        "56",
+        "57",
+        "87",
+        "108",
+        "103"
+      ],
+      "session_refs": [
+        "kh-prod-readiness-S68"
+      ],
+      "commit_refs": [],
+      "cross_doc_links": [],
+      "notes": "No live Task ID in flight for the procurement-UX surface yet — the work sits on the backlog awaiting promotion. Re-evaluate at the next quarterly cadence whether to promote one or more procurement items into a Task."
+    },
+    {
+      "id": "3",
+      "title": "Cocoindex canonical pipeline",
+      "description": "The canonical content ingestion + transformation pipeline built on cocoindex 1.0+. One declarative flow processes raw documents into extracted entities, classified chunks, and embeddings — replacing the previous patchwork of per-source ingestion scripts with an incremental, observable pipeline that handles change detection automatically. Cloud Run sidecar hosts the heavy extractor binaries (Docling, pullmd) so the main app stays lean.\n\nOutcome shape: every ingestion route — markdown sync, .docx Q&A import, web scraping, future XLSX import — flows through cocoindex. Pipeline runs are observable; change detection is incremental; the Cloud Run sidecar autoscales with batch load; the schema-level KB foundations theme consumes pipeline outputs cleanly.\n\nScope boundary: this theme owns the pipeline itself. Domain-specific data shapes (entity schemas, classification labels) belong to Knowledge base foundations; ingestion-UX surfaces belong to the Ingestion UX theme.",
+      "time_horizon": "now",
+      "status": "in_progress",
+      "linked_tasks": [
+        "28",
+        "45",
+        "46"
+      ],
+      "linked_backlog": [
+        "70",
+        "86"
+      ],
+      "session_refs": [
+        "kh-prod-readiness-S68",
+        "kh-main-S262"
+      ],
+      "commit_refs": [],
+      "cross_doc_links": [
+        {
+          "path": "docs/specs/canonical-pipeline-implementation-plan/PLAN.md",
+          "anchor": null,
+          "raw": "Canonical pipeline PLAN"
+        }
+      ],
+      "notes": "Task 31 (canonical-pipeline → task-list migration) shipped in S65; that work is captured under SDLC workflow orchestration since it concerns ledger shape rather than pipeline behaviour. Phew full-corpus onboarding (ID-45 T7 + ID-46 T14): ingest complete Phew client corpus via cocoindex (all content types) and retire legacy pipeline post-reingest — per Liam S262 clarification superseding the Q&A-only framing. ID-45 soft-deps ID-42 (pullmd) if any Phew content is HTML/URL-sourced."
+    },
+    {
+      "id": "4",
+      "title": "AI evaluation and refinement",
+      "description": "The systematic surface that proves the AI doing the work is getting better — not worse — over time. Per-touchpoint eval automation, taxonomy / model / data-model change-impact detection, CI gates that block regression, A/B testing of classification prompts, prompt rollback across all touchpoints, and a flag-pattern analysis pipeline that turns content-review + governance-review signals into prompt improvement suggestions.\n\nOutcome shape: every change that touches an AI behaviour (prompt, model, taxonomy, data-model) runs through eval before merging. Regressions block; improvements are quantifiable; HITL flags accumulate into actionable prompt-change proposals; bid drafting + digest evaluation rubrics are first-class eval suites.\n\nScope boundary: this theme owns the eval + refinement loop. The AI behaviours being evaluated belong to their respective surfaces (classification quality lives in KB foundations; bid drafting lives in Procurement).",
+      "time_horizon": "next",
+      "status": "pending",
+      "linked_tasks": [],
+      "linked_backlog": [
+        "87",
+        "94",
+        "95",
+        "96",
+        "97",
+        "98",
+        "99",
+        "100",
+        "101",
+        "102",
+        "103",
+        "104",
+        "105"
+      ],
+      "session_refs": [
+        "kh-prod-readiness-S68"
+      ],
+      "commit_refs": [],
+      "cross_doc_links": [],
+      "notes": "Phases 3 (infrastructure) + 4 (HITL refinement) + 5 (full coverage) map to the eval-infrastructure / ai-refinement / eval-coverage backlog tracks respectively. Bid drafting eval baseline (87) is the foundational dependency — without real bid data the Phase 5 bid-drafting rubric (103) cannot land."
+    },
+    {
+      "id": "5",
+      "title": "Ingestion UX",
+      "description": "The client-non-developer ingest path. Today ingestion happens via developer-operated CLIs or one-off scripts; this theme delivers first-class UI surfaces so a client admin can ingest .docx Q&A files, XLSX bid spreadsheets, and markdown batches without engineering support. The /admin/imports surface unifies all ingest job-types behind one observable affordance.\n\nOutcome shape: a non-developer client admin uploads source material via the web UI; sees ingest progress; gets dedup warnings + URL-already-exists guards; and the result lands in the KB via the canonical pipeline. The full E2E bid-automation aspiration (Contracts Finder integration) is the long-horizon endpoint.\n\nScope boundary: this theme owns the UX layer. The pipeline that processes the uploaded content belongs to Cocoindex canonical pipeline; the data shape it lands belongs to Knowledge base foundations.",
+      "time_horizon": "next",
+      "status": "pending",
+      "linked_tasks": [],
+      "linked_backlog": [
+        "61",
+        "62",
+        "88",
+        "109",
+        "110",
+        "119"
+      ],
+      "session_refs": [
+        "kh-prod-readiness-S68"
+      ],
+      "commit_refs": [],
+      "cross_doc_links": [],
+      "notes": "EP3 UI Pattern E retrofit (61) is parked pending taxonomy + classifier stabilisation; EP8 Q&A .docx import (88) is the immediate next ingest UI surface; XLSX import (109) follows once .docx pattern is proven."
+    },
+    {
+      "id": "6",
+      "title": "MCP server and plugin",
+      "description": "The Anthropic Model Context Protocol integration — Knowledge Hub exposes its KB via an MCP server consumable by Claude Desktop, Claude.ai, and any future MCP client. The plugin bundle (committed at lib/mcp/plugin-bundle.ts) packages the MCP App UIs so Claude Desktop users get rich, branded experiences alongside the tool surface. Daily-briefing and certification-status are the showcase tools.\n\nOutcome shape: an external AI client (Claude Desktop, Claude.ai) authenticates against the KH MCP server, browses taxonomy via kb://taxonomy resources, queries content via MCP tools, and renders rich UIs via the bundled plugin. Marketing personas — sales, procurement, ingestion ops — each get bespoke prompt + tool sets.\n\nScope boundary: this theme owns the MCP surface. The KB content the MCP exposes belongs to Knowledge base foundations.",
+      "time_horizon": "later",
+      "status": "pending",
+      "linked_tasks": [],
+      "linked_backlog": [
+        "47",
+        "48",
+        "49",
+        "50",
+        "51",
+        "52"
+      ],
+      "session_refs": [
+        "kh-prod-readiness-S68"
+      ],
+      "commit_refs": [],
+      "cross_doc_links": [],
+      "notes": "Marketing-persona H2 enhancements for the daily-briefing skill (49) is the next prompt-iteration surface; tool-schema hygiene (50) enforces strict: true + additionalProperties: false across TS + Python so MCP clients get reliable contract validation."
+    },
+    {
+      "id": "7",
+      "title": "Onboarding and UX polish",
+      "description": "The first-session experience and the long-tail UX papercuts that turn a functional product into one users return to weekly. Onboarding overlays for the bid session and admin settings, getting-started guides for infrequent users, mobile bottom-sheet navigation, change-report digests as governance artefacts, shareable item-detail reports, and the why-change taxonomy validation discipline (required-Why whitelist for high-stakes columns).\n\nOutcome shape: a first-time admin completes setup without help; a returning user sees what changed since their last visit; a mobile user can run a bid session; weekly digests are audit-grade artefacts; small UI affordances (cert-holder dropdown placeholder, shareable reports) reduce friction throughout.\n\nScope boundary: this theme owns onboarding + cross-cutting UX polish. Bid-specific UX belongs to Procurement; ingest-specific UX belongs to Ingestion UX.",
+      "time_horizon": "later",
+      "status": "pending",
+      "linked_tasks": [],
+      "linked_backlog": [
+        "28",
+        "29",
+        "30",
+        "31",
+        "32",
+        "37",
+        "38",
+        "39",
+        "58",
+        "59",
+        "60",
+        "140"
+      ],
+      "session_refs": [
+        "kh-prod-readiness-S68"
+      ],
+      "commit_refs": [],
+      "cross_doc_links": [],
+      "notes": "Cert-holder dropdown UX (59) overlaps the procurement UX area but is generally applicable across browse surfaces, so it sits here; why-change taxonomy validation (140) is currently a needs_research spike — moves once research lands."
+    },
+    {
+      "id": "8",
+      "title": "Production hardening",
+      "description": "The operational discipline that keeps a live SaaS reliable, observable, and safe. Auth flows (session duration, organisation branding, admin-controlled provisioning, multi-client allowlists), RLS auto-enable trigger coverage for DDL variants, rate limiting on non-AI routes, RSS feed auth design, retroactive RLS audits, sub-agent sandbox tightening, cost telemetry, async processing queues for large diffs, and Cloud Run / observability work.\n\nOutcome shape: every public route is rate-limited; every table has RLS; cost is visible per workspace; large diffs do not block the UI; sub-agent sandboxes are tight by default; multi-tenant deployments have first-class auth + branding.\n\nScope boundary: this theme owns operational hardening of the live product. Workflow-orchestration hardening (sub-agent dispatch, worktree isolation) belongs to SDLC workflow orchestration.",
+      "time_horizon": "next",
+      "status": "pending",
+      "linked_tasks": [
+        "32"
+      ],
+      "linked_backlog": [
+        "17",
+        "33",
+        "34",
+        "35",
+        "36",
+        "63",
+        "66",
+        "69",
+        "78",
+        "79",
+        "107",
+        "111",
+        "112",
+        "131",
+        "133",
+        "134",
+        "135"
+      ],
+      "session_refs": [
+        "kh-prod-readiness-S68"
+      ],
+      "commit_refs": [],
+      "cross_doc_links": [],
+      "notes": "Cloud Run buildpack equivalent (63) + non-cocoindex job migration (135) sit here rather than under the pipeline theme because they cover the operational deployment surface; refactor-large-monolithic-files (133) + skill budget reduction (134) are codebase-health items that affect maintenance velocity."
+    },
+    {
+      "id": "9",
+      "title": "Test infrastructure",
+      "description": "The systematic surface that ensures every change is tested against real behaviour — not implementation accidents — and that the E2E coverage matches the surfaces customers actually use. Programmatic test audit (ts-morph + ast-grep sweep), test remediation across W-RE className coupling + W-RH validation guards, Playwright config audit against playwright-best-practices, full E2E suite CI migration, mobile viewport E2E runs, accessibility (axe-core) integration, and per-feature E2E coverage (batch create, intelligence admin, team / taxonomy mutations, entity merge / split, item lifecycle, auth logout, search filter persistence).\n\nOutcome shape: every PR runs the full E2E suite; mobile + a11y are first-class assertions; programmatically-audited tests verify real behaviour (not the implementation); the per-touchpoint test coverage tracks the customer-observable surface area.\n\nScope boundary: this theme owns test infrastructure + E2E coverage. AI-behaviour evaluation (per-touchpoint eval, prompt A/B) belongs to AI evaluation and refinement.",
+      "time_horizon": "next",
+      "status": "pending",
+      "linked_tasks": [],
+      "linked_backlog": [
+        "65",
+        "75",
+        "113",
+        "114",
+        "115",
+        "116",
+        "117",
+        "118",
+        "119",
+        "120",
+        "121",
+        "122",
+        "123",
+        "124",
+        "125",
+        "126",
+        "127",
+        "128",
+        "129",
+        "130"
+      ],
+      "session_refs": [
+        "kh-prod-readiness-S68"
+      ],
+      "commit_refs": [],
+      "cross_doc_links": [
+        {
+          "path": "docs/reference/test-philosophy.md",
+          "anchor": null,
+          "raw": "Test philosophy reference"
+        }
+      ],
+      "notes": "Test-philosophy + playwright-best-practices skills already exist as references; the programmatic test audit (113) operationalises them against the live __tests__/ + e2e/tests/ corpus. Ingestion Phase 5 coverage (119) is dual-purpose — it serves both this theme and Ingestion UX; primary home is here since the work is the test, not the UI itself."
+    },
+    {
+      "id": "10",
+      "title": "SDLC workflow orchestration",
+      "description": "The internal infrastructure that lets Liam + Claude Code ship Knowledge Hub features as a team. Workflow orchestration skill, task-executor agent + task-planner agent, implement-subtask skill, per-Task .md mirror generator, ledger mutation CLI, code-intelligence integration (gitnexus + ast-dataflow + ccc), worktree isolation hardening, task-list description discipline, fix-errors skill adaptation, session-driver-cmux. The roadmap-backlog consolidation work (Task 30 itself) sits here too.\n\nOutcome shape: every implementation Subtask dispatches via a single skill (implement-subtask); every Task has a readable .md mirror; ledger mutations go through one CLI instead of inline-Python snippets; gitnexus / ast-dataflow / ccc are routinely consulted before edits; worktree isolation prevents cross-agent commit leaks; session start/end follows a stable shape.\n\nScope boundary: this theme owns the agent + ledger + worktree surface. Code-intelligence tools themselves (gitnexus, ast-dataflow libraries) are external dependencies; this theme covers their integration into the dispatch surface.",
+      "time_horizon": "now",
+      "status": "in_progress",
+      "linked_tasks": [
+        "6",
+        "7",
+        "8",
+        "10",
+        "15",
+        "16",
+        "18",
+        "19",
+        "20",
+        "22",
+        "23",
+        "24",
+        "26",
+        "27",
+        "30",
+        "31",
+        "33",
+        "34",
+        "35"
+      ],
+      "linked_backlog": [
+        "23",
+        "24",
+        "26",
+        "27",
+        "71",
+        "72",
+        "73",
+        "82",
+        "83",
+        "84",
+        "85"
+      ],
+      "session_refs": [
+        "kh-prod-readiness-S68"
+      ],
+      "commit_refs": [],
+      "cross_doc_links": [
+        {
+          "path": "docs/reference/skill-routing-map.md",
+          "anchor": null,
+          "raw": "Skill routing map"
+        },
+        {
+          "path": "docs/specs/roadmap-backlog-consolidation/PRODUCT.md",
+          "anchor": null,
+          "raw": "Roadmap-backlog consolidation PRODUCT spec"
+        }
+      ],
+      "notes": "Largest theme by linked-Task count — reflects the substantial workflow-infrastructure work shipped during the production-readiness track. Task 25 (Roadmap §3 restructure) is cancelled and intentionally not linked. Task-view repo backlog items (83-85) sit here because the per-Task .md mirror viewer (Task 20) consumes them."
+    },
+    {
+      "id": "11",
+      "title": "Documentation surface",
+      "description": "The user-facing documentation site (Astro + Starlight) ported from the Warp docubot project, plus the per-Task .md mirror viewer and the surrounding reference-doc curation discipline. Together they give Liam + the team a navigable docs surface that stays in sync with the JSON ledgers and the canonical specs.\n\nOutcome shape: docs.kh.phew.org.uk hosts a searchable, navigable docs site rendered from PRODUCT.md / TECH.md / RESEARCH.md / PLAN.md specs; per-Task .md mirrors at docs/reference/tasks/ID-N.md let Liam read individual Tasks without loading the whole JSON; the Astro pipeline regenerates on commit; documentation freshness is enforced via doc-freshness CI checks.\n\nScope boundary: this theme owns the docs-site infrastructure and per-Task mirror. The content (PRODUCT.md / TECH.md / RESEARCH.md specs themselves) belongs to whichever theme the spec covers.",
+      "time_horizon": "now",
+      "status": "in_progress",
+      "linked_tasks": [
+        "9",
+        "20"
+      ],
+      "linked_backlog": [
+        "64",
+        "86",
+        "91"
+      ],
+      "session_refs": [
+        "kh-prod-readiness-S68"
+      ],
+      "commit_refs": [],
+      "cross_doc_links": [
+        {
+          "path": "docs/specs/astro-starlight-docs-foundation/PRODUCT.md",
+          "anchor": null,
+          "raw": "Astro+Starlight docs foundation PRODUCT spec"
+        }
+      ],
+      "notes": "Task 9 is the compound delivery (Astro+Starlight + Warp docubot port + /update-docs decommission); Task 20 ships the per-Task mirror generator. Doc-freshness guard backlog item 86 is the next concrete maintenance task."
+    }
+  ]
+}

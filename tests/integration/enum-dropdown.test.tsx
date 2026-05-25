@@ -6,9 +6,12 @@
  * from `._def.values` (8 fields enumerated in inv 30); nullable enums
  * show literal "(unset)" sentinel.
  *
- * The 8 enums (per PRODUCT inv 30):
- *   - Task-list: Task.status (8), Task.priority (8), Subtask.status (5)
- *   - Roadmap: RoadmapItem.status (6, nullable), RoadmapItem.priority (8, nullable)
+ * The enums (per PRODUCT inv 30):
+ *   - Task-list: Task.status (8), Task.priority (8), Subtask.status (6 —
+ *     'cancelled' retained at Subtask level per S261/S262)
+ *   - Roadmap: RoadmapStatus (6, nullable), RoadmapPriority (8, nullable) —
+ *     the roadmap item-status / priority enums still exported by
+ *     roadmap-schema after the ID-20.19 themes[] migration
  *   - Backlog: BacklogItem.status (5), BacklogItem.priority (8), BacklogItem.type (8)
  *
  * Source of truth: `.options` (Zod 4 surface) is read at render time
@@ -68,8 +71,9 @@ describe("Task-list enum dropdowns (PRODUCT inv 30)", () => {
     expect(optionCount(html)).toBe(8);
   });
 
-  test("Subtask.status — 5 values from SubtaskStatus.options", () => {
-    expect(SubtaskStatus.options.length).toBe(5);
+  test("Subtask.status — 6 values from SubtaskStatus.options (incl. 'cancelled')", () => {
+    expect(SubtaskStatus.options.length).toBe(6);
+    expect(SubtaskStatus.options).toContain("cancelled");
     const html = renderToStaticMarkup(
       <EnumDropdownField
         fieldPath={["tasks", "20", "subtasks", "10", "status"]}
@@ -80,16 +84,16 @@ describe("Task-list enum dropdowns (PRODUCT inv 30)", () => {
     SubtaskStatus.options.forEach((v) => {
       expect(html).toContain(`value="${v}"`);
     });
-    expect(optionCount(html)).toBe(5);
+    expect(optionCount(html)).toBe(6);
   });
 });
 
 describe("Roadmap nullable enum dropdowns (PRODUCT inv 30)", () => {
-  test("RoadmapItem.status — 6 values + (unset) sentinel", () => {
+  test("RoadmapStatus — 6 values + (unset) sentinel", () => {
     expect(RoadmapStatus.options.length).toBe(6);
     const html = renderToStaticMarkup(
       <EnumDropdownField
-        fieldPath={["sections", "3.1", "items", "ID-30", "status"]}
+        fieldPath={["themes", "3", "status"]}
         draft={null}
         options={RoadmapStatus.options}
         nullable
@@ -105,11 +109,11 @@ describe("Roadmap nullable enum dropdowns (PRODUCT inv 30)", () => {
     expect(optionCount(html)).toBe(7);
   });
 
-  test("RoadmapItem.priority — 8 values + (unset) sentinel", () => {
+  test("RoadmapPriority — 8 values + (unset) sentinel", () => {
     expect(RoadmapPriority.options.length).toBe(8);
     const html = renderToStaticMarkup(
       <EnumDropdownField
-        fieldPath={["sections", "3.1", "items", "ID-30", "priority"]}
+        fieldPath={["themes", "3", "priority"]}
         draft={null}
         options={RoadmapPriority.options}
         nullable
@@ -122,14 +126,14 @@ describe("Roadmap nullable enum dropdowns (PRODUCT inv 30)", () => {
   test("nullable dropdown with non-null draft selects that value", () => {
     const html = renderToStaticMarkup(
       <EnumDropdownField
-        fieldPath={["sections", "3.1", "items", "ID-30", "status"]}
+        fieldPath={["themes", "3", "status"]}
         draft="pending"
         options={RoadmapStatus.options}
         nullable
       />,
     );
     // React's SSR renders defaultValue as the <select> selected attribute
-    expect(html).toMatch(/<select[^>]*data-edit-field="sections&gt;3.1&gt;items&gt;ID-30&gt;status"/);
+    expect(html).toMatch(/<select[^>]*data-edit-field="themes&gt;3&gt;status"/);
   });
 });
 

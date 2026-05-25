@@ -8,7 +8,7 @@
  * Covers (per TECH §5.2 + §5.5 + PRODUCT inv 38):
  *   - Task-level field replacement (status, priority, description, ...).
  *   - Subtask-level field replacement (status, details, dependencies, ...).
- *   - Roadmap section-level + item-level fields.
+ *   - Roadmap theme-level fields (ID-20.19 themes[]).
  *   - Backlog item-level fields.
  *   - Multi-patch single-pass (multiple FieldPatches in one call).
  *   - Walk errors (unknown task id, unknown subtask id, wrong head, ...).
@@ -33,7 +33,6 @@ function makeTaskList() {
   return TaskListSchema.parse({
     document_name: "Knowledge Hub Task List",
     document_purpose: "Active + recently-closed structured work — Taskmaster JSON shape.",
-    last_updated: "kh-prod-readiness-S63 representative fixture",
     related_documents: [],
     tasks: [
       {
@@ -103,38 +102,19 @@ function makeRoadmap() {
     forward_looking_only: true,
     related_documents: [],
     last_updated: "kh-prod-readiness-S63 representative fixture",
-    sections: [
+    themes: [
       {
         id: "1",
-        parent_id: null,
-        number: "1",
         title: "Foundation",
-        narrative: "Initial narrative.",
-        spec_links: [],
-        owner: "Engineering",
-        table_columns: "item_desc_owner_effort_status",
-        items: [
-          {
-            id: "1.1",
-            section_id: "1",
-            title: "Item one",
-            description: "Item one description.",
-            phase_label: null,
-            priority: "high",
-            priority_note: null,
-            severity: null,
-            status: "pending",
-            status_note: null,
-            owner: null,
-            effort_estimate: null,
-            depends_on: [],
-            blocks: [],
-            coordinates_with: [],
-            session_refs: [],
-            commit_refs: [],
-            cross_doc_links: [],
-          },
-        ],
+        description: "Foundation theme description.",
+        time_horizon: "now",
+        status: "pending",
+        linked_tasks: ["20"],
+        linked_backlog: [],
+        session_refs: [],
+        commit_refs: [],
+        cross_doc_links: [],
+        notes: "Initial notes.",
       },
     ],
   });
@@ -144,7 +124,6 @@ function makeBacklog() {
   return BacklogSchema.parse({
     document_name: "Product Backlog",
     document_purpose: "Forward-looking backlog.",
-    last_updated: "kh-prod-readiness-S63 representative fixture",
     related_documents: [],
     items: [
       {
@@ -416,56 +395,88 @@ describe("applyTaskListPatches — schema validation", () => {
 
 // ── Roadmap patches ───────────────────────────────────────────────────────────
 
-describe("applyRoadmapPatches — section + item field replacement", () => {
-  test("replaces Section.narrative", () => {
+describe("applyRoadmapPatches — theme field replacement (ID-20.19)", () => {
+  test("replaces Theme.notes", () => {
     const snapshot = makeRoadmap();
     const result = applyRoadmapPatches(snapshot, [
-      { fieldPath: ["sections", "1", "narrative"], newValue: "Updated narrative." },
+      { fieldPath: ["themes", "1", "notes"], newValue: "Updated notes." },
     ]);
     if (!result.ok) throw new Error(`expected ok; got kind=${result.kind}`);
-    expect(result.parsed.sections[0].narrative).toBe("Updated narrative.");
+    expect(result.parsed.themes[0].notes).toBe("Updated notes.");
   });
 
-  test("replaces RoadmapItem.status by item id under a section", () => {
+  test("replaces Theme.status (pending | in_progress | done)", () => {
     const snapshot = makeRoadmap();
-    // Valid RoadmapStatus values: pending | blocked | spec_needed |
-    // deferred | imp_deferred | needs_research (per WorkStatus.exclude).
-    // 'done' is NOT a valid Roadmap status (forward_looking_only).
     const result = applyRoadmapPatches(snapshot, [
-      { fieldPath: ["sections", "1", "items", "1.1", "status"], newValue: "blocked" },
+      { fieldPath: ["themes", "1", "status"], newValue: "in_progress" },
     ]);
     if (!result.ok) throw new Error(`expected ok; got kind=${result.kind}`);
-    expect(result.parsed.sections[0].items[0].status).toBe("blocked");
+    expect(result.parsed.themes[0].status).toBe("in_progress");
   });
 
-  test("replaces RoadmapItem.priority to nullable null", () => {
+  test("replaces Theme.time_horizon", () => {
     const snapshot = makeRoadmap();
     const result = applyRoadmapPatches(snapshot, [
-      { fieldPath: ["sections", "1", "items", "1.1", "priority"], newValue: null },
+      { fieldPath: ["themes", "1", "time_horizon"], newValue: "later" },
     ]);
     if (!result.ok) throw new Error(`expected ok; got kind=${result.kind}`);
-    expect(result.parsed.sections[0].items[0].priority).toBeNull();
+    expect(result.parsed.themes[0].time_horizon).toBe("later");
   });
 
-  test("rejects unknown section id", () => {
+  test("replaces Theme.title + description in a single pass", () => {
     const snapshot = makeRoadmap();
     const result = applyRoadmapPatches(snapshot, [
-      { fieldPath: ["sections", "99", "narrative"], newValue: "x" },
+      { fieldPath: ["themes", "1", "title"], newValue: "Renamed theme" },
+      { fieldPath: ["themes", "1", "description"], newValue: "New description." },
+    ]);
+    if (!result.ok) throw new Error(`expected ok; got kind=${result.kind}`);
+    expect(result.parsed.themes[0].title).toBe("Renamed theme");
+    expect(result.parsed.themes[0].description).toBe("New description.");
+  });
+
+  test("rejects an invalid Theme.status as schema-error", () => {
+    const snapshot = makeRoadmap();
+    // 'blocked' is NOT a valid theme status (themes only accept
+    // pending | in_progress | done).
+    const result = applyRoadmapPatches(snapshot, [
+      { fieldPath: ["themes", "1", "status"], newValue: "blocked" },
     ]);
     expect(result.ok).toBe(false);
-    if (!result.ok && result.kind === "walk-error") {
-      expect(result.detail).toContain('Section id "99"');
+    if (!result.ok) {
+      expect(result.kind).toBe("schema-error");
     }
   });
 
-  test("rejects unknown item id within a known section", () => {
+  test("rejects fieldPath that does not start with 'themes'", () => {
     const snapshot = makeRoadmap();
     const result = applyRoadmapPatches(snapshot, [
-      { fieldPath: ["sections", "1", "items", "9.9", "status"], newValue: "blocked" },
+      { fieldPath: ["sections", "1", "narrative"], newValue: "x" },
     ]);
     expect(result.ok).toBe(false);
     if (!result.ok && result.kind === "walk-error") {
-      expect(result.detail).toContain('Item id "9.9"');
+      expect(result.detail).toContain("themes");
+    }
+  });
+
+  test("rejects unknown theme id", () => {
+    const snapshot = makeRoadmap();
+    const result = applyRoadmapPatches(snapshot, [
+      { fieldPath: ["themes", "99", "notes"], newValue: "x" },
+    ]);
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.kind === "walk-error") {
+      expect(result.detail).toContain('Theme id "99"');
+    }
+  });
+
+  test("rejects a nested fieldPath (themes have no nested record layer)", () => {
+    const snapshot = makeRoadmap();
+    const result = applyRoadmapPatches(snapshot, [
+      { fieldPath: ["themes", "1", "items", "9.9", "status"], newValue: "blocked" },
+    ]);
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.kind === "walk-error") {
+      expect(result.detail).toContain("single field");
     }
   });
 });
@@ -528,7 +539,7 @@ describe("applyPatches — dispatcher", () => {
     const data = makeRoadmap();
     const result = applyPatches(
       { kind: "roadmap", data },
-      [{ fieldPath: ["sections", "1", "narrative"], newValue: "x" }],
+      [{ fieldPath: ["themes", "1", "notes"], newValue: "x" }],
     );
     expect(result.ok).toBe(true);
   });

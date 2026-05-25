@@ -26,9 +26,8 @@
  *     taskId is a STRING id (e.g. '20'); subtaskId is an INTEGER id
  *     (e.g. 4 — represented as a string here because FieldPath is
  *     uniformly string[]; we Number()-parse on subtask lookup).
- *   - Roadmap:
- *       ['sections', sectionId, 'narrative' | 'spec_links' | ...]
- *       ['sections', sectionId, 'items', itemId, 'status' | ...]
+ *   - Roadmap (ID-20.19 themes[]):
+ *       ['themes', themeId, 'status' | 'notes' | 'title' | ...]
  *   - Backlog:
  *       ['items', itemId, 'description' | 'status' | ...]
  *
@@ -185,92 +184,60 @@ function applyTaskListPatch(
 
 /**
  * Walk a fieldPath into a Roadmap snapshot and apply a single patch.
- * Supports section-level fields and per-item fields under a section.
+ *
+ * Roadmap shape note (ID-20.19): the Phase-B themes[] roadmap replaced the
+ * retired sections[]/items[] model. A roadmap record is a theme resolved
+ * by id; patches address a single field directly on the theme
+ * (`['themes', themeId, fieldName]`). There is no nested item layer.
  */
 function applyRoadmapPatch(
   snapshot: Roadmap,
   patch: FieldPatch,
 ): null | { fieldPath: string[]; detail: string } {
-  const [head, sectionId, ...rest] = patch.fieldPath;
-  if (head !== "sections") {
+  const [head, themeId, ...rest] = patch.fieldPath;
+  if (head !== "themes") {
     return {
       fieldPath: patch.fieldPath,
-      detail: `Roadmap patches must start with 'sections'; got "${head ?? "<empty>"}".`,
+      detail: `Roadmap patches must start with 'themes'; got "${head ?? "<empty>"}".`,
     };
   }
-  if (sectionId == null || sectionId === "") {
+  if (themeId == null || themeId === "") {
     return {
       fieldPath: patch.fieldPath,
-      detail: `Missing section id at fieldPath[1].`,
+      detail: `Missing theme id at fieldPath[1].`,
     };
   }
-  const sectionIdx = snapshot.sections.findIndex((s) => s.id === sectionId);
-  if (sectionIdx === -1) {
+  const themeIdx = snapshot.themes.findIndex((t) => t.id === themeId);
+  if (themeIdx === -1) {
     return {
       fieldPath: patch.fieldPath,
-      detail: `Section id "${sectionId}" not found in canonical sections[].`,
+      detail: `Theme id "${themeId}" not found in canonical themes[].`,
     };
   }
-  const section = snapshot.sections[sectionIdx];
+  const theme = snapshot.themes[themeIdx];
 
   if (rest.length === 0) {
     return {
       fieldPath: patch.fieldPath,
-      detail: `FieldPath must address a field within the Section, not the Section object itself.`,
+      detail: `FieldPath must address a field within the Theme, not the Theme object itself.`,
     };
   }
 
-  // Direct section-level field: ['sections', sectionId, fieldName]
-  if (rest.length === 1) {
-    const field = rest[0];
-    if (!Object.prototype.hasOwnProperty.call(section, field)) {
-      return {
-        fieldPath: patch.fieldPath,
-        detail: `Field "${field}" is not present on Section ${sectionId}. Available fields: ${Object.keys(section).join(", ")}.`,
-      };
-    }
-    (section as Record<string, unknown>)[field] = patch.newValue;
-    return null;
-  }
-
-  // Item patch: ['sections', sectionId, 'items', itemId, fieldName]
-  if (rest[0] !== "items") {
+  // Direct theme-level field: ['themes', themeId, fieldName]
+  if (rest.length !== 1) {
     return {
       fieldPath: patch.fieldPath,
-      detail: `Unsupported nested path segment "${rest[0]}" after sectionId; only 'items' is supported.`,
+      detail: `Theme fieldPath must address a single field after the themeId; got ${rest.length} additional segment(s).`,
     };
   }
-  const itemId = rest[1];
-  if (itemId == null) {
+  const field = rest[0];
+  if (!Object.prototype.hasOwnProperty.call(theme, field)) {
     return {
       fieldPath: patch.fieldPath,
-      detail: `Missing item id at fieldPath[3].`,
+      detail: `Field "${field}" is not present on Theme ${themeId}. Available fields: ${Object.keys(theme).join(", ")}.`,
     };
   }
-  const itemIdx = section.items.findIndex((it) => it.id === itemId);
-  if (itemIdx === -1) {
-    return {
-      fieldPath: patch.fieldPath,
-      detail: `Item id "${itemId}" not found within Section ${sectionId}.`,
-    };
-  }
-  const item = section.items[itemIdx];
-
-  const itemFieldPathRest = rest.slice(2);
-  if (itemFieldPathRest.length !== 1) {
-    return {
-      fieldPath: patch.fieldPath,
-      detail: `Item fieldPath must address a single field after the itemId; got ${itemFieldPathRest.length} additional segment(s).`,
-    };
-  }
-  const itemField = itemFieldPathRest[0];
-  if (!Object.prototype.hasOwnProperty.call(item, itemField)) {
-    return {
-      fieldPath: patch.fieldPath,
-      detail: `Field "${itemField}" is not present on Item ${itemId} of Section ${sectionId}. Available fields: ${Object.keys(item).join(", ")}.`,
-    };
-  }
-  (item as Record<string, unknown>)[itemField] = patch.newValue;
+  (theme as Record<string, unknown>)[field] = patch.newValue;
   return null;
 }
 

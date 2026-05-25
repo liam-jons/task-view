@@ -10,8 +10,11 @@
  * Routing:
  *   - GET /?record=                         → index view for the ledger kind
  *   - GET /?record=ID-N                     → per-Task / per-Backlog-item page
- *   - GET /?record=section-<id>             → per-Roadmap-section page
- *   - GET /?record=<dotted-decimal-id>      → per-Roadmap-item page
+ *   - GET /?record=<theme-id>               → per-Roadmap-theme page
+ *
+ * Roadmap shape note (ID-20.19): the Phase-B themes[] roadmap replaced the
+ * retired sections[]/items[] model. A roadmap record is a theme keyed by
+ * its bare-digit id; the old `section-` prefix routing is gone.
  *
  * Backlog mode honours PRODUCT inv 23 — `?track=…&status=…&priority=…`
  * query-string filter state is decoded via the canonical
@@ -31,8 +34,7 @@ import { TaskListView } from "@task-view/ui/record-view/task-list-view";
 import { BacklogIndexView } from "@task-view/ui/record-view/backlog-index-view";
 import { BacklogItemView } from "@task-view/ui/record-view/backlog-item-view";
 import { RoadmapIndexView } from "@task-view/ui/record-view/roadmap-index-view";
-import { RoadmapSectionView } from "@task-view/ui/record-view/roadmap-section-view";
-import { RoadmapItemView } from "@task-view/ui/record-view/roadmap-item-view";
+import { RoadmapThemeView } from "@task-view/ui/record-view/roadmap-theme-view";
 import {
   buildLedgerContext,
   type NavStripData,
@@ -41,8 +43,7 @@ import { decodeBacklogFilters } from "@task-view/ui/record-view/url-state";
 import type { DetectSchemaResult } from "./detect-schema";
 import type {
   Task,
-  RoadmapSection,
-  RoadmapItem,
+  RoadmapTheme,
   BacklogItem,
 } from "@task-view/ui/record-view/types";
 
@@ -57,8 +58,6 @@ export interface RenderViewerResult {
   status: 200 | 404;
   html: string;
 }
-
-const SECTION_PREFIX = "section-";
 
 export function renderViewer(input: RenderViewerInput): RenderViewerResult {
   const body = renderBody(input);
@@ -124,29 +123,15 @@ function renderBody({ detected, search }: RenderViewerInput): RenderedBody {
     };
   }
   const ledger = buildLedgerContext({ roadmap: detected.data });
-  const sections = detected.data.sections;
+  const themes = detected.data.themes;
 
-  if (recordParam.startsWith(SECTION_PREFIX)) {
-    const sectionId = recordParam.slice(SECTION_PREFIX.length);
-    const section = sections.find((s) => s.id === sectionId);
-    if (!section) return renderNotFound("roadmap-section", recordParam);
-    const nav = computeSectionNav(sections, section);
-    return {
-      status: 200,
-      markup: renderToStaticMarkup(
-        <RoadmapSectionView section={section} ledger={ledger} nav={nav} />,
-      ),
-    };
-  }
-
-  const allItems = sections.flatMap((s) => s.items);
-  const item = allItems.find((i) => i.id === recordParam);
-  if (!item) return renderNotFound("roadmap-item", recordParam);
-  const nav = computeRoadmapItemNav(allItems, item);
+  const theme = themes.find((t) => t.id === recordParam);
+  if (!theme) return renderNotFound("roadmap-theme", recordParam);
+  const nav = computeThemeNav(themes, theme);
   return {
     status: 200,
     markup: renderToStaticMarkup(
-      <RoadmapItemView item={item} ledger={ledger} nav={nav} />,
+      <RoadmapThemeView theme={theme} ledger={ledger} nav={nav} />,
     ),
   };
 }
@@ -195,30 +180,13 @@ function computeBacklogNav(
   };
 }
 
-function computeSectionNav(
-  sections: readonly RoadmapSection[],
-  current: RoadmapSection,
+function computeThemeNav(
+  themes: readonly RoadmapTheme[],
+  current: RoadmapTheme,
 ): NavStripData {
-  const idx = sections.findIndex((s) => s.id === current.id);
-  const prev = idx > 0 ? sections[idx - 1] : null;
-  const next = idx >= 0 && idx < sections.length - 1 ? sections[idx + 1] : null;
-  return {
-    prevHref: prev ? recordHref(`${SECTION_PREFIX}${prev.id}`) : null,
-    prevLabel: prev ? `§${prev.id}: ${prev.title}` : null,
-    nextHref: next ? recordHref(`${SECTION_PREFIX}${next.id}`) : null,
-    nextLabel: next ? `§${next.id}: ${next.title}` : null,
-    indexHref: "/",
-    indexLabel: "Back to roadmap index",
-  };
-}
-
-function computeRoadmapItemNav(
-  items: readonly RoadmapItem[],
-  current: RoadmapItem,
-): NavStripData {
-  const idx = items.findIndex((i) => i.id === current.id);
-  const prev = idx > 0 ? items[idx - 1] : null;
-  const next = idx >= 0 && idx < items.length - 1 ? items[idx + 1] : null;
+  const idx = themes.findIndex((t) => t.id === current.id);
+  const prev = idx > 0 ? themes[idx - 1] : null;
+  const next = idx >= 0 && idx < themes.length - 1 ? themes[idx + 1] : null;
   return {
     prevHref: prev ? recordHref(prev.id) : null,
     prevLabel: prev ? `${prev.id}: ${prev.title}` : null,

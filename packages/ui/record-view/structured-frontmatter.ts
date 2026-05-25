@@ -19,7 +19,7 @@
  * existing flat shape.
  *
  * Pure function; no I/O. The mirror-side renderer in 20.9 prefers to
- * accept the typed `Task` / `RoadmapSection` / etc. records directly
+ * accept the typed `Task` / `RoadmapTheme` / etc. records directly
  * (via `GET /api/ledger/record/:id`); this helper exists for the SPA
  * fallback path that loads the .md mirror standalone.
  */

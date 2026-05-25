@@ -48,7 +48,6 @@ function makeTaskListLedger() {
   return {
     document_name: "Knowledge Hub Task List",
     document_purpose: "20.17 GET / fixture",
-    last_updated: "20.17 test fixture",
     related_documents: [],
     tasks: [
       {
@@ -104,7 +103,6 @@ function makeBacklogLedger() {
   return {
     document_name: "Product Backlog",
     document_purpose: "20.17 GET / fixture",
-    last_updated: "20.17 test fixture",
     related_documents: [],
     items: [
       {

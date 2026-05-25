@@ -51,7 +51,6 @@ function makeMinimalLedger() {
   return {
     document_name: "Knowledge Hub Task List",
     document_purpose: "Test fixture.",
-    last_updated: "test",
     related_documents: [],
     tasks: [],
   };

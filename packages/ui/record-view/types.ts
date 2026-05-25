@@ -2,22 +2,25 @@
  * record-view/types.ts — shared rendering types for the per-record viewer
  * (ID-20.9 read mode).
  *
- * The read-mode renderer consumes typed records (Task / RoadmapSection /
- * RoadmapItem / BacklogItem) from the parsed canonical ledger — NOT
- * re-parsed Markdown frontmatter. Per the End-to-end flow diagram in
- * TECH §End-to-end, the SPA fetches `/api/ledger/record/:id` and receives
- * `{ record, mirror, mtime }`; we render from `record` directly.
+ * The read-mode renderer consumes typed records (Task / RoadmapTheme /
+ * BacklogItem) from the parsed canonical ledger — NOT re-parsed Markdown
+ * frontmatter. Per the End-to-end flow diagram in TECH §End-to-end, the
+ * SPA fetches `/api/ledger/record/:id` and receives `{ record, mirror,
+ * mtime }`; we render from `record` directly.
  *
  * The `LedgerContext` object lets each rendered page look up sibling
  * records for broken-target detection (PRODUCT inv 11, 12, 13, 22) and
- * owner inheritance (PRODUCT inv 18). It is intentionally minimal — just
- * the lookup tables the renderer needs.
+ * cross-record linking. It is intentionally minimal — just the lookup
+ * tables the renderer needs.
+ *
+ * Roadmap shape note (ID-20.19): the Phase-B themes[] roadmap replaced the
+ * retired sections[]/items[] model. A Roadmap is now a flat list of
+ * `RoadmapTheme` records; there is no separate item layer.
  */
 import type { Task } from "@task-view/schemas/task-list";
 import type {
   Roadmap,
-  RoadmapItem,
-  RoadmapSection,
+  RoadmapTheme,
 } from "@task-view/schemas/roadmap";
 import type { BacklogItem } from "@task-view/schemas/backlog";
 
@@ -35,21 +38,21 @@ export type ExistingPathsSet = ReadonlySet<string> | null;
 /**
  * Ledger-wide context every per-record page can interrogate.
  *
- * - `taskIds` / `roadmapItemIds` / `roadmapSectionIds` / `backlogItemIds`
- *   are presence sets used by the broken-target marker to decide whether
- *   a Task / Roadmap / Backlog dependency link is live or missing.
- * - `roadmapSectionsById` enables Roadmap owner inheritance (inv 18).
+ * - `taskIds` / `roadmapThemeIds` / `backlogItemIds` are presence sets
+ *   used by the broken-target marker to decide whether a Task / Roadmap /
+ *   Backlog dependency link is live or missing.
+ * - `roadmapThemesById` enables Roadmap theme lookups (e.g. resolving a
+ *   linked-task back-reference's parent theme).
  * - `existingPaths` enables cross-doc-link existence checks (inv 11). May
  *   be `null` for environments where filesystem existence cannot be
  *   verified (e.g. the SPA running offline against a remote mirror).
  */
 export interface LedgerContext {
   taskIds: ReadonlySet<string>;
-  roadmapItemIds: ReadonlySet<string>;
-  roadmapSectionIds: ReadonlySet<string>;
+  roadmapThemeIds: ReadonlySet<string>;
   backlogItemIds: ReadonlySet<string>;
-  /** Roadmap section lookup table for owner inheritance display. */
-  roadmapSectionsById: ReadonlyMap<string, RoadmapSection>;
+  /** Roadmap theme lookup table by theme id. */
+  roadmapThemesById: ReadonlyMap<string, RoadmapTheme>;
   /** Verified-existing repo-relative paths for cross-doc-link checks. */
   existingPaths: ExistingPathsSet;
 }
@@ -70,16 +73,12 @@ export function buildLedgerContext(input: {
   existingPaths?: ExistingPathsSet;
 }): LedgerContext {
   const taskIds = new Set<string>(input.tasks?.map((t) => t.id) ?? []);
-  const roadmapItemIds = new Set<string>();
-  const roadmapSectionIds = new Set<string>();
-  const roadmapSectionsById = new Map<string, RoadmapSection>();
+  const roadmapThemeIds = new Set<string>();
+  const roadmapThemesById = new Map<string, RoadmapTheme>();
   if (input.roadmap) {
-    for (const section of input.roadmap.sections) {
-      roadmapSectionIds.add(section.id);
-      roadmapSectionsById.set(section.id, section);
-      for (const item of section.items) {
-        roadmapItemIds.add(item.id);
-      }
+    for (const theme of input.roadmap.themes) {
+      roadmapThemeIds.add(theme.id);
+      roadmapThemesById.set(theme.id, theme);
     }
   }
   const backlogItemIds = new Set<string>(
@@ -87,10 +86,9 @@ export function buildLedgerContext(input: {
   );
   return {
     taskIds,
-    roadmapItemIds,
-    roadmapSectionIds,
+    roadmapThemeIds,
     backlogItemIds,
-    roadmapSectionsById,
+    roadmapThemesById,
     existingPaths: input.existingPaths ?? null,
   };
 }
@@ -109,4 +107,4 @@ export interface NavStripData {
   indexLabel: string;
 }
 
-export type { Task, RoadmapSection, RoadmapItem, BacklogItem };
+export type { Task, RoadmapTheme, BacklogItem };

@@ -162,26 +162,12 @@ function lookupRecord(
     return { kind: "task", record: task };
   }
   if (detected.kind === "roadmap") {
-    // recordId may match either a section.id or an item.id (or
-    // 'section-<id>' to disambiguate against item collisions). We accept
-    // both forms — the client URL uses raw ids for items and the prefix
-    // form for sections to mirror the filename rule (TECH §3.2).
-    const sectionPrefix = "section-";
-    if (recordId.startsWith(sectionPrefix)) {
-      const rawSectionId = recordId.slice(sectionPrefix.length);
-      const section = detected.data.sections.find((s) => s.id === rawSectionId);
-      if (!section) return null;
-      return { kind: "roadmap-section", record: section };
-    }
-    for (const section of detected.data.sections) {
-      const item = section.items.find((it) => it.id === recordId);
-      if (item) return { kind: "roadmap-item", record: item };
-    }
-    // Fallback: also match section by raw id (no prefix) for callers
-    // that omit the prefix.
-    const section = detected.data.sections.find((s) => s.id === recordId);
-    if (section) return { kind: "roadmap-section", record: section };
-    return null;
+    // Roadmap shape note (ID-20.19): the Phase-B themes[] roadmap replaced
+    // the retired sections[]/items[] model. A roadmap record is a theme
+    // resolved by its bare-digit id; the old `section-` prefix form is gone.
+    const theme = detected.data.themes.find((t) => t.id === recordId);
+    if (!theme) return null;
+    return { kind: "roadmap-theme", record: theme };
   }
   // backlog
   const item = detected.data.items.find((it) => it.id === recordId);
@@ -197,17 +183,7 @@ function computeMirrorFilename(
   if (recordKind === "task") {
     return computeRecordFilename("task-list", { id: recordId });
   }
-  if (recordKind === "roadmap-section") {
-    // recordId might still have the 'section-' prefix passed in by the
-    // client; strip it before computing the filename so the substitution
-    // doesn't double-prefix.
-    const sectionPrefix = "section-";
-    const rawId = recordId.startsWith(sectionPrefix)
-      ? recordId.slice(sectionPrefix.length)
-      : recordId;
-    return computeRecordFilename("roadmap", { id: rawId, isSection: true });
-  }
-  if (recordKind === "roadmap-item") {
+  if (recordKind === "roadmap-theme") {
     return computeRecordFilename("roadmap", { id: recordId });
   }
   // backlog-item
@@ -231,7 +207,7 @@ function serialiseLedger(detected: Exclude<DetectSchemaResult, { kind: "unknown"
  * Routing:
  *   /                           → ledger index page
  *   /?record=ID-N               → per-record page
- *   /?record=section-<id>       → roadmap section page
+ *   /?record=<theme-id>         → roadmap theme page
  *   /?track=…&status=…&priority=… → backlog index with filter state (PRODUCT inv 23)
  *
  * Responses:
@@ -335,11 +311,7 @@ async function handleGetRecord(
   }
   const mirrorFilename = computeMirrorFilename(
     detected,
-    sanitiseFilenameStem(
-      lookup.kind === "roadmap-section" && recordId.startsWith("section-")
-        ? recordId.slice("section-".length)
-        : recordId,
-    ),
+    sanitiseFilenameStem(recordId),
     lookup.kind,
   );
   return jsonResponse({

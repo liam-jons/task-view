@@ -50,7 +50,6 @@ function makeTaskListLedgerObject() {
   return {
     document_name: "Knowledge Hub Task List",
     document_purpose: "Active + recently-closed structured work — Taskmaster JSON shape.",
-    last_updated: "kh-prod-readiness-S63 representative fixture",
     related_documents: [],
     tasks: [
       {

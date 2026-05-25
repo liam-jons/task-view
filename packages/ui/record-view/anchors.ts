@@ -60,17 +60,15 @@ export function taskDepLabel(taskId: string): string {
 }
 
 /**
- * Href to a Roadmap item page (cross-record link).
+ * Href to a Roadmap theme page (cross-record link).
+ *
+ * Phase-B themes[] roadmap (ID-20.19): a theme mirror is `roadmap/{id}.md`,
+ * so the href is the raw bare-digit id with the `.md` extension. The old
+ * `section-` prefix (used to disambiguate sections from items) is gone —
+ * themes are the only roadmap record kind.
  */
-export function roadmapItemHref(itemId: string): string {
-  return `${itemId}.md`;
-}
-
-/**
- * Href to a Roadmap section page.
- */
-export function roadmapSectionHref(sectionId: string): string {
-  return `section-${sectionId}.md`;
+export function roadmapThemeHref(themeId: string): string {
+  return `${themeId}.md`;
 }
 
 /**

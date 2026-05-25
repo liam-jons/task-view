@@ -5,7 +5,7 @@
  *   typed-record fixture
  *      → mirror-generator (text mirror)
  *      → structured-frontmatter parser (typed back)
- *      → TaskListView / RoadmapItemView / BacklogItemView renderer
+ *      → TaskListView / RoadmapThemeView / BacklogItemView renderer
  *
  * This is the closest analogue in the colocated layout to TECH §4.2's
  * `tests/integration/*-render.test.ts` rows. It verifies the SPA's
@@ -18,7 +18,7 @@ import { detectSchema } from "../../server/detect-schema";
 import { renderIndexMd } from "../../server/index-generator";
 import type { Task } from "@task-view/schemas/task-list";
 import { BacklogItemView } from "./backlog-item-view";
-import { RoadmapItemView } from "./roadmap-item-view";
+import { RoadmapThemeView } from "./roadmap-theme-view";
 import {
   extractFrontmatterRaw,
   parseStructuredFrontmatter,
@@ -38,7 +38,6 @@ const NAV: NavStripData = {
 const taskListFixture = {
   document_name: "Knowledge Hub Task List" as const,
   document_purpose: "fixture",
-  last_updated: "fixture",
   related_documents: [],
   tasks: [
     {
@@ -48,6 +47,7 @@ const taskListFixture = {
       status: "in_progress",
       priority: "must",
       dependencies: ["19"],
+      capability_theme: "3",
       subtasks: [
         {
           id: 1,
@@ -90,7 +90,6 @@ const taskListFixture = {
 const backlogFixture = {
   document_name: "Product Backlog",
   document_purpose: "fixture",
-  last_updated: "fixture",
   related_documents: [],
   items: [
     {
@@ -120,38 +119,25 @@ const roadmapFixture = {
   forward_looking_only: true as const,
   related_documents: [],
   last_updated: "fixture",
-  sections: [
+  themes: [
     {
-      id: "3.1",
-      parent_id: null,
-      number: "3.1",
-      title: "Section 3.1",
-      narrative: null,
-      spec_links: [],
-      owner: "Engineering",
-      table_columns: "item_desc_owner_effort_status" as const,
-      items: [
+      id: "3",
+      title: "Theme 3",
+      description: "Theme description.",
+      time_horizon: "now" as const,
+      status: "in_progress" as const,
+      linked_tasks: ["20"],
+      linked_backlog: ["45"],
+      session_refs: ["kh-prod-readiness-S63"],
+      commit_refs: ["abc1234"],
+      cross_doc_links: [
         {
-          id: "3.1.8",
-          section_id: "3.1",
-          title: "Item 3.1.8",
-          phase_label: null,
-          description: "Item description.",
-          effort_estimate: "M",
-          priority: "should" as const,
-          priority_note: null,
-          severity: null,
-          status: "pending" as const,
-          status_note: null,
-          owner: null, // → should inherit from section
-          depends_on: [],
-          blocks: [],
-          coordinates_with: [],
-          cross_doc_links: [],
-          session_refs: [],
-          commit_refs: [],
+          path: "docs/specs/per-task-mirror/TECH.md",
+          anchor: "#section-3-1",
+          raw: "TECH §3.1",
         },
       ],
+      notes: "Theme notes prose.",
     },
   ],
 };
@@ -223,21 +209,73 @@ describe("Backlog end-to-end render (inv 21-25 happy path)", () => {
 
 // ── Roadmap end-to-end ────────────────────────────────────────────────────────
 
-describe("Roadmap end-to-end render (inv 16-18 happy path)", () => {
-  test("typed RoadmapItem with null owner → inheritance qualifier rendered", () => {
+describe("Roadmap end-to-end render (themes[] happy path — ID-20.19)", () => {
+  test("typed RoadmapTheme → RoadmapThemeView yields all theme surfaces", () => {
     const detected = detectSchema(roadmapFixture);
     expect(detected.kind).toBe("roadmap");
     if (detected.kind !== "roadmap") return;
-    const item = detected.data.sections[0].items[0];
-    const ledger = buildLedgerContext({ roadmap: detected.data });
+    const theme = detected.data.themes[0];
+    // Build a ledger that knows the linked Task + Backlog ids so the
+    // cross-record links resolve live (not broken-target).
+    const ledger = buildLedgerContext({
+      roadmap: detected.data,
+      tasks: [
+        {
+          id: "20",
+          title: "Linked task",
+          description: "d",
+          status: "in_progress",
+          priority: "must",
+          dependencies: [],
+          subtasks: [],
+          updatedAt: "2026-05-21T15:30:00.000Z",
+          effort_estimate: null,
+          owner: null,
+          priority_note: null,
+          status_note: null,
+          cross_doc_links: [],
+          session_refs: [],
+          commit_refs: [],
+        },
+      ],
+      backlogItems: [
+        {
+          id: "45",
+          description: "Linked backlog item",
+          type: "feature",
+          status: "blocked",
+          effort_estimate: null,
+          priority: "high",
+          track: "Bid",
+          dependencies: [],
+          session_refs: [],
+          commit_refs: [],
+          cross_doc_links: [],
+          notes: null,
+        },
+      ],
+      existingPaths: new Set(["docs/specs/per-task-mirror/TECH.md"]),
+    });
     const html = renderToStaticMarkup(
-      <RoadmapItemView item={item} ledger={ledger} nav={NAV} />,
+      <RoadmapThemeView theme={theme} ledger={ledger} nav={NAV} />,
     );
-    expect(html).toContain("3.1.8: Item 3.1.8");
-    expect(html).toContain("(inherited from §3.1)");
-    expect(html).toContain('data-inherited-from="3.1"');
-    // Section ID is linked back to section page
-    expect(html).toContain('href="section-3.1.md"');
+    expect(html).toContain("3: Theme 3");
+    expect(html).toContain("Theme description");
+    // time_horizon + status frontmatter rows
+    expect(html).toContain('data-frontmatter-row="time_horizon"');
+    expect(html).toContain('data-frontmatter-row="status"');
+    // linked_tasks resolves to the Task mirror href (live, not missing)
+    expect(html).toContain('data-section="linked_tasks"');
+    expect(html).toContain('href="ID-20.md"');
+    expect(html).not.toContain("(missing)");
+    // linked_backlog resolves to the Backlog mirror href
+    expect(html).toContain('data-section="linked_backlog"');
+    expect(html).toContain('href="45.md"');
+    // cross_doc_links render
+    expect(html).toContain('href="docs/specs/per-task-mirror/TECH.md#section-3-1"');
+    // notes section
+    expect(html).toContain('data-section="notes"');
+    expect(html).toContain("Theme notes prose");
   });
 });
 

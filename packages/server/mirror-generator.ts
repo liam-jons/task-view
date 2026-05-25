@@ -9,15 +9,18 @@
  *
  * Layout (TECH §3.1):
  *   <dir>/task-list.json       → <dir>/tasks/ID-{id}.md
- *   <dir>/product-roadmap.json → <dir>/roadmap/{id}.md (items)
- *                                + <dir>/roadmap/section-{id}.md (sections)
+ *   <dir>/product-roadmap.json → <dir>/roadmap/{id}.md (themes)
  *   <dir>/product-backlog.json → <dir>/backlog/{id}.md
+ *
+ * Roadmap shape note (ID-20.19): the Phase-B themes[] roadmap replaced the
+ * retired sections[]/items[] model. One mirror is generated per theme,
+ * keyed by the bare-digit theme id; there is no section/item nesting and
+ * no `section-` prefix.
  *
  * Filename rule (TECH §3.2 — Liam-ratified OQ-C):
  *   - Raw id with filesystem-unsafe characters substituted to '-'.
  *   - Task-list: 'ID-' prefix (because Task ids are bare integers).
- *   - Roadmap sections: 'section-' prefix (disambiguates from item mirrors).
- *   - Roadmap items / Backlog items: raw id (already carry structural identity).
+ *   - Roadmap themes / Backlog items: raw id (already carry structural identity).
  *
  * Mirror shape (TECH §3.3):
  *   - YAML frontmatter (--- delimited) for structured fields.
@@ -50,8 +53,7 @@ import type { DetectSchemaResult } from "./detect-schema";
 import type { Task, Subtask } from "@task-view/schemas/task-list";
 import type {
   Roadmap,
-  RoadmapItem,
-  RoadmapSection,
+  RoadmapTheme,
   DocLink,
 } from "@task-view/schemas/roadmap";
 import type { BacklogItem } from "@task-view/schemas/backlog";
@@ -82,19 +84,19 @@ export type LedgerKind = DetectSchemaResult["kind"];
  * Compute the record's mirror filename per the §3.2 prefix rules.
  *
  * @param kind - ledger kind (task-list | roadmap | backlog)
- * @param record - `{ id, isSection? }` — isSection is roadmap-only
+ * @param record - `{ id }`
+ *
+ * Roadmap shape note (ID-20.19): roadmap themes use the raw bare-digit id
+ * (`{id}.md`). The old `section-` prefix (which disambiguated sections from
+ * items) is gone — themes are the only roadmap record kind.
  */
 export function computeRecordFilename(
   kind: Exclude<LedgerKind, "unknown">,
-  record: { id: string; isSection?: boolean },
+  record: { id: string },
 ): string {
   const stem = sanitiseFilenameStem(record.id);
   if (kind === "task-list") return `ID-${stem}.md`;
-  if (kind === "roadmap") {
-    if (record.isSection) return `section-${stem}.md`;
-    return `${stem}.md`;
-  }
-  // backlog
+  // roadmap (themes) + backlog both use the raw id.
   return `${stem}.md`;
 }
 
@@ -242,59 +244,34 @@ function renderSubtaskBlock(taskId: string, subtask: Subtask): string {
   return lines.join("\n");
 }
 
-// ── §3.3 Roadmap mirror shape ─────────────────────────────────────────────────
+// ── §3.3 Roadmap mirror shape (ID-20.19 — themes[]) ───────────────────────────
 
-function renderRoadmapSectionMirror(section: RoadmapSection): string {
+function renderRoadmapThemeMirror(theme: RoadmapTheme): string {
   const frontmatter = [
-    `type: roadmap-section`,
-    `id: ${formatIdScalar(section.id)}`,
-    `parent_id: ${section.parent_id === null ? "null" : formatIdScalar(section.parent_id)}`,
-    `number: ${formatScalar(section.number)}`,
-    `title: ${formatScalar(section.title)}`,
-    `owner: ${formatScalar(section.owner)}`,
-    `table_columns: ${formatScalar(section.table_columns)}`,
-    `item_count: ${section.items.length}`,
-    `spec_links: ${formatDocLinkArrayBody(section.spec_links)}`,
+    `type: roadmap-theme`,
+    `id: ${formatIdScalar(theme.id)}`,
+    `title: ${formatScalar(theme.title)}`,
+    `time_horizon: ${formatScalar(theme.time_horizon)}`,
+    `status: ${formatScalar(theme.status)}`,
+    `linked_tasks: ${formatStringArray(theme.linked_tasks)}`,
+    `linked_backlog: ${formatStringArray(theme.linked_backlog)}`,
+    `session_refs: ${formatStringArray(theme.session_refs)}`,
+    `commit_refs: ${formatStringArray(theme.commit_refs)}`,
+    `cross_doc_links: ${formatDocLinkArrayBody(theme.cross_doc_links)}`,
+    `notes: ${formatScalar(theme.notes)}`,
   ].join("\n");
 
   const body: string[] = [];
-  body.push(`# ${section.id}: ${section.title}`);
+  body.push(`# ${theme.id}: ${theme.title}`);
   body.push("");
-  if (section.narrative !== null) {
-    body.push(section.narrative);
+  body.push(theme.description);
+  body.push("");
+  if (theme.notes !== null) {
+    body.push("## Notes");
+    body.push("");
+    body.push(theme.notes);
     body.push("");
   }
-
-  return `---\n${frontmatter}\n---\n\n${body.join("\n").trimEnd()}\n`;
-}
-
-function renderRoadmapItemMirror(item: RoadmapItem): string {
-  const frontmatter = [
-    `type: roadmap-item`,
-    `id: ${formatIdScalar(item.id)}`,
-    `section_id: ${formatIdScalar(item.section_id)}`,
-    `title: ${formatScalar(item.title)}`,
-    `phase_label: ${formatScalar(item.phase_label)}`,
-    `priority: ${formatScalar(item.priority)}`,
-    `priority_note: ${formatScalar(item.priority_note)}`,
-    `severity: ${formatScalar(item.severity)}`,
-    `status: ${formatScalar(item.status)}`,
-    `status_note: ${formatScalar(item.status_note)}`,
-    `owner: ${formatScalar(item.owner)}`,
-    `effort_estimate: ${formatScalar(item.effort_estimate)}`,
-    `depends_on: ${formatStringArray(item.depends_on)}`,
-    `blocks: ${formatStringArray(item.blocks)}`,
-    `coordinates_with: ${formatStringArray(item.coordinates_with)}`,
-    `session_refs: ${formatStringArray(item.session_refs)}`,
-    `commit_refs: ${formatStringArray(item.commit_refs)}`,
-    `cross_doc_links: ${formatDocLinkArrayBody(item.cross_doc_links)}`,
-  ].join("\n");
-
-  const body: string[] = [];
-  body.push(`# ${item.id}: ${item.title}`);
-  body.push("");
-  body.push(item.description);
-  body.push("");
 
   return `---\n${frontmatter}\n---\n\n${body.join("\n").trimEnd()}\n`;
 }
@@ -388,23 +365,10 @@ function planTaskListMirrors(tasks: readonly Task[]): PlannedMirror[] {
 }
 
 function planRoadmapMirrors(roadmap: Roadmap): PlannedMirror[] {
-  const out: PlannedMirror[] = [];
-  for (const section of roadmap.sections) {
-    out.push({
-      filename: computeRecordFilename("roadmap", {
-        id: section.id,
-        isSection: true,
-      }),
-      content: renderRoadmapSectionMirror(section),
-    });
-    for (const item of section.items) {
-      out.push({
-        filename: computeRecordFilename("roadmap", { id: item.id }),
-        content: renderRoadmapItemMirror(item),
-      });
-    }
-  }
-  return out;
+  return roadmap.themes.map((theme) => ({
+    filename: computeRecordFilename("roadmap", { id: theme.id }),
+    content: renderRoadmapThemeMirror(theme),
+  }));
 }
 
 function planBacklogMirrors(items: readonly BacklogItem[]): PlannedMirror[] {

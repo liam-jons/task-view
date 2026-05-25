@@ -5,8 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   backlogItemHref,
-  roadmapItemHref,
-  roadmapSectionHref,
+  roadmapThemeHref,
   subtaskAnchorId,
   subtaskDepLabel,
   subtaskHref,
@@ -39,12 +38,9 @@ describe("Cross-record hrefs (PRODUCT inv 12, 22)", () => {
     expect(taskDepLabel("20")).toBe("ID-20");
   });
 
-  test("roadmapItemHref returns `{id}.md`", () => {
-    expect(roadmapItemHref("3.1.8")).toBe("3.1.8.md");
-  });
-
-  test("roadmapSectionHref returns `section-{id}.md`", () => {
-    expect(roadmapSectionHref("3.1")).toBe("section-3.1.md");
+  test("roadmapThemeHref returns `{id}.md` (ID-20.19 themes)", () => {
+    expect(roadmapThemeHref("3")).toBe("3.md");
+    expect(roadmapThemeHref("42")).toBe("42.md");
   });
 
   test("backlogItemHref returns `{id}.md`", () => {

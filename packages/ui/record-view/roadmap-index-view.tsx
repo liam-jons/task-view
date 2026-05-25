@@ -1,14 +1,16 @@
 /**
- * record-view/roadmap-index-view.tsx — Roadmap section index page renderer.
+ * record-view/roadmap-index-view.tsx — Roadmap theme index page renderer.
  *
- * PRODUCT inv 14 ("Roadmap index page lists every Section as a table
- * with columns `ID`, `Title`, `Owner`, `Item count`"), 47 (empty
- * ledger empty-state).
+ * Phase-B themes[] roadmap (ID-20.19) — the index lists every theme as a
+ * table with columns `ID`, `Title`, `Time horizon`, `Status`,
+ * `Linked tasks` (count). Replaces the retired sections[] index.
+ *
+ * PRODUCT inv 47 (empty ledger empty-state) preserved.
  * TECH §4.3 index page implementation.
  */
 import React from "react";
 import type { Roadmap } from "@task-view/schemas/roadmap";
-import { roadmapSectionHref } from "./anchors";
+import { roadmapThemeHref } from "./anchors";
 
 export const RoadmapIndexView: React.FC<{
   roadmap: Roadmap;
@@ -22,19 +24,19 @@ export const RoadmapIndexView: React.FC<{
         <h1>Roadmap</h1>
         <p
           className="record-view-roadmap-index-count"
-          data-section-count={roadmap.sections.length}
+          data-theme-count={roadmap.themes.length}
         >
-          {roadmap.sections.length} section
-          {roadmap.sections.length === 1 ? "" : "s"}
+          {roadmap.themes.length} theme
+          {roadmap.themes.length === 1 ? "" : "s"}
         </p>
       </header>
 
-      {roadmap.sections.length === 0 ? (
+      {roadmap.themes.length === 0 ? (
         <p
           className="record-view-empty-ledger"
           data-empty-ledger="roadmap"
         >
-          <em>The Roadmap ledger has no sections.</em>
+          <em>The Roadmap ledger has no themes.</em>
         </p>
       ) : (
         <table
@@ -45,27 +47,29 @@ export const RoadmapIndexView: React.FC<{
             <tr>
               <th scope="col">ID</th>
               <th scope="col">Title</th>
-              <th scope="col">Owner</th>
-              <th scope="col">Item count</th>
+              <th scope="col">Time horizon</th>
+              <th scope="col">Status</th>
+              <th scope="col">Linked tasks</th>
             </tr>
           </thead>
           <tbody>
-            {roadmap.sections.map((section) => (
+            {roadmap.themes.map((theme) => (
               <tr
-                key={section.id}
-                data-section-row={section.id}
+                key={theme.id}
+                data-theme-row={theme.id}
               >
                 <td>
                   <a
-                    href={roadmapSectionHref(section.id)}
-                    data-section-link={section.id}
+                    href={roadmapThemeHref(theme.id)}
+                    data-theme-link={theme.id}
                   >
-                    §{section.id}
+                    {theme.id}
                   </a>
                 </td>
-                <td>{section.title}</td>
-                <td>{section.owner ?? "—"}</td>
-                <td>{section.items.length}</td>
+                <td>{theme.title}</td>
+                <td>{theme.time_horizon}</td>
+                <td>{theme.status}</td>
+                <td>{theme.linked_tasks.length}</td>
               </tr>
             ))}
           </tbody>

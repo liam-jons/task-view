@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { Task } from "@task-view/schemas/task-list";
 import type {
   Roadmap,
-  RoadmapSection,
+  RoadmapTheme,
 } from "@task-view/schemas/roadmap";
 import { TaskListIndexView } from "./task-list-index-view";
 import { RoadmapIndexView } from "./roadmap-index-view";
@@ -31,20 +31,22 @@ const mkTask = (overrides: Partial<Task> = {}): Task => ({
   ...overrides,
 });
 
-const mkSection = (overrides: Partial<RoadmapSection> = {}): RoadmapSection => ({
+const mkTheme = (overrides: Partial<RoadmapTheme> = {}): RoadmapTheme => ({
   id: "1",
-  parent_id: null,
-  number: "1",
-  title: "Section 1",
-  narrative: null,
-  spec_links: [],
-  owner: "Engineering",
-  table_columns: "item_desc_owner_effort_status",
-  items: [],
+  title: "Theme 1",
+  description: "Theme 1 description.",
+  time_horizon: "now",
+  status: "in_progress",
+  linked_tasks: [],
+  linked_backlog: [],
+  session_refs: [],
+  commit_refs: [],
+  cross_doc_links: [],
+  notes: null,
   ...overrides,
 });
 
-const mkRoadmap = (sections: RoadmapSection[]): Roadmap => ({
+const mkRoadmap = (themes: RoadmapTheme[]): Roadmap => ({
   document_name: "Knowledge Hub Roadmap",
   document_purpose: "test",
   date: "2026-05-21",
@@ -52,7 +54,7 @@ const mkRoadmap = (sections: RoadmapSection[]): Roadmap => ({
   forward_looking_only: true,
   related_documents: [],
   last_updated: "test",
-  sections,
+  themes,
 });
 
 // ── Task-list index ──────────────────────────────────────────────────────────
@@ -116,15 +118,15 @@ describe("TaskListIndexView (TECH §4.3)", () => {
 
 // ── Roadmap index ─────────────────────────────────────────────────────────────
 
-describe("RoadmapIndexView (PRODUCT inv 14)", () => {
-  test("renders ID / Title / Owner / Item count columns", () => {
+describe("RoadmapIndexView (themes[] — ID-20.19)", () => {
+  test("renders ID / Title / Time horizon / Status / Linked tasks columns", () => {
     const roadmap = mkRoadmap([
-      mkSection({ id: "1", title: "S1", owner: "Eng" }),
-      mkSection({
-        id: "3.1",
-        title: "S3.1",
-        owner: null,
-        items: [],
+      mkTheme({ id: "1", title: "T1", time_horizon: "now", status: "in_progress" }),
+      mkTheme({
+        id: "42",
+        title: "T42",
+        time_horizon: "later",
+        status: "pending",
       }),
     ]);
     const html = renderToStaticMarkup(
@@ -132,52 +134,31 @@ describe("RoadmapIndexView (PRODUCT inv 14)", () => {
     );
     expect(html).toContain('<th scope="col">ID</th>');
     expect(html).toContain('<th scope="col">Title</th>');
-    expect(html).toContain('<th scope="col">Owner</th>');
-    expect(html).toContain('<th scope="col">Item count</th>');
-    expect(html).toContain('data-section-row="1"');
-    expect(html).toContain('data-section-row="3.1"');
-    expect(html).toContain('href="section-1.md"');
-    expect(html).toContain('href="section-3.1.md"');
-    expect(html).toContain(">Eng<");
-    // null owner displays as em-dash
-    expect(html).toContain(">—<");
+    expect(html).toContain('<th scope="col">Time horizon</th>');
+    expect(html).toContain('<th scope="col">Status</th>');
+    expect(html).toContain('<th scope="col">Linked tasks</th>');
+    expect(html).toContain('data-theme-row="1"');
+    expect(html).toContain('data-theme-row="42"');
+    expect(html).toContain('href="1.md"');
+    expect(html).toContain('href="42.md"');
+    expect(html).toContain(">now<");
+    expect(html).toContain(">later<");
+    // theme count reported
+    expect(html).toContain('data-theme-count="2"');
+    expect(html).toContain("2 themes");
   });
 
-  test("renders item-count per section", () => {
+  test("renders linked-task count per theme", () => {
     const roadmap = mkRoadmap([
-      mkSection({
-        id: "1",
-        items: [
-          {
-            id: "1.1",
-            section_id: "1",
-            title: "I",
-            phase_label: null,
-            description: "d",
-            effort_estimate: null,
-            priority: null,
-            priority_note: null,
-            severity: null,
-            status: null,
-            status_note: null,
-            owner: null,
-            depends_on: [],
-            blocks: [],
-            coordinates_with: [],
-            cross_doc_links: [],
-            session_refs: [],
-            commit_refs: [],
-          },
-        ],
-      }),
+      mkTheme({ id: "1", linked_tasks: ["20", "21", "22"] }),
     ]);
     const html = renderToStaticMarkup(
       <RoadmapIndexView roadmap={roadmap} />,
     );
-    expect(html).toMatch(/data-section-row="1"[\s\S]*?<td>1<\/td>\s*<\/tr>/);
+    expect(html).toMatch(/data-theme-row="1"[\s\S]*?<td>3<\/td>\s*<\/tr>/);
   });
 
-  test("renders empty-state when sections list is empty (PRODUCT inv 47)", () => {
+  test("renders empty-state when themes list is empty (PRODUCT inv 47)", () => {
     const roadmap = mkRoadmap([]);
     const html = renderToStaticMarkup(
       <RoadmapIndexView roadmap={roadmap} />,

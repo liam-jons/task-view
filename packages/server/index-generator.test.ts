@@ -15,7 +15,6 @@ import {
 const taskListFixture = {
   document_name: "Knowledge Hub Task List" as const,
   document_purpose: "fixture",
-  last_updated: "fixture",
   related_documents: [],
   tasks: [
     {
@@ -73,28 +72,32 @@ const roadmapFixture = {
   forward_looking_only: true as const,
   related_documents: [],
   last_updated: "fixture",
-  sections: [
+  themes: [
     {
       id: "1",
-      parent_id: null,
-      number: "1",
-      title: "Section 1",
-      narrative: null,
-      spec_links: [],
-      owner: "Engineering",
-      table_columns: "item_desc_owner_effort_status" as const,
-      items: [],
+      title: "Theme 1",
+      description: "Theme 1 description.",
+      time_horizon: "now" as const,
+      status: "in_progress" as const,
+      linked_tasks: ["20", "21"],
+      linked_backlog: [],
+      session_refs: [],
+      commit_refs: [],
+      cross_doc_links: [],
+      notes: null,
     },
     {
-      id: "3.1",
-      parent_id: null,
-      number: "3.1",
-      title: "Section 3.1",
-      narrative: null,
-      spec_links: [],
-      owner: null,
-      table_columns: "item_desc_owner_effort_status" as const,
-      items: [],
+      id: "42",
+      title: "Theme 42 | pipe",
+      description: "Theme 42 description.",
+      time_horizon: "later" as const,
+      status: "pending" as const,
+      linked_tasks: [],
+      linked_backlog: [],
+      session_refs: [],
+      commit_refs: [],
+      cross_doc_links: [],
+      notes: null,
     },
   ],
 };
@@ -102,7 +105,6 @@ const roadmapFixture = {
 const backlogFixture = {
   document_name: "Product Backlog",
   document_purpose: "fixture",
-  last_updated: "fixture",
   related_documents: [],
   items: [
     {
@@ -174,24 +176,23 @@ describe("renderIndexMd — Task-list (TECH §4.3)", () => {
 
 // ── Roadmap index ─────────────────────────────────────────────────────────────
 
-describe("renderIndexMd — Roadmap (PRODUCT inv 14)", () => {
-  test("emits sections table with ID / Title / Owner / Item count", () => {
+describe("renderIndexMd — Roadmap themes[] (ID-20.19)", () => {
+  test("emits themes table with ID / Title / Time horizon / Status / Linked tasks", () => {
     const detected = detectSchema(roadmapFixture);
     const md = renderIndexMd(detected);
     expect(md).toContain("type: roadmap-index");
-    expect(md).toContain("section_count: 2");
+    expect(md).toContain("theme_count: 2");
     expect(md).toContain("# Roadmap");
-    expect(md).toContain("| ID | Title | Owner | Item count |");
-    expect(md).toContain(
-      "| [§1](section-1.md) | Section 1 | Engineering | 0 |",
-    );
-    expect(md).toContain("| [§3.1](section-3.1.md) | Section 3.1 | — | 0 |");
+    expect(md).toContain("| ID | Title | Time horizon | Status | Linked tasks |");
+    expect(md).toContain("| [1](1.md) | Theme 1 | now | in_progress | 2 |");
+    // Pipe in the title is escaped so the table doesn't break.
+    expect(md).toContain("| [42](42.md) | Theme 42 \\| pipe | later | pending | 0 |");
   });
 
-  test("emits empty-state when sections list is empty", () => {
-    const detected = detectSchema({ ...roadmapFixture, sections: [] });
+  test("emits empty-state when themes list is empty", () => {
+    const detected = detectSchema({ ...roadmapFixture, themes: [] });
     const md = renderIndexMd(detected);
-    expect(md).toContain("_The Roadmap ledger has no sections._");
+    expect(md).toContain("_The Roadmap ledger has no themes._");
   });
 });
 

@@ -22,7 +22,6 @@ import { detectSchema } from "./detect-schema";
 const minimalTaskList = {
   document_name: "Knowledge Hub Task List",
   document_purpose: "Active + recently-closed structured work — Taskmaster JSON shape.",
-  last_updated: "kh-prod-readiness-S63 representative fixture",
   related_documents: [],
   tasks: [
     {
@@ -53,17 +52,19 @@ const minimalRoadmap = {
   forward_looking_only: true,
   related_documents: [],
   last_updated: "kh-prod-readiness-S63 representative fixture",
-  sections: [
+  themes: [
     {
       id: "1",
-      parent_id: null,
-      number: "1",
       title: "Foundation",
-      narrative: null,
-      spec_links: [],
-      owner: "Engineering",
-      table_columns: "item_desc_owner_effort_status",
-      items: [],
+      description: "Foundation theme description.",
+      time_horizon: "now",
+      status: "in_progress",
+      linked_tasks: [],
+      linked_backlog: [],
+      session_refs: [],
+      commit_refs: [],
+      cross_doc_links: [],
+      notes: null,
     },
   ],
 };
@@ -71,7 +72,6 @@ const minimalRoadmap = {
 const minimalBacklog = {
   document_name: "Product Backlog",
   document_purpose: "Forward-looking backlog of unscheduled work items.",
-  last_updated: "kh-prod-readiness-S63 representative fixture",
   related_documents: [],
   items: [
     {
@@ -107,7 +107,7 @@ describe("detectSchema — known document_name values", () => {
     expect(result.kind).toBe("roadmap");
     if (result.kind === "roadmap") {
       expect(result.data.document_name).toBe("Knowledge Hub Roadmap");
-      expect(result.data.sections).toHaveLength(1);
+      expect(result.data.themes).toHaveLength(1);
     }
   });
 
@@ -208,8 +208,9 @@ describe("detectSchema — discriminated union narrowing", () => {
   test("roadmap branch exposes typed Roadmap data", () => {
     const result = detectSchema(minimalRoadmap);
     if (result.kind === "roadmap") {
-      const firstSection = result.data.sections[0];
-      expect(firstSection.table_columns).toBe("item_desc_owner_effort_status");
+      const firstTheme = result.data.themes[0];
+      expect(firstTheme.time_horizon).toBe("now");
+      expect(firstTheme.status).toBe("in_progress");
     } else {
       throw new Error("Expected roadmap kind");
     }

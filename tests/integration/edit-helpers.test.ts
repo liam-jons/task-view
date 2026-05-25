@@ -45,7 +45,7 @@ describe("buildFieldPatch — passthrough for text + enum edits", () => {
 
   test("null newValue (nullable enum unset)", () => {
     const p = buildFieldPatch(
-      ["sections", "3.1", "items", "ID-30", "status"],
+      ["themes", "3", "notes"],
       null,
     );
     expect(p.newValue).toBeNull();

@@ -99,23 +99,22 @@ function renderRoadmapIndex(roadmap: Roadmap): string {
   const lines: string[] = [];
   lines.push("---");
   lines.push("type: roadmap-index");
-  lines.push(`section_count: ${roadmap.sections.length}`);
+  lines.push(`theme_count: ${roadmap.themes.length}`);
   lines.push("---");
   lines.push("");
   lines.push("# Roadmap");
   lines.push("");
-  if (roadmap.sections.length === 0) {
-    lines.push("_The Roadmap ledger has no sections._");
+  if (roadmap.themes.length === 0) {
+    lines.push("_The Roadmap ledger has no themes._");
     lines.push("");
     return lines.join("\n");
   }
-  lines.push("| ID | Title | Owner | Item count |");
-  lines.push("|----|-------|-------|------------|");
-  for (const section of roadmap.sections) {
-    const owner = section.owner === null ? "—" : escapePipe(section.owner);
-    const title = escapePipe(section.title);
+  lines.push("| ID | Title | Time horizon | Status | Linked tasks |");
+  lines.push("|----|-------|--------------|--------|--------------|");
+  for (const theme of roadmap.themes) {
+    const title = escapePipe(theme.title);
     lines.push(
-      `| [§${section.id}](section-${section.id}.md) | ${title} | ${owner} | ${section.items.length} |`,
+      `| [${theme.id}](${theme.id}.md) | ${title} | ${theme.time_horizon} | ${theme.status} | ${theme.linked_tasks.length} |`,
     );
   }
   lines.push("");

@@ -66,7 +66,6 @@ async function writeLedger(): Promise<string> {
   const body = {
     document_name: "Knowledge Hub Task List",
     document_purpose: "dual-entry fixture",
-    last_updated: "test",
     related_documents: [],
     tasks: [
       {

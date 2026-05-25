@@ -9,7 +9,7 @@
  *   §3.1 — output layout: sibling `tasks/` / `roadmap/` / `backlog/` dir
  *   §3.2 — record-id filename rule (Liam-ratified OQ-C): raw id with
  *          filesystem-unsafe characters substituted to `-`; Task-list
- *          gets `ID-` prefix; Roadmap section gets `section-` prefix.
+ *          gets `ID-` prefix; Roadmap theme + Backlog item use the raw id.
  *   §3.3 — per-mode mirror content shape (YAML frontmatter + markdown body).
  *   §3.4 — idempotency (byte-identical) + orphan deletion + atomic
  *          write-to-temp + rename.
@@ -43,7 +43,6 @@ afterEach(async () => {
 const makeTaskList = (taskIds: string[]) => ({
   document_name: "Knowledge Hub Task List",
   document_purpose: "Active + recently-closed structured work — Taskmaster JSON shape.",
-  last_updated: "kh-prod-readiness-S63 representative fixture",
   related_documents: ["docs/reference/product-roadmap.json"],
   tasks: taskIds.map((id) => ({
     id,
@@ -88,58 +87,32 @@ const makeRoadmap = () => ({
   forward_looking_only: true,
   related_documents: ["docs/reference/product-backlog.json"],
   last_updated: "kh-prod-readiness-S63 representative fixture",
-  sections: [
+  themes: [
     {
       id: "1",
-      parent_id: null,
-      number: "1",
       title: "Foundation",
-      narrative: "Build the foundations.",
-      spec_links: [],
-      owner: "Engineering",
-      table_columns: "item_desc_owner_effort_status",
-      items: [
-        {
-          id: "1.1",
-          section_id: "1",
-          title: "First item",
-          phase_label: null,
-          description: "First item description.",
-          effort_estimate: null,
-          priority: "must",
-          priority_note: null,
-          severity: null,
-          status: "pending",
-          status_note: null,
-          owner: null,
-          depends_on: [],
-          blocks: [],
-          coordinates_with: [],
-          cross_doc_links: [],
-          session_refs: [],
-          commit_refs: [],
-        },
-        {
-          id: "1.2",
-          section_id: "1",
-          title: "Second item",
-          phase_label: null,
-          description: "Second item description.",
-          effort_estimate: null,
-          priority: "should",
-          priority_note: null,
-          severity: null,
-          status: "pending",
-          status_note: null,
-          owner: null,
-          depends_on: ["1.1"],
-          blocks: [],
-          coordinates_with: [],
-          cross_doc_links: [],
-          session_refs: [],
-          commit_refs: [],
-        },
-      ],
+      description: "Build the foundations.",
+      time_horizon: "now",
+      status: "in_progress",
+      linked_tasks: ["20"],
+      linked_backlog: [],
+      session_refs: ["kh-prod-readiness-S63"],
+      commit_refs: [],
+      cross_doc_links: [],
+      notes: null,
+    },
+    {
+      id: "2",
+      title: "Expansion",
+      description: "Expand the platform.",
+      time_horizon: "next",
+      status: "pending",
+      linked_tasks: [],
+      linked_backlog: ["45"],
+      session_refs: [],
+      commit_refs: [],
+      cross_doc_links: [],
+      notes: "Some notes.",
     },
   ],
 });
@@ -147,7 +120,6 @@ const makeRoadmap = () => ({
 const makeBacklog = () => ({
   document_name: "Product Backlog",
   document_purpose: "Forward-looking backlog of unscheduled work items.",
-  last_updated: "kh-prod-readiness-S63 representative fixture",
   related_documents: ["docs/reference/product-roadmap.json"],
   items: [
     {
@@ -223,13 +195,9 @@ describe("computeRecordFilename (TECH §3.2 prefix rules)", () => {
     expect(computeRecordFilename("roadmap", { id: "9.18" })).toBe("9.18.md");
   });
 
-  test("Roadmap mode (section) uses 'section-' prefix", () => {
-    expect(computeRecordFilename("roadmap", { id: "1", isSection: true })).toBe(
-      "section-1.md",
-    );
-    expect(
-      computeRecordFilename("roadmap", { id: "3.1", isSection: true }),
-    ).toBe("section-3.1.md");
+  test("Roadmap mode (theme) uses raw id with '.md' suffix (ID-20.19)", () => {
+    expect(computeRecordFilename("roadmap", { id: "1" })).toBe("1.md");
+    expect(computeRecordFilename("roadmap", { id: "42" })).toBe("42.md");
   });
 
   test("Backlog mode uses raw id with '.md' suffix", () => {
@@ -340,35 +308,39 @@ describe("generateMirrors — Roadmap mode (TECH §3.3)", () => {
     );
   });
 
-  test("creates one mirror per item plus one section mirror per section", async () => {
+  test("creates one mirror per theme keyed by theme id (ID-20.19)", async () => {
     const parsed = JSON.parse(await readFile(ledgerPath, "utf8"));
     const detected = detectSchema(parsed);
     await generateMirrors(detected, ledgerPath);
     const files = (await readdir(mirrorDir)).sort();
-    expect(files).toEqual(["1.1.md", "1.2.md", "section-1.md"]);
+    expect(files).toEqual(["1.md", "2.md"]);
   });
 
-  test("section mirror contains section narrative + frontmatter type 'roadmap-section'", async () => {
+  test("theme mirror contains description + frontmatter type 'roadmap-theme'", async () => {
     const parsed = JSON.parse(await readFile(ledgerPath, "utf8"));
     const detected = detectSchema(parsed);
     await generateMirrors(detected, ledgerPath);
-    const content = await readFile(join(mirrorDir, "section-1.md"), "utf8");
-    expect(content).toContain('type: roadmap-section');
+    const content = await readFile(join(mirrorDir, "1.md"), "utf8");
+    expect(content).toContain('type: roadmap-theme');
     expect(content).toContain('id: "1"');
+    expect(content).toContain("time_horizon: now");
+    expect(content).toContain("status: in_progress");
+    expect(content).toContain('linked_tasks: ["20"]');
     expect(content).toContain("# 1: Foundation");
     expect(content).toContain("Build the foundations.");
   });
 
-  test("item mirror contains item description + frontmatter type 'roadmap-item'", async () => {
+  test("theme mirror with notes emits a Notes section", async () => {
     const parsed = JSON.parse(await readFile(ledgerPath, "utf8"));
     const detected = detectSchema(parsed);
     await generateMirrors(detected, ledgerPath);
-    const content = await readFile(join(mirrorDir, "1.1.md"), "utf8");
-    expect(content).toContain('type: roadmap-item');
-    expect(content).toContain('id: "1.1"');
-    expect(content).toContain('section_id: "1"');
-    expect(content).toContain("# 1.1: First item");
-    expect(content).toContain("First item description.");
+    const content = await readFile(join(mirrorDir, "2.md"), "utf8");
+    expect(content).toContain('type: roadmap-theme');
+    expect(content).toContain('id: "2"');
+    expect(content).toContain("time_horizon: next");
+    expect(content).toContain('linked_backlog: ["45"]');
+    expect(content).toContain("## Notes");
+    expect(content).toContain("Some notes.");
   });
 });
 
@@ -439,9 +411,9 @@ describe("generateMirrors — idempotency (TECH §3.4)", () => {
     await writeFile(ledgerPath, JSON.stringify(makeRoadmap(), null, 2), "utf8");
     const detected = detectSchema(makeRoadmap());
     await generateMirrors(detected, ledgerPath);
-    const first = await readFile(join(mirrorDir, "1.1.md"), "utf8");
+    const first = await readFile(join(mirrorDir, "1.md"), "utf8");
     await generateMirrors(detected, ledgerPath);
-    const second = await readFile(join(mirrorDir, "1.1.md"), "utf8");
+    const second = await readFile(join(mirrorDir, "1.md"), "utf8");
     expect(second).toBe(first);
   });
 
@@ -484,28 +456,19 @@ describe("generateMirrors — orphan deletion (TECH §3.4)", () => {
     expect((await readdir(mirrorDir)).sort()).toEqual(["ID-20.md"]);
   });
 
-  test("removes mirrors for Roadmap items no longer in canonical", async () => {
+  test("removes mirrors for Roadmap themes no longer in canonical (ID-20.19)", async () => {
     ledgerPath = join(testDir, "product-roadmap.json");
     mirrorDir = join(testDir, "roadmap");
     await writeFile(ledgerPath, JSON.stringify(makeRoadmap(), null, 2), "utf8");
     await generateMirrors(detectSchema(makeRoadmap()), ledgerPath);
-    expect((await readdir(mirrorDir)).sort()).toEqual([
-      "1.1.md",
-      "1.2.md",
-      "section-1.md",
-    ]);
+    expect((await readdir(mirrorDir)).sort()).toEqual(["1.md", "2.md"]);
 
-    // Drop item 1.2 from the canonical
+    // Drop theme 2 from the canonical
     const trimmed = makeRoadmap();
-    trimmed.sections[0].items = trimmed.sections[0].items.filter(
-      (i) => i.id !== "1.2",
-    );
+    trimmed.themes = trimmed.themes.filter((t) => t.id !== "2");
     await writeFile(ledgerPath, JSON.stringify(trimmed, null, 2), "utf8");
     await generateMirrors(detectSchema(trimmed), ledgerPath);
-    expect((await readdir(mirrorDir)).sort()).toEqual([
-      "1.1.md",
-      "section-1.md",
-    ]);
+    expect((await readdir(mirrorDir)).sort()).toEqual(["1.md"]);
   });
 
   test("removes mirrors for backlog items no longer in canonical", async () => {
