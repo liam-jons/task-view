@@ -293,50 +293,147 @@ export function clearDraft(
  * passes its server response through `classifySaveResult` to decide
  * which post-save behaviour to fire (draft clear vs draft save vs
  * inline-error display).
+ *
+ * `ok` carries the server's `newMtime` so the hydration layer can adopt
+ * it as the next `baseMtime` (optimistic concurrency, TECH §5.4).
+ *
+ * `mtime-conflict` carries the server's `currentMtime` so the SPA can
+ * re-base a "Reload from disk" against the latest mtime (PRODUCT inv 37).
+ *
+ * `mirror-regen-failed` is a SOFT outcome: the canonical DID persist
+ * (`canonicalWritten: true`) and the server returned `newMtime`; only
+ * the on-disk mirror regen failed. The SPA treats the field edit as
+ * saved (adopt `newMtime`, clear the draft) and may re-issue
+ * `POST /api/ledger/regen` in the background — it must NOT surface a
+ * hard "save failed" error.
  */
 export type SaveOutcome =
-  | { kind: "ok" }
+  | { kind: "ok"; newMtime?: string }
   | { kind: "schema-error"; message: string }
-  | { kind: "mtime-conflict"; message: string }
+  | { kind: "mtime-conflict"; message: string; currentMtime?: string }
   | { kind: "walk-error"; message: string }
+  | { kind: "mirror-regen-failed"; message: string; newMtime?: string }
   | { kind: "network-error"; message: string };
 
 /**
- * Classify the server response shape (matches TECH §5.1 PATCH response
- * `{ok:true, newMtime}` | `{ok:false, error}`). On `ok: true` →
- * outcome `"ok"`. On `ok: false` → drill into the `error.kind` per
- * patch-apply.ts's `ApplyPatchesResult`.
+ * Format a raw `ZodIssue[]` (the server's 422 `issues` array) into a
+ * single inline message — same first-issue-wins convention as
+ * {@link formatZodErrorInline}, but operating on the wire-shape array
+ * (the server sends `error: "schema-error"` + an `issues` array, NOT a
+ * re-hydrated `ZodError`).
  */
-export function classifySaveResult(
-  response: unknown,
-): SaveOutcome {
+function formatZodIssuesInline(issues: unknown): string {
+  if (!Array.isArray(issues) || issues.length === 0) {
+    return "Validation failed (no issue detail available).";
+  }
+  const issue = issues[0] as { path?: unknown; message?: unknown };
+  const pathArr = Array.isArray(issue.path) ? issue.path : [];
+  const path = pathArr.length === 0 ? "(root)" : pathArr.join(".");
+  const message =
+    typeof issue.message === "string" ? issue.message : "Validation failed.";
+  return `${path}: ${message}`;
+}
+
+/**
+ * Classify the REAL patch-server response shape (packages/server/
+ * patch-server.ts). The server is canonical — it flattens errors to a
+ * top-level STRING `error` discriminant + sibling fields, NOT the
+ * nested `{ error: { kind } }` object the 20.10-era helper assumed (the
+ * helper drifted; 20.24 is its first runtime caller and corrects it).
+ *
+ * On the wire (per the handlers in patch-server.ts):
+ *   200 → { ok: true, newMtime, recordId, mirrorDir, ... }
+ *   409 → { ok: false, error: "mtime-mismatch", currentMtime, hint }
+ *   422 → { ok: false, error: "schema-error", issues: ZodIssue[] }
+ *   400 → { ok: false, error: "walk-error", fieldPath, detail }
+ *   400 → { ok: false, error: "invalid-json" | "missing-baseMtime"
+ *                                | "missing-patches" | "invalid-baseMtime", ... }
+ *   500 → { ok: false, error: "mirror-regen-failed", canonicalWritten: true,
+ *                              newMtime, detail }   ← SOFT (canonical saved)
+ *   500 → { ok: false, error: "write-failed" | "ledger-read-failed", detail }
+ *   422 → { ok: false, error: "unknown-document-name", documentName }
+ */
+export function classifySaveResult(response: unknown): SaveOutcome {
   if (typeof response !== "object" || response === null) {
     return { kind: "network-error", message: "Empty server response." };
   }
-  const r = response as { ok?: boolean; error?: unknown; newMtime?: string };
+  const r = response as {
+    ok?: boolean;
+    error?: unknown;
+    newMtime?: unknown;
+    currentMtime?: unknown;
+    hint?: unknown;
+    issues?: unknown;
+    fieldPath?: unknown;
+    detail?: unknown;
+    documentName?: unknown;
+    canonicalWritten?: unknown;
+  };
+
   if (r.ok === true) {
-    return { kind: "ok" };
+    return {
+      kind: "ok",
+      newMtime: typeof r.newMtime === "string" ? r.newMtime : undefined,
+    };
   }
-  if (r.ok === false && typeof r.error === "object" && r.error !== null) {
-    const e = r.error as { kind?: string; message?: string; detail?: string };
-    if (e.kind === "schema-error") {
-      return {
-        kind: "schema-error",
-        message: e.message ?? "Schema validation failed.",
-      };
-    }
-    if (e.kind === "mtime-conflict") {
-      return {
-        kind: "mtime-conflict",
-        message: e.message ?? "Ledger changed underneath you.",
-      };
-    }
-    if (e.kind === "walk-error") {
-      return {
-        kind: "walk-error",
-        message: e.detail ?? e.message ?? "Patch path invalid.",
-      };
+
+  if (r.ok === false && typeof r.error === "string") {
+    switch (r.error) {
+      case "schema-error":
+        return {
+          kind: "schema-error",
+          message: formatZodIssuesInline(r.issues),
+        };
+      case "mtime-mismatch":
+        return {
+          kind: "mtime-conflict",
+          message:
+            typeof r.hint === "string"
+              ? r.hint
+              : "Ledger changed underneath you — reload from disk and re-apply your edit.",
+          currentMtime:
+            typeof r.currentMtime === "string" ? r.currentMtime : undefined,
+        };
+      case "walk-error":
+        return {
+          kind: "walk-error",
+          message:
+            typeof r.detail === "string"
+              ? r.detail
+              : Array.isArray(r.fieldPath)
+                ? `Patch path invalid: ${r.fieldPath.join(">")}`
+                : "Patch path invalid.",
+        };
+      case "mirror-regen-failed":
+        // SOFT: the canonical persisted; only the mirror regen failed.
+        return {
+          kind: "mirror-regen-failed",
+          message:
+            typeof r.detail === "string"
+              ? r.detail
+              : "Saved, but mirror regeneration failed; mirrors may be stale until the next regen.",
+          newMtime: typeof r.newMtime === "string" ? r.newMtime : undefined,
+        };
+      case "unknown-document-name":
+        return {
+          kind: "schema-error",
+          message: `Unrecognised ledger document_name: ${
+            typeof r.documentName === "string" ? r.documentName : "(null)"
+          }.`,
+        };
+      default:
+        // invalid-json / missing-baseMtime / missing-patches /
+        // invalid-baseMtime / empty-patches / kind-mismatch /
+        // write-failed / ledger-read-failed / anything else — client-
+        // construction or IO faults. Surface the server's error token +
+        // any detail rather than a silent → "Unrecognised" catch-all.
+        return {
+          kind: "network-error",
+          message:
+            typeof r.detail === "string" ? `${r.error}: ${r.detail}` : r.error,
+        };
     }
   }
+
   return { kind: "network-error", message: "Unrecognised server response." };
 }

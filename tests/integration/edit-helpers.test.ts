@@ -297,57 +297,115 @@ describe("saveDraft / loadDraft / clearDraft — full draft lifecycle (inv 51)",
 });
 
 // ── Server-result classification ──────────────────────────────────────────────
+//
+// REWRITTEN for ID-20.24: these previously asserted a FICTIONAL nested
+// `{ error: { kind } }` response shape the patch-server never emits. The
+// real server (packages/server/patch-server.ts) flattens errors to a
+// top-level STRING `error` discriminant + sibling fields. 20.24 is
+// classifySaveResult's first runtime caller, so the helper + these tests
+// were corrected to assert the EXACT bodies the server's handlers return
+// (copied from handlePatchRecord). A test asserting a shape the server
+// never produces is the antipattern we reject; this is the honest fix.
 
-describe("classifySaveResult — TECH §5.1 response shape", () => {
-  test("ok response", () => {
-    expect(
-      classifySaveResult({ ok: true, newMtime: "2026-05-22T00:00:00Z" }),
-    ).toEqual({ kind: "ok" });
-  });
-
-  test("schema error", () => {
+describe("classifySaveResult — REAL patch-server response shape (flat string error)", () => {
+  test("200 ok → adopts newMtime for next baseMtime", () => {
     expect(
       classifySaveResult({
-        ok: false,
-        error: {
-          kind: "schema-error",
-          message: "Field x: invalid enum",
-        },
+        ok: true,
+        newMtime: "2026-05-25T00:00:00.000Z",
+        recordId: "ID-30",
+        mirrorDir: "/tmp/mirrors",
+        mirrorsWritten: ["ID-30.md"],
+        mirrorsDeleted: [],
       }),
-    ).toEqual({
-      kind: "schema-error",
-      message: "Field x: invalid enum",
+    ).toEqual({ kind: "ok", newMtime: "2026-05-25T00:00:00.000Z" });
+  });
+
+  test("422 schema-error → formats first ZodIssue inline (PRODUCT inv 29)", () => {
+    const outcome = classifySaveResult({
+      ok: false,
+      error: "schema-error",
+      issues: [
+        {
+          path: ["tasks", 0, "status"],
+          message: "Invalid enum value. Expected 'done' | 'pending'",
+        },
+      ],
     });
+    expect(outcome.kind).toBe("schema-error");
+    expect((outcome as { message: string }).message).toBe(
+      "tasks.0.status: Invalid enum value. Expected 'done' | 'pending'",
+    );
   });
 
-  test("mtime conflict", () => {
-    expect(
-      classifySaveResult({
-        ok: false,
-        error: {
-          kind: "mtime-conflict",
-          message: "Ledger changed underneath you.",
-        },
-      }),
-    ).toEqual({
+  test("409 mtime-mismatch → mtime-conflict, carries currentMtime + hint", () => {
+    const outcome = classifySaveResult({
+      ok: false,
+      error: "mtime-mismatch",
+      currentMtime: "2026-05-25T12:00:00.000Z",
+      hint: "ledger changed underneath you — reload from disk and re-apply your edit",
+    });
+    expect(outcome).toEqual({
       kind: "mtime-conflict",
-      message: "Ledger changed underneath you.",
+      message:
+        "ledger changed underneath you — reload from disk and re-apply your edit",
+      currentMtime: "2026-05-25T12:00:00.000Z",
     });
   });
 
-  test("walk error", () => {
-    expect(
-      classifySaveResult({
-        ok: false,
-        error: {
-          kind: "walk-error",
-          detail: "Task id 99 not found.",
-        },
-      }),
-    ).toEqual({
-      kind: "walk-error",
-      message: "Task id 99 not found.",
+  test("400 walk-error → uses detail string", () => {
+    const outcome = classifySaveResult({
+      ok: false,
+      error: "walk-error",
+      fieldPath: ["tasks", "99", "status"],
+      detail: 'Task id "99" not found in canonical tasks[].',
     });
+    expect(outcome).toEqual({
+      kind: "walk-error",
+      message: 'Task id "99" not found in canonical tasks[].',
+    });
+  });
+
+  test("500 mirror-regen-failed → SOFT outcome (canonical saved), carries newMtime", () => {
+    const outcome = classifySaveResult({
+      ok: false,
+      error: "mirror-regen-failed",
+      detail: "EACCES writing mirror",
+      canonicalWritten: true,
+      newMtime: "2026-05-25T13:00:00.000Z",
+    });
+    expect(outcome.kind).toBe("mirror-regen-failed");
+    expect((outcome as { newMtime?: string }).newMtime).toBe(
+      "2026-05-25T13:00:00.000Z",
+    );
+  });
+
+  test("400 missing-baseMtime → network-error carrying the server token", () => {
+    const outcome = classifySaveResult({ ok: false, error: "missing-baseMtime" });
+    expect(outcome.kind).toBe("network-error");
+    expect((outcome as { message: string }).message).toBe("missing-baseMtime");
+  });
+
+  test("400 invalid-json → network-error with detail appended", () => {
+    const outcome = classifySaveResult({
+      ok: false,
+      error: "invalid-json",
+      detail: "Unexpected token",
+    });
+    expect(outcome.kind).toBe("network-error");
+    expect((outcome as { message: string }).message).toBe(
+      "invalid-json: Unexpected token",
+    );
+  });
+
+  test("422 unknown-document-name → schema-error surfacing the name", () => {
+    const outcome = classifySaveResult({
+      ok: false,
+      error: "unknown-document-name",
+      documentName: "Foo",
+    });
+    expect(outcome.kind).toBe("schema-error");
+    expect((outcome as { message: string }).message).toContain("Foo");
   });
 
   test("malformed response → network error", () => {

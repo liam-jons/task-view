@@ -31,13 +31,19 @@ Multi-paragraph content that I do NOT want to lose
 just because the save failed validation.`;
 
 describe("PRODUCT inv 29 — invalid value → inline error, textarea preserved", () => {
-  test("server response {ok:false, error: schema-error} classified correctly", () => {
+  test("server 422 {ok:false, error:'schema-error', issues} classified correctly", () => {
+    // REAL server shape (handlePatchRecord 422): flat string `error` +
+    // `issues: ZodIssue[]`. classifySaveResult formats the first issue
+    // inline per PRODUCT inv 29.
     const outcome = classifySaveResult({
       ok: false,
-      error: {
-        kind: "schema-error",
-        message: "tasks.0.status: Invalid enum value. Expected 'done'…",
-      },
+      error: "schema-error",
+      issues: [
+        {
+          path: ["tasks", 0, "status"],
+          message: "Invalid enum value. Expected 'done'…",
+        },
+      ],
     });
     expect(outcome.kind).toBe("schema-error");
     expect(
@@ -107,33 +113,32 @@ describe("PRODUCT inv 29 — invalid value → inline error, textarea preserved"
   });
 
   test("mtime conflict is a distinct error kind (NOT routed through inline)", () => {
-    // Per TECH §5.4: mtime mismatch → server returns
-    // {ok:false, error: {kind:'mtime-conflict', ...}}. The SPA shows
-    // a top-level "Ledger changed underneath you — Reload from disk"
-    // banner; the textarea also stays open + draft is preserved in
+    // Per TECH §5.4: mtime mismatch → server returns the REAL flat shape
+    // {ok:false, error:'mtime-mismatch', currentMtime, hint} (409). The
+    // SPA shows a top-level "Ledger changed underneath you — Reload from
+    // disk" banner; the textarea also stays open + draft is preserved in
     // localStorage. The classification helper distinguishes the kinds.
     const outcome = classifySaveResult({
       ok: false,
-      error: {
-        kind: "mtime-conflict",
-        message: "Ledger changed underneath you.",
-      },
+      error: "mtime-mismatch",
+      currentMtime: "2026-05-25T12:00:00.000Z",
+      hint: "ledger changed underneath you — reload from disk and re-apply your edit",
     });
     expect(outcome.kind).toBe("mtime-conflict");
     expect(outcome.kind).not.toBe("schema-error");
   });
 
   test("walk-error (invalid fieldPath) is also distinct from schema-error", () => {
-    // Per patch-apply.ts ApplyPatchesResult: walk-error fires when the
-    // fieldPath references a non-existent record/subtask. Surfaces
-    // as a non-schema error kind so the SPA can show a generic
-    // "Patch path invalid" message rather than a Zod-style issue.
+    // Per the REAL server (handlePatchRecord 400): {ok:false,
+    // error:'walk-error', fieldPath, detail} fires when the fieldPath
+    // references a non-existent record/subtask. Surfaces as a non-schema
+    // error kind so the SPA can show a generic "Patch path invalid"
+    // message rather than a Zod-style issue.
     const outcome = classifySaveResult({
       ok: false,
-      error: {
-        kind: "walk-error",
-        detail: "Task id 99 not found.",
-      },
+      error: "walk-error",
+      fieldPath: ["tasks", "99", "status"],
+      detail: "Task id 99 not found.",
     });
     expect(outcome.kind).toBe("walk-error");
   });

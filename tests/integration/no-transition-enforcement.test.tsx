@@ -85,10 +85,13 @@ describe("PRODUCT inv 32 — no state-machine enforcement", () => {
     // Simulate the server's response for a valid pending→done flip.
     // The server's only check is `schema.parse(canonical)` per TECH §5.2;
     // since 'done' is in TaskListStatus.options, the schema accepts.
+    // Per ID-20.24, the 'ok' outcome now carries the server's newMtime so
+    // the hydration layer can adopt it as the next baseMtime (TECH §5.4
+    // optimistic concurrency).
     const ok = classifySaveResult({
       ok: true,
       newMtime: "2026-05-22T00:00:00Z",
     });
-    expect(ok).toEqual({ kind: "ok" });
+    expect(ok).toEqual({ kind: "ok", newMtime: "2026-05-22T00:00:00Z" });
   });
 });
