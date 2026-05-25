@@ -1,4 +1,4 @@
-import { Block, type Annotation, type CodeAnnotation, type EditorAnnotation, type ImageAttachment } from '../types';
+import { Block, type Annotation, type CodeAnnotation, type ImageAttachment } from '../types';
 
 /**
  * Parsed YAML frontmatter as key-value pairs.
@@ -657,30 +657,6 @@ export const exportLinkedDocAnnotations = (
       output += '\n';
     });
   }
-
-  output += `---\n`;
-  return output;
-};
-
-export const exportEditorAnnotations = (editorAnnotations: EditorAnnotation[]): string => {
-  if (editorAnnotations.length === 0) return '';
-
-  let output = `\n# Editor File Annotations\n\nThe following annotations reference code files in the project.\n\n`;
-
-  editorAnnotations.forEach((ann, index) => {
-    const lineRange = ann.lineStart === ann.lineEnd
-      ? `line ${ann.lineStart}`
-      : `lines ${ann.lineStart}-${ann.lineEnd}`;
-
-    output += `## ${index + 1}. ${ann.filePath} (${lineRange})\n`;
-    output += `\`\`\`\n${ann.selectedText}\n\`\`\`\n`;
-
-    if (ann.comment) {
-      output += `> ${ann.comment}\n`;
-    }
-
-    output += '\n';
-  });
 
   output += `---\n`;
   return output;
