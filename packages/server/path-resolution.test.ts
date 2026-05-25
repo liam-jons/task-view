@@ -127,34 +127,20 @@ describe("resolveLedgerForPath — mirror .md path (record-level)", () => {
     expect(result.recordId).toBe("15");
   });
 
-  test("strips 'section-' prefix to recover section id from Roadmap mirror filename", async () => {
+  test("resolves Roadmap theme mirrors by bare-digit id (no prefix to strip — ID-20.19 themes[])", async () => {
+    // The Phase-B themes[] roadmap (ID-20.19) replaced the retired
+    // sections[]/items[] model; a roadmap mirror is `{themeId}.md` with no
+    // 'section-' prefix.
     const ledgerPath = join(testDir, "product-roadmap.json");
     await writeFile(ledgerPath, minimalRoadmapJson, "utf8");
     const mirrorDir = join(testDir, "roadmap");
     await mkdir(mirrorDir, { recursive: true });
-    await writeFile(join(mirrorDir, "section-3.1.md"), "", "utf8");
+    await writeFile(join(mirrorDir, "3.md"), "", "utf8");
 
-    const result = await resolveLedgerForPath(
-      join(mirrorDir, "section-3.1.md"),
-    );
+    const result = await resolveLedgerForPath(join(mirrorDir, "3.md"));
     if (result.kind !== "ledger") throw new Error("Expected ledger result");
     expect(result.documentName).toBe("Knowledge Hub Roadmap");
-    expect(result.recordId).toBe("3.1");
-    expect(result.recordIsSection).toBe(true);
-  });
-
-  test("preserves raw id for Roadmap item mirrors (no prefix to strip)", async () => {
-    const ledgerPath = join(testDir, "product-roadmap.json");
-    await writeFile(ledgerPath, minimalRoadmapJson, "utf8");
-    const mirrorDir = join(testDir, "roadmap");
-    await mkdir(mirrorDir, { recursive: true });
-    await writeFile(join(mirrorDir, "3.1.8.md"), "", "utf8");
-
-    const result = await resolveLedgerForPath(join(mirrorDir, "3.1.8.md"));
-    if (result.kind !== "ledger") throw new Error("Expected ledger result");
-    expect(result.documentName).toBe("Knowledge Hub Roadmap");
-    expect(result.recordId).toBe("3.1.8");
-    expect(result.recordIsSection).toBeFalsy();
+    expect(result.recordId).toBe("3");
   });
 
   test("preserves raw id for Backlog mirrors", async () => {
@@ -309,11 +295,10 @@ describe("buildLedgerLaunchUrl — ?record= preselection (TECH §2.2 last paragr
     expect(url).toBe("http://localhost:8765/");
   });
 
-  test("preserves recordIsSection signal via &section=1 when true", () => {
+  test("resolves Roadmap theme records by bare-digit id (no &section= fragment — ID-20.19)", () => {
     const url = buildLedgerLaunchUrl("http://localhost:8765", {
-      recordId: "3.1",
-      recordIsSection: true,
+      recordId: "3",
     });
-    expect(url).toBe("http://localhost:8765/?record=3.1&section=1");
+    expect(url).toBe("http://localhost:8765/?record=3");
   });
 });

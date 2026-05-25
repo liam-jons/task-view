@@ -23,10 +23,15 @@
  */
 import { parseArgs } from "node:util";
 import { existsSync } from "node:fs";
+import { extname } from "node:path";
 import { ZodError } from "zod";
 import { detectSchema, KNOWN_DOCUMENT_NAMES } from "@task-view/server/detect-schema";
 import { generateMirrors } from "@task-view/server/mirror-generator";
-import { scanForLedgers } from "@task-view/server/path-resolution";
+import {
+  scanForLedgers,
+  resolveLedgerForPath,
+  buildLedgerLaunchUrl,
+} from "@task-view/server/path-resolution";
 import { openBrowser } from "@task-view/server/browser";
 import { startTaskViewServer } from "@task-view/server/ledger";
 
@@ -120,6 +125,79 @@ async function inferPathFromCwd(): Promise<string | null> {
       `\n\nLaunching against [1]. Re-invoke with explicit path to choose another.`,
   );
   return scan.paths[0];
+}
+
+// ── Record-level path resolution (Subtask 20.21 / PRODUCT inv 6) ─────────────
+
+interface LaunchTarget {
+  /** The canonical ledger JSON path the server will bind to. */
+  ledgerPath: string;
+  /**
+   * The record id to preselect in the viewer (parsed from a `.md` mirror
+   * filename), or `null` when the user supplied a ledger JSON directly.
+   */
+  recordId: string | null;
+}
+
+/**
+ * Resolve the user's positional argument into a launch target.
+ *
+ * 20.16 smoke-test S26 surfaced the GAP: `task-view docs/reference/tasks/
+ * ID-20.md` treated the `.md` mirror itself as a ledger and tried to
+ * JSON.parse it (`Invalid number`). PRODUCT inv 6 requires walking up to
+ * the sibling JSON + preselecting the named record.
+ *
+ * - A `.md` mirror path → delegate to `resolveLedgerForPath`, which
+ *   ascends one dir, finds the sibling ledger, and extracts the record id
+ *   from the filename. The resolved record id flows into the browser
+ *   launch URL via `?record=`.
+ * - Any other path (`.json` ledger) → passthrough with `recordId: null`.
+ *
+ * Returns `null` (after printing a visible diagnostic to stderr) when a
+ * `.md` mirror cannot be resolved to a sibling ledger.
+ */
+async function resolveLaunchTarget(positional: string): Promise<LaunchTarget | null> {
+  if (extname(positional).toLowerCase() !== ".md") {
+    // Ledger JSON path (or any non-mirror path) — passthrough. Fail-on-load
+    // + existsSync gating happen downstream in main().
+    return { ledgerPath: positional, recordId: null };
+  }
+
+  const resolved = await resolveLedgerForPath(positional);
+  switch (resolved.kind) {
+    case "ledger":
+      return { ledgerPath: resolved.ledgerPath, recordId: resolved.recordId };
+    case "file-not-found":
+      console.error(`task-view: mirror path not found: ${positional}`);
+      return null;
+    case "no-ledger":
+      console.error(
+        `task-view: could not resolve a sibling ledger for mirror ${positional}.\n` +
+          `No known ledger JSON found in ${resolved.searchedDir}.\n` +
+          `Expected one of: task-list.json, product-roadmap.json, product-backlog.json.`,
+      );
+      return null;
+    case "multiple-ledgers":
+      console.error(
+        `task-view: multiple sibling ledgers found for mirror ${positional} in ${resolved.searchedDir}:\n` +
+          resolved.paths.map((p) => `  - ${p}`).join("\n") +
+          `\n\nPass an explicit ledger path to disambiguate.`,
+      );
+      return null;
+    case "unknown-format":
+      console.error(
+        `task-view: mirror ${positional} resolved to an unrecognised document (document_name: ${
+          resolved.documentName ?? "(null)"
+        }).`,
+      );
+      return null;
+    default: {
+      // Exhaustiveness guard.
+      const _never: never = resolved;
+      console.error(`task-view: could not resolve mirror ${positional}.`);
+      return _never;
+    }
+  }
 }
 
 // ── --check (TECH §6.4 / PRODUCT inv 42) ─────────────────────────────────────
@@ -275,10 +353,24 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  // Resolve the ledger path
-  const ledgerPath = parsed.positional ?? (await inferPathFromCwd());
-  if (!ledgerPath) {
-    return 1;
+  // Resolve the launch target. A positional `.md` mirror path resolves to
+  // its sibling ledger + a preselected record id (Subtask 20.21 / PRODUCT
+  // inv 6); a ledger JSON path (or CWD-inferred path) carries no record.
+  let ledgerPath: string;
+  let recordId: string | null = null;
+  if (parsed.positional !== undefined) {
+    const target = await resolveLaunchTarget(parsed.positional);
+    if (!target) {
+      return 1;
+    }
+    ledgerPath = target.ledgerPath;
+    recordId = target.recordId;
+  } else {
+    const inferred = await inferPathFromCwd();
+    if (!inferred) {
+      return 1;
+    }
+    ledgerPath = inferred;
   }
 
   // --check is a one-shot — does not start a server.
@@ -313,9 +405,15 @@ async function main(): Promise<number> {
     return 1;
   }
 
+  // Build the launch URL — when a `.md` mirror resolved to a record id,
+  // append `?record=<id>` so the SSR viewer lands directly on that record
+  // (Subtask 20.21 / PRODUCT inv 6). A bare ledger launch lands on the
+  // index page.
+  const launchUrl = buildLedgerLaunchUrl(handle.url, { recordId });
+
   // Print readiness BEFORE opening browser, so the browser's network
   // request can race ahead of stdout (CLI watchers see the URL first).
-  console.log(`Server ready at ${handle.url} — close the tab to exit`);
+  console.log(`Server ready at ${launchUrl} — close the tab to exit`);
 
   // Open browser unless --no-browser.
   if (!parsed.noBrowser && process.env.TASK_VIEW_NO_BROWSER !== "1") {
@@ -323,7 +421,7 @@ async function main(): Promise<number> {
     // headless environments). We deliberately do NOT await its rejection
     // path because the user can always copy the URL from the readiness
     // line above.
-    await openBrowser(handle.url);
+    await openBrowser(launchUrl);
   }
 
   // Signal handlers — graceful stop on Ctrl-C / SIGTERM.

@@ -172,6 +172,100 @@ describe("CLI — positional path argument (TECH §6.1)", () => {
   });
 });
 
+describe("CLI — record-level path resolution (PRODUCT inv 6 / 20.16 S26)", () => {
+  async function writeTaskListWithRecord(): Promise<string> {
+    const ledgerPath = join(testDir, "task-list.json");
+    await writeFile(
+      ledgerPath,
+      JSON.stringify(
+        {
+          document_name: "Knowledge Hub Task List",
+          document_purpose: "20.21 record-resolution fixture.",
+          related_documents: [],
+          tasks: [
+            {
+              id: "20",
+              title: "Per-Task mirror",
+              description: "Outer task description.",
+              status: "in_progress",
+              priority: "must",
+              dependencies: [],
+              subtasks: [],
+              updatedAt: "2026-05-21T15:30:00.000Z",
+              effort_estimate: null,
+              owner: null,
+              priority_note: null,
+              status_note: null,
+              cross_doc_links: [],
+              session_refs: [],
+              commit_refs: [],
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    return ledgerPath;
+  }
+
+  test("resolves a record by id from a .md mirror path + round-trips a record-level read", async () => {
+    // S26 GAP: `task-view docs/reference/tasks/ID-20.md` must walk up to
+    // the sibling task-list.json, preselect record 20, and serve the JSON
+    // endpoints against the resolved ledger.
+    await writeTaskListWithRecord();
+    const mirrorDir = join(testDir, "tasks");
+    await mkdir(mirrorDir, { recursive: true });
+    const mirrorPath = join(mirrorDir, "ID-20.md");
+    await writeFile(mirrorPath, "---\nid: \"20\"\n---\n\n# ID-20", "utf8");
+
+    proc = spawnCli(["--no-browser", "--port", "0", mirrorPath]);
+    const stdout = await waitForStdoutMarker(proc, "Server ready at", 5000);
+    expect(stdout).toContain("Server ready at");
+    // The readiness URL must carry the preselected record fragment so a
+    // CLI watcher (and the browser) lands directly on record 20.
+    expect(stdout).toContain("?record=20");
+
+    // Extract the base URL and round-trip a record-level read against the
+    // JSON endpoints resolved from the sibling ledger.
+    const urlMatch = stdout.match(/Server ready at (http:\/\/[^\s?]+)/);
+    expect(urlMatch).not.toBeNull();
+    const baseUrl = urlMatch![1].replace(/\/$/, "");
+    const res = await fetch(`${baseUrl}/api/ledger/record/20`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ok: boolean;
+      kind: string;
+      record: { id: string; title: string };
+    };
+    expect(body.ok).toBe(true);
+    expect(body.kind).toBe("task");
+    expect(body.record.id).toBe("20");
+    expect(body.record.title).toBe("Per-Task mirror");
+  });
+
+  test("a .md mirror with no sibling ledger exits non-zero with a visible error", async () => {
+    const mirrorDir = join(testDir, "tasks");
+    await mkdir(mirrorDir, { recursive: true });
+    const mirrorPath = join(mirrorDir, "ID-20.md");
+    await writeFile(mirrorPath, "---\nid: \"20\"\n---\n\n# ID-20", "utf8");
+
+    proc = spawnCli(["--no-browser", "--port", "0", mirrorPath]);
+    const exitCode = await proc.exited;
+    const stdout = await readStreamToString(
+      proc.stdout as ReadableStream<Uint8Array>,
+    );
+    const stderr = await readStreamToString(
+      proc.stderr as ReadableStream<Uint8Array>,
+    );
+    proc = null;
+    expect(exitCode).not.toBe(0);
+    expect(stdout).not.toContain("Server ready at");
+    expect(stderr.toLowerCase()).toMatch(/no .*ledger|could not resolve|sibling/);
+  });
+});
+
 describe("CLI — launch-path fail-on-load (PRODUCT inv 4 + 48 / 20.16 S5+S6)", () => {
   test("server-launch against malformed JSON exits non-zero with a visible error and NO readiness line (S6)", async () => {
     // S6: bare server launch against unparseable JSON must fail on load,

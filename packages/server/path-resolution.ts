@@ -7,8 +7,9 @@
  *      and find the sibling JSON file whose `document_name` matches one
  *      of the three known canonical values. Return the ledger path,
  *      detected kind, and the named record id (parsed from the mirror
- *      filename, with the Task-list 'ID-' and Roadmap 'section-' prefixes
- *      stripped where present).
+ *      filename, with the Task-list 'ID-' prefix stripped where present).
+ *      Roadmap themes + Backlog items carry their raw id (ID-20.19 themes[]
+ *      world — there is no legacy 'section-' prefix to strip).
  *   2. `scanForLedgers(cwd)` — when no path is supplied (PRODUCT inv 43),
  *      scan the CWD for JSON files whose `document_name` matches one of
  *      the three known values. Return zero / one / multiple matches.
@@ -19,10 +20,9 @@
  * skipped, per TECH §2.3 wording "lenient — failure is just 'skip'".
  *
  * The third export — `buildLedgerLaunchUrl` — constructs the browser URL
- * that includes the `?record={id}` (and optional `&section=1`) query
- * fragment per the TECH §2.2 last paragraph pre-selection requirement.
- * The viewer SPA (ID-20.9) reads this fragment on first paint to scroll
- * to / expand the matching record.
+ * that includes the `?record={id}` query fragment per the TECH §2.2 last
+ * paragraph pre-selection requirement. The GET / SSR viewer (ID-20.17)
+ * reads this fragment and renders the matching record's page directly.
  */
 
 import { readdir, readFile, stat } from "node:fs/promises";
@@ -38,7 +38,6 @@ export type ResolvedLedger =
       ledgerPath: string;
       documentName: KnownDocumentName;
       recordId: string | null;
-      recordIsSection?: boolean;
     }
   | { kind: "file-not-found" }
   | { kind: "unknown-format"; path: string; documentName: string | null }
@@ -86,34 +85,29 @@ async function readDocumentNameIfKnown(
 }
 
 /**
- * Parse a mirror filename stem into `{ recordId, isSection? }`.
+ * Parse a mirror filename stem into its record id.
  *
  * Inverse of `computeRecordFilename` from mirror-generator.ts:
- *   - Task-list mode files all start with 'ID-' → strip and return raw id.
- *   - Roadmap section files start with 'section-' → strip + flag isSection.
- *   - Otherwise the stem IS the raw id (Roadmap items / Backlog items).
+ *   - Task-list mirrors carry the 'ID-' prefix → strip to recover the
+ *     bare integer Task id.
+ *   - Roadmap themes + Backlog items carry their raw id (no prefix). The
+ *     legacy Roadmap 'section-' prefix was retired with the sections[]
+ *     model in ID-20.19 (themes[] world) — there is nothing to strip.
  *
  * We do not attempt to reverse the §3.2 unsafe-char → '-' substitution
  * because the substitution is intentionally lossy; the viewer looks up
- * the record by walking the parsed ledger and comparing sanitised forms
- * (ID-20.9 scope). For 20.7 acceptance, the raw stem is sufficient.
+ * the record by walking the parsed ledger and comparing sanitised forms.
+ * The raw stem is sufficient for record resolution.
  */
 function parseMirrorStem(
   stem: string,
   documentName: KnownDocumentName,
-): { recordId: string; isSection: boolean } {
-  if (documentName === "Knowledge Hub Task List") {
-    if (stem.startsWith("ID-")) return { recordId: stem.slice(3), isSection: false };
-    return { recordId: stem, isSection: false };
+): { recordId: string } {
+  if (documentName === "Knowledge Hub Task List" && stem.startsWith("ID-")) {
+    return { recordId: stem.slice(3) };
   }
-  if (documentName === "Knowledge Hub Roadmap") {
-    if (stem.startsWith("section-")) {
-      return { recordId: stem.slice("section-".length), isSection: true };
-    }
-    return { recordId: stem, isSection: false };
-  }
-  // Product Backlog: no prefix
-  return { recordId: stem, isSection: false };
+  // Roadmap themes + Backlog items: raw stem is the id.
+  return { recordId: stem };
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -182,7 +176,6 @@ export async function resolveLedgerForPath(
       ledgerPath: scan.path,
       documentName: scan.documentName,
       recordId: parsed.recordId,
-      recordIsSection: parsed.isSection,
     };
   }
 
@@ -230,23 +223,24 @@ export async function scanForLedgers(cwd: string): Promise<ScanResult> {
 }
 
 /**
- * Build the browser launch URL with optional `?record={id}` (and
- * `&section=1`) query fragments per TECH §2.2.
+ * Build the browser launch URL with an optional `?record={id}` query
+ * fragment per TECH §2.2.
  *
- * The viewer SPA reads `?record=` on first paint and scrolls / expands
- * the matching record (ID-20.9). When the supplied recordId is null,
+ * The GET / SSR viewer (ID-20.17) reads `?record=` and renders the
+ * matching record's page directly. When the supplied recordId is null,
  * we emit a bare `/` so the viewer lands on the index page.
+ *
+ * Roadmap themes resolve by bare-digit id (ID-20.19 themes[] world); the
+ * retired `&section=1` fragment is gone — the SSR viewer never read it.
  */
 export function buildLedgerLaunchUrl(
   base: string,
-  opts: { recordId?: string | null; recordIsSection?: boolean },
+  opts: { recordId?: string | null },
 ): string {
   const trimmed = base.endsWith("/") ? base.slice(0, -1) : base;
   if (opts.recordId == null || opts.recordId === "") {
     return `${trimmed}/`;
   }
   const encoded = encodeURIComponent(opts.recordId).replace(/%2[Ee]/g, ".");
-  let url = `${trimmed}/?record=${encoded}`;
-  if (opts.recordIsSection) url += "&section=1";
-  return url;
+  return `${trimmed}/?record=${encoded}`;
 }
