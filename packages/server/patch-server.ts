@@ -71,6 +71,7 @@ import { ZodError } from "zod";
 import { detectSchema, type DetectSchemaResult } from "./detect-schema";
 import {
   generateMirrors,
+  generateRecordMirror,
   resolveMirrorDir,
   computeRecordFilename,
   computeMirrorDirName,
@@ -463,12 +464,19 @@ async function handlePatchRecord(
     );
   }
 
-  // §5.5 mirror regen — runs ONCE after the whole multi-field PATCH,
-  // not once per field. Even when only one field was patched, the
-  // single-call shape is preserved for symmetry.
+  // §5.5 mirror regen — runs ONCE after the whole multi-field PATCH, not
+  // once per field. Subtask 20.23 (PRODUCT inv 38): scope the regen to the
+  // touched record's mirror ONLY. A field PATCH mutates fields within one
+  // existing record — it can never add or remove records — so unaffected
+  // mirrors stay byte-identical (mtime stable). The prior full-ledger
+  // regen rewrote every mirror (20.16 S10 / Side-observation 5).
   let regen;
   try {
-    regen = await generateMirrors(serialisedDetected, ctx.ledgerPath);
+    regen = await generateRecordMirror(
+      serialisedDetected,
+      ctx.ledgerPath,
+      recordId,
+    );
   } catch (err) {
     // The canonical wrote successfully; mirror regen failed. Surface
     // a soft error — the client can still re-issue a regen request.

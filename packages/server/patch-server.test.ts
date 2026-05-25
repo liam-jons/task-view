@@ -469,7 +469,7 @@ describe("PATCH /api/ledger/record/:recordId — multi-field save (PRODUCT inv 3
     expect(updated.tasks[0].subtasks[0].status).toBe("in_progress");
   });
 
-  test("mirror regen runs ONCE per PATCH regardless of patch count (single mirrorsWritten payload)", async () => {
+  test("multi-field PATCH regenerates ONLY the touched record's mirror (PRODUCT inv 38 / Subtask 20.23)", async () => {
     const ledger = join(testDir, "task-list.json");
     await writeFixtureTaskList(ledger);
     handle = startPatchServer({ ledgerPath: ledger });
@@ -497,18 +497,64 @@ describe("PATCH /api/ledger/record/:recordId — multi-field save (PRODUCT inv 3
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       mirrorsWritten: string[];
+      mirrorsDeleted: string[];
     };
-    // Per PRODUCT inv 38: ONE mirror regen pass at the end. The regen
-    // returns the full set of mirrors written (all Tasks, since the
-    // generator is whole-ledger). We assert that the payload is the
-    // single-regen flat list, NOT a multiplied list of one-per-patch
-    // calls (which would be 4x in this fixture if the server regen'd
-    // per field).
-    //
-    // Concretely: there are 2 Tasks in the fixture, so a single regen
-    // writes 2 mirrors. We assert that count, NOT (2 * patches.length).
-    expect(body.mirrorsWritten.length).toBe(2);
-    expect(body.mirrorsWritten.sort()).toEqual(["ID-20.md", "ID-30.md"]);
+    // Subtask 20.23: a multi-field PATCH to record 20 regenerates ONLY
+    // ID-20.md — NOT the whole ledger. The four patches still produce a
+    // single scoped write (not one per field), and the untouched ID-30.md
+    // is not in the written set.
+    expect(body.mirrorsWritten).toEqual(["ID-20.md"]);
+    expect(body.mirrorsWritten).not.toContain("ID-30.md");
+    expect(body.mirrorsDeleted).toEqual([]);
+  });
+
+  test("unaffected mirror mtime is stable across a multi-field PATCH (Subtask 20.23)", async () => {
+    const ledger = join(testDir, "task-list.json");
+    await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+
+    // Materialise both mirrors first via a full regen (POST /regen), then
+    // capture the untouched mirror's mtime.
+    const regenRes = await fetch(`${handle.url}/api/ledger/regen`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(regenRes.status).toBe(200);
+    const otherMirror = join(testDir, "tasks", "ID-30.md");
+    const touchedMirror = join(testDir, "tasks", "ID-20.md");
+    const otherMtimeBefore = (await stat(otherMirror)).mtime.getTime();
+    const touchedMtimeBefore = (await stat(touchedMirror)).mtime.getTime();
+
+    // Sleep so any mtime change is observable on coarse-resolution FS.
+    await new Promise((r) => setTimeout(r, 15));
+
+    const baseMtime = await getLedgerMtime(ledger);
+    const res = await fetch(`${handle.url}/api/ledger/record/20`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        patches: [
+          { fieldPath: ["tasks", "20", "status"], newValue: "done" },
+          { fieldPath: ["tasks", "20", "priority"], newValue: "should" },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+
+    const otherMtimeAfter = (await stat(otherMirror)).mtime.getTime();
+    const touchedMtimeAfter = (await stat(touchedMirror)).mtime.getTime();
+
+    // The untouched mirror's mtime is unchanged …
+    expect(otherMtimeAfter).toBe(otherMtimeBefore);
+    // … while the touched mirror WAS rewritten (mtime advanced).
+    expect(touchedMtimeAfter).toBeGreaterThan(touchedMtimeBefore);
+
+    // The touched mirror reflects the new content; the untouched one is
+    // byte-identical to its pre-PATCH form.
+    const touchedContent = await readFile(touchedMirror, "utf8");
+    expect(touchedContent).toContain("status: done");
   });
 
   test("multi-patch is atomic: one schema error rejects the whole batch + canonical unchanged", async () => {

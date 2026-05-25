@@ -23,6 +23,7 @@ import {
   computeMirrorDirName,
   computeRecordFilename,
   generateMirrors,
+  generateRecordMirror,
   sanitiseFilenameStem,
 } from "./mirror-generator";
 
@@ -383,6 +384,55 @@ describe("generateMirrors — Backlog mode (TECH §3.3)", () => {
 });
 
 // ── §3.4 idempotency + orphan deletion ────────────────────────────────────────
+
+describe("generateRecordMirror — scoped single-record regen (Subtask 20.23)", () => {
+  test("writes ONLY the named record's mirror + leaves siblings untouched", async () => {
+    const ledger = makeTaskList(["20", "30"]);
+    ledgerPath = join(testDir, "task-list.json");
+    await writeFile(ledgerPath, JSON.stringify(ledger, null, 2), "utf8");
+    const detected = detectSchema(ledger);
+
+    // Materialise both mirrors via a full regen first.
+    await generateMirrors(detected, ledgerPath);
+    mirrorDir = join(testDir, "tasks");
+    const otherBefore = await readFile(join(mirrorDir, "ID-30.md"), "utf8");
+
+    const result = await generateRecordMirror(detected, ledgerPath, "20");
+    expect(result.written).toEqual(["ID-20.md"]);
+    expect(result.deleted).toEqual([]);
+
+    // The untouched sibling mirror is byte-identical to its pre-call form.
+    const otherAfter = await readFile(join(mirrorDir, "ID-30.md"), "utf8");
+    expect(otherAfter).toBe(otherBefore);
+  });
+
+  test("the scoped write is byte-identical to the same record's slot in a full regen", async () => {
+    const ledger = makeTaskList(["20", "30"]);
+    ledgerPath = join(testDir, "task-list.json");
+    await writeFile(ledgerPath, JSON.stringify(ledger, null, 2), "utf8");
+    const detected = detectSchema(ledger);
+
+    await generateRecordMirror(detected, ledgerPath, "20");
+    mirrorDir = join(testDir, "tasks");
+    const scoped = await readFile(join(mirrorDir, "ID-20.md"), "utf8");
+
+    // Now full-regen and compare the same record's mirror content.
+    await generateMirrors(detected, ledgerPath);
+    const full = await readFile(join(mirrorDir, "ID-20.md"), "utf8");
+    expect(scoped).toBe(full);
+  });
+
+  test("returns written:[] when the record id is not found (defensive)", async () => {
+    const ledger = makeTaskList(["20"]);
+    ledgerPath = join(testDir, "task-list.json");
+    await writeFile(ledgerPath, JSON.stringify(ledger, null, 2), "utf8");
+    const detected = detectSchema(ledger);
+
+    const result = await generateRecordMirror(detected, ledgerPath, "999");
+    expect(result.written).toEqual([]);
+    expect(result.deleted).toEqual([]);
+  });
+});
 
 describe("generateMirrors — idempotency (TECH §3.4)", () => {
   beforeEach(async () => {

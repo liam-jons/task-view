@@ -392,6 +392,81 @@ export function resolveMirrorDir(
 }
 
 /**
+ * Render the mirror content for a single record by id, or return `null`
+ * when no record with that id exists in the ledger.
+ *
+ * Used by the scoped single-record regen path (Subtask 20.23) — shares the
+ * exact rendering helpers `generateMirrors` uses so a scoped write is
+ * byte-identical to the same record's slot in a full regen.
+ */
+function renderRecordMirror(
+  detected: Exclude<DetectSchemaResult, { kind: "unknown" }>,
+  recordId: string,
+): { filename: string; content: string } | null {
+  if (detected.kind === "task-list") {
+    const task = detected.data.tasks.find((t) => t.id === recordId);
+    if (!task) return null;
+    return {
+      filename: computeRecordFilename("task-list", { id: task.id }),
+      content: renderTaskListMirror(task),
+    };
+  }
+  if (detected.kind === "roadmap") {
+    const theme = detected.data.themes.find((t) => t.id === recordId);
+    if (!theme) return null;
+    return {
+      filename: computeRecordFilename("roadmap", { id: theme.id }),
+      content: renderRoadmapThemeMirror(theme),
+    };
+  }
+  const item = detected.data.items.find((it) => it.id === recordId);
+  if (!item) return null;
+  return {
+    filename: computeRecordFilename("backlog", { id: item.id }),
+    content: renderBacklogItemMirror(item),
+  };
+}
+
+/**
+ * Regenerate ONLY the named record's mirror (Subtask 20.23 / PRODUCT inv
+ * 38).
+ *
+ * 20.16 smoke-test S10 + Side-observation 5: a multi-field PATCH touches a
+ * single record but the prior implementation regenerated the WHOLE ledger,
+ * rewriting every mirror (advancing every mtime) — wasteful and surprising
+ * at scale. A field PATCH can only mutate fields WITHIN an existing record;
+ * it can never add or remove records, so there is no orphan-deletion
+ * concern — scoping to the touched record's mirror is safe + correct.
+ *
+ * Writes the single mirror via the same atomic write-to-temp + rename used
+ * by the full generator, so unaffected mirrors keep a stable mtime.
+ *
+ * Throws if the input is `{ kind: 'unknown' }`; returns `written: []` when
+ * the record id is not found (caller has already validated the record
+ * exists via the PATCH walk, so this is defensive).
+ */
+export async function generateRecordMirror(
+  detected: DetectSchemaResult,
+  canonicalPath: string,
+  recordId: string,
+): Promise<{ mirrorDir: string; written: string[]; deleted: string[] }> {
+  if (detected.kind === "unknown") {
+    throw new Error(
+      `Cannot generate mirror for unknown ledger kind (document_name: ${detected.documentName ?? "null"}).`,
+    );
+  }
+  const mirrorDir = resolveMirrorDir(detected.kind, canonicalPath);
+  const planned = renderRecordMirror(detected, recordId);
+  if (!planned) {
+    return { mirrorDir, written: [], deleted: [] };
+  }
+  // Ensure the mirror directory exists (inv 40 first-run tolerance).
+  await mkdir(mirrorDir, { recursive: true });
+  await atomicWrite(join(mirrorDir, planned.filename), planned.content);
+  return { mirrorDir, written: [planned.filename], deleted: [] };
+}
+
+/**
  * Generate per-record mirrors for the parsed ledger. Idempotent. Orphan
  * mirrors are deleted on each run.
  *
