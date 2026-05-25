@@ -236,6 +236,10 @@ const BacklogItemRow: React.FC<{ item: BacklogItem }> = ({ item }) => {
           className="record-view-pencil-button"
           data-edit-action="open"
           data-edit-field={fieldKey}
+          // ID-20.24: rank is `z.number().int().nullable()` — the PE
+          // dispatcher reads this kind to build an integer input that
+          // clears to null on empty input (the "(unset)" path).
+          data-edit-kind="integer-nullable"
           aria-label={`Edit rank for backlog item ${item.id}`}
         >
           <span aria-hidden="true">{"✎"}</span>

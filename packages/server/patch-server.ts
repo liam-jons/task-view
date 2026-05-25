@@ -88,6 +88,7 @@ import { promoteTransaction } from "./ledger-transaction";
 import { scanForLedgers } from "./path-resolution";
 import { LOOPBACK_HOSTNAME, resolveServerHostname } from "./loopback-bind";
 import { renderViewer } from "./render-viewer";
+import { getClientBundle } from "./client-bundle";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -247,7 +248,15 @@ async function handleGetRoot(
       { status: 422 },
     );
   }
-  const result = renderViewer({ detected: canonical.detected, search });
+  // Inline the progressive-enhancement client bundle (ID-20.24). Built +
+  // cached once at boot via Bun.build; never blocks the read-only render
+  // (getClientBundle returns an inert fallback on build failure).
+  const clientScript = await getClientBundle();
+  const result = renderViewer({
+    detected: canonical.detected,
+    search,
+    clientScript,
+  });
   return new Response(result.html, {
     status: result.status,
     headers: { "content-type": "text/html; charset=utf-8" },

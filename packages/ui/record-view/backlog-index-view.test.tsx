@@ -230,6 +230,10 @@ describe("inv 10 — rank column, integer-input affordance, drag handle", () => 
     expect(html).toContain('data-edit-field="items&gt;45&gt;rank"');
     // The pencil button is present per inv 30 visual treatment
     expect(html).toContain('data-edit-action="open"');
+    // ID-20.24: the pencil carries data-edit-kind so the PE dispatcher
+    // builds an integer input that clears to null on empty. rank is
+    // `z.number().int().nullable()`.
+    expect(html).toContain('data-edit-kind="integer-nullable"');
   });
 
   test("rank affordance is a button (keyboard-operable per inv 14 WCAG 2.1 AA)", () => {

@@ -52,6 +52,14 @@ export type KnownDetected = Exclude<DetectSchemaResult, { kind: "unknown" }>;
 export interface RenderViewerInput {
   detected: KnownDetected;
   search: URLSearchParams;
+  /**
+   * The progressive-enhancement client bundle JS to inline inside a
+   * `<script>` at the end of `<body>` (ID-20.24). Built + cached at
+   * server boot by `client-bundle.ts` (Bun.build). When omitted (e.g.
+   * pure SSR tests), no script is emitted and the page renders
+   * read-only — the SSR markup is fully usable without it.
+   */
+  clientScript?: string;
 }
 
 export interface RenderViewerResult {
@@ -61,7 +69,10 @@ export interface RenderViewerResult {
 
 export function renderViewer(input: RenderViewerInput): RenderViewerResult {
   const body = renderBody(input);
-  return { status: body.status, html: wrapHtml(body.markup) };
+  return {
+    status: body.status,
+    html: wrapHtml(body.markup, input.clientScript),
+  };
 }
 
 interface RenderedBody {
@@ -201,7 +212,18 @@ function recordHref(recordId: string): string {
   return `/?record=${encodeURIComponent(recordId)}`;
 }
 
-function wrapHtml(body: string): string {
+function wrapHtml(body: string, clientScript?: string): string {
+  // Inline the progressive-enhancement client at the end of <body> so it
+  // runs after the SSR markup is parsed (ID-20.24). The bundle is a
+  // self-contained IIFE; we defensively neutralise any literal
+  // `</script>` sequence so a future bundle string can never break out of
+  // the script element.
+  const scriptTag =
+    typeof clientScript === "string" && clientScript.length > 0
+      ? '<script type="module">' +
+        clientScript.replace(/<\/script>/gi, "<\\/script>") +
+        "</script>\n"
+      : "";
   return (
     "<!doctype html>\n" +
     '<html lang="en">\n' +
@@ -212,7 +234,9 @@ function wrapHtml(body: string): string {
     "</head>\n" +
     '<body data-app="task-view">\n' +
     body +
-    "\n</body>\n" +
+    "\n" +
+    scriptTag +
+    "</body>\n" +
     "</html>\n"
   );
 }
