@@ -57,10 +57,16 @@ export const FieldPencil: React.FC<{
    */
   options?: readonly string[];
   /**
-   * Raw Markdown source for `textarea` kinds (PRODUCT inv 27-28). When
-   * present the dispatcher pre-populates the textarea with this verbatim
-   * (incl. `<info added on …>` journal blocks) rather than the rendered
-   * textContent. Omit for non-textarea kinds.
+   * Raw source for editor pre-population, used when the RENDERED value
+   * differs from the editable source:
+   *   - `textarea` — the raw Markdown source incl. `<info added on …>`
+   *     journal blocks (PRODUCT inv 27-28), not the rendered HTML text.
+   *   - `array-comma` — the raw comma-joined canonical ids (e.g.
+   *     "19,18"), not the rendered link labels (e.g. "ID-19, ID-18")
+   *     which would round-trip the wrong values.
+   * The dispatcher prefers this hook over the displayed value when
+   * present. Omit for kinds whose rendered value equals the editable
+   * value (text / enum).
    */
   rawValue?: string;
 }> = ({ fieldPath, kind, ariaLabel, options, rawValue }) => {
@@ -68,6 +74,8 @@ export const FieldPencil: React.FC<{
     (kind === "enum" || kind === "enum-nullable") && options !== undefined
       ? options.join(",")
       : undefined;
+  const dataRawValue =
+    kind === "textarea" || kind === "array-comma" ? rawValue : undefined;
   return (
     <button
       type="button"
@@ -76,7 +84,7 @@ export const FieldPencil: React.FC<{
       data-edit-field={fieldPath.join(">")}
       data-edit-kind={kind}
       data-edit-options={dataOptions}
-      data-edit-raw-value={kind === "textarea" ? rawValue : undefined}
+      data-edit-raw-value={dataRawValue}
       aria-label={ariaLabel}
     >
       <span aria-hidden="true">{"✎"}</span>

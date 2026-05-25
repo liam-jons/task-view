@@ -211,6 +211,42 @@ describe("ID-20.25 dispatcher — enum `<select>` editor (PRODUCT inv 30-32)", (
     ]);
   });
 
+  test("frontmatter-card shape: enum value read from .record-view-field-value, NOT polluted by the pencil glyph", () => {
+    // Replicate the real frontmatter value cell: a <td> containing a
+    // value span + the pencil. The dispatcher must pre-select "blocked",
+    // not "blocked✎" (which would match no option).
+    const host = document.createElement("article");
+    host.setAttribute("data-record-id", "20");
+    host.setAttribute("data-record-kind", "task");
+    const cell = document.createElement("td");
+    cell.setAttribute("data-frontmatter-value", "");
+    const valueSpan = document.createElement("span");
+    valueSpan.className = "record-view-field-value";
+    valueSpan.textContent = "blocked";
+    cell.appendChild(valueSpan);
+    const pencil = document.createElement("button");
+    pencil.type = "button";
+    pencil.setAttribute("data-edit-action", "open");
+    pencil.setAttribute("data-edit-field", "tasks>20>status");
+    pencil.setAttribute("data-edit-kind", "enum");
+    pencil.setAttribute(
+      "data-edit-options",
+      "done,pending,in_progress,blocked,deferred,cancelled",
+    );
+    const glyph = document.createElement("span");
+    glyph.setAttribute("aria-hidden", "true");
+    glyph.textContent = "✎";
+    pencil.appendChild(glyph);
+    cell.appendChild(pencil);
+    host.appendChild(cell);
+    document.body.appendChild(host);
+
+    pencil.dispatchEvent(new Event("click", { bubbles: true }));
+    const select = cell.querySelector("select") as HTMLSelectElement;
+    expect(select).not.toBeNull();
+    expect(select.value).toBe("blocked");
+  });
+
   test("the current displayed value is pre-selected (inv 32: no state-machine gating)", () => {
     const pencil = mountField({
       recordId: "20",

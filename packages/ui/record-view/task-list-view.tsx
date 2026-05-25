@@ -17,11 +17,13 @@
  */
 import React from "react";
 import type { Task } from "@task-view/schemas/task-list";
+import { TaskListStatus, SubtaskStatus } from "@task-view/schemas/task-list";
 import {
   MaybeCrossDocLink,
   MaybeRecordLink,
   PageTopWarning,
 } from "./broken-target";
+import { FieldPencil } from "./field-pencil";
 import { NavStrip } from "./nav-strip";
 import {
   RecordFrontmatterCard,
@@ -101,14 +103,44 @@ export const TaskListView: React.FC<{
   const siblingSubtaskIds = new Set(task.subtasks.map((s) => s.id));
 
   const rows: FrontmatterRow[] = [
-    { key: "status", label: "Status", value: task.status },
+    {
+      key: "status",
+      label: "Status",
+      value: task.status,
+      editAffordance: (
+        <FieldPencil
+          fieldPath={["tasks", task.id, "status"]}
+          kind="enum"
+          options={TaskListStatus.options}
+          ariaLabel={`Edit status for Task ID-${task.id}`}
+        />
+      ),
+    },
     { key: "priority", label: "Priority", value: task.priority },
     {
       key: "effort_estimate",
       label: "Effort estimate",
       value: task.effort_estimate,
+      editAffordance: (
+        <FieldPencil
+          fieldPath={["tasks", task.id, "effort_estimate"]}
+          kind="text"
+          ariaLabel={`Edit effort estimate for Task ID-${task.id}`}
+        />
+      ),
     },
-    { key: "owner", label: "Owner", value: task.owner },
+    {
+      key: "owner",
+      label: "Owner",
+      value: task.owner,
+      editAffordance: (
+        <FieldPencil
+          fieldPath={["tasks", task.id, "owner"]}
+          kind="text"
+          ariaLabel={`Edit owner for Task ID-${task.id}`}
+        />
+      ),
+    },
     {
       key: "updated",
       label: "Updated",
@@ -145,6 +177,17 @@ export const TaskListView: React.FC<{
               )),
               ", ",
             ),
+      editAffordance: (
+        <FieldPencil
+          fieldPath={["tasks", task.id, "dependencies"]}
+          kind="array-comma"
+          // Raw comma-joined CANONICAL ids (bare strings), not the
+          // rendered "ID-N" link labels — so the array-comma editor
+          // round-trips the correct values.
+          rawValue={task.dependencies.join(",")}
+          ariaLabel={`Edit dependencies for Task ID-${task.id}`}
+        />
+      ),
     },
     {
       key: "cross_doc_links",
@@ -177,10 +220,16 @@ export const TaskListView: React.FC<{
 
       <PageTopWarning subject="This Task" missingIds={missingTaskDeps} />
 
-      <header>
+      <header data-edit-container>
         <h1>
-          {`ID-${task.id}: ${task.title}`}
+          {`ID-${task.id}: `}
+          <span className="record-view-field-value">{task.title}</span>
         </h1>
+        <FieldPencil
+          fieldPath={["tasks", task.id, "title"]}
+          kind="text"
+          ariaLabel={`Edit title for Task ID-${task.id}`}
+        />
       </header>
 
       <RecordFrontmatterCard
@@ -188,8 +237,20 @@ export const TaskListView: React.FC<{
         ariaLabel={`Task ID-${task.id} metadata`}
       />
 
-      <section className="record-view-task-description" data-section="description">
-        <MarkdownBody markdown={task.description} />
+      <section
+        className="record-view-task-description"
+        data-section="description"
+        data-edit-container
+      >
+        <span className="record-view-field-value">
+          <MarkdownBody markdown={task.description} />
+        </span>
+        <FieldPencil
+          fieldPath={["tasks", task.id, "description"]}
+          kind="textarea"
+          rawValue={task.description}
+          ariaLabel={`Edit description for Task ID-${task.id}`}
+        />
       </section>
 
       {task.priority_note !== null && (
@@ -263,12 +324,44 @@ const SubtaskBlock: React.FC<{
           ", ",
         );
 
+  // Subtask field paths are addressed relative to the parent Task:
+  // ['tasks', taskId, 'subtasks', subtaskId, field]. The recordId the
+  // dispatcher resolves walks up to the Task's data-record-id (the PATCH
+  // route is per-Task); the fieldPath carries the subtask addressing.
+  const subPath = (field: string): string[] => [
+    "tasks",
+    parentTaskId,
+    "subtasks",
+    String(subtask.id),
+    field,
+  ];
+
   const rows: FrontmatterRow[] = [
-    { key: "status", label: "Status", value: subtask.status },
+    {
+      key: "status",
+      label: "Status",
+      value: subtask.status,
+      editAffordance: (
+        <FieldPencil
+          fieldPath={subPath("status")}
+          kind="enum"
+          options={SubtaskStatus.options}
+          ariaLabel={`Edit status for Subtask ID-${parentTaskId}.${subtask.id}`}
+        />
+      ),
+    },
     {
       key: "dependencies",
       label: "Dependencies",
       value: depRows,
+      editAffordance: (
+        <FieldPencil
+          fieldPath={subPath("dependencies")}
+          kind="array-comma"
+          rawValue={subtask.dependencies.join(",")}
+          ariaLabel={`Edit dependencies for Subtask ID-${parentTaskId}.${subtask.id}`}
+        />
+      ),
     },
     {
       key: "updated",
@@ -283,8 +376,14 @@ const SubtaskBlock: React.FC<{
       data-subtask-id={subtask.id}
       id={subtaskAnchorId(subtask.id)}
     >
-      <h3>
-        {`ID-${parentTaskId}.${subtask.id}: ${subtask.title}`}
+      <h3 data-edit-container>
+        {`ID-${parentTaskId}.${subtask.id}: `}
+        <span className="record-view-field-value">{subtask.title}</span>
+        <FieldPencil
+          fieldPath={subPath("title")}
+          kind="text"
+          ariaLabel={`Edit title for Subtask ID-${parentTaskId}.${subtask.id}`}
+        />
       </h3>
 
       <RecordFrontmatterCard
@@ -295,16 +394,33 @@ const SubtaskBlock: React.FC<{
       <p
         className="record-view-subtask-description"
         data-subtask-description
+        data-edit-container
       >
-        {subtask.description}
+        <span className="record-view-field-value">{subtask.description}</span>
+        <FieldPencil
+          fieldPath={subPath("description")}
+          kind="textarea"
+          rawValue={subtask.description}
+          ariaLabel={`Edit description for Subtask ID-${parentTaskId}.${subtask.id}`}
+        />
       </p>
 
       {subtask.testStrategy !== null && (
         <p
           className="record-view-test-strategy"
           data-test-strategy
+          data-edit-container
         >
-          <strong>Test strategy:</strong> {subtask.testStrategy}
+          <strong>Test strategy:</strong>{" "}
+          <span className="record-view-field-value">
+            {subtask.testStrategy}
+          </span>
+          <FieldPencil
+            fieldPath={subPath("testStrategy")}
+            kind="textarea"
+            rawValue={subtask.testStrategy}
+            ariaLabel={`Edit test strategy for Subtask ID-${parentTaskId}.${subtask.id}`}
+          />
         </p>
       )}
 
@@ -314,7 +430,19 @@ const SubtaskBlock: React.FC<{
       >
         <strong>Details:</strong>
       </div>
-      <DetailsBodyWithJournal details={subtask.details} />
+      <div className="record-view-subtask-details" data-edit-container>
+        <span className="record-view-field-value">
+          <DetailsBodyWithJournal details={subtask.details} />
+        </span>
+        <FieldPencil
+          fieldPath={subPath("details")}
+          kind="textarea"
+          // Full raw details string incl. <info added on …> journal
+          // blocks (PRODUCT inv 28) — no gating, no auto-injection.
+          rawValue={subtask.details}
+          ariaLabel={`Edit details for Subtask ID-${parentTaskId}.${subtask.id}`}
+        />
+      </div>
     </section>
   );
 };

@@ -40,6 +40,17 @@ export interface FrontmatterRow {
    * Lower-kebab-case derived from the label.
    */
   key: string;
+  /**
+   * Optional edit affordance (ID-20.25) — a `FieldPencil` the per-record
+   * views attach to make the row editable. When present, the value is
+   * wrapped in a `.record-view-field-value` span so the 20.25 dispatcher
+   * reads the value WITHOUT the pencil glyph contaminating it (e.g. the
+   * enum current value), and the affordance renders beside it inside the
+   * value `<td>` (which the dispatcher uses as the edit container per its
+   * `td` CONTAINER_SELECTOR). Omit for read-only rows — they render
+   * exactly as before.
+   */
+  editAffordance?: React.ReactNode;
 }
 
 export const RecordFrontmatterCard: React.FC<{
@@ -71,7 +82,16 @@ export const RecordFrontmatterCard: React.FC<{
               className="record-view-frontmatter-value"
               data-frontmatter-value
             >
-              {renderValue(row.value)}
+              {row.editAffordance === undefined ? (
+                renderValue(row.value)
+              ) : (
+                <>
+                  <span className="record-view-field-value">
+                    {renderValue(row.value)}
+                  </span>
+                  {row.editAffordance}
+                </>
+              )}
             </td>
           </tr>
         ))}

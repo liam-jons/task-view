@@ -68,8 +68,22 @@ describe("PRODUCT inv 7 (Task-list mode: frontmatter + description + Subtasks + 
     const html = renderToStaticMarkup(
       <TaskListView task={task} ledger={ledger} nav={NAV} />,
     );
-    // Title heading
-    expect(html).toContain("ID-20: Task title");
+    // Title heading — ID-20.25 splits the editable title into a
+    // .record-view-field-value span so the dispatcher reads the title
+    // cleanly (without the pencil glyph), and adds a text-kind pencil.
+    expect(html).toContain("ID-20: ");
+    expect(html).toContain(
+      '<span class="record-view-field-value">Task title</span>',
+    );
+    expect(html).toContain('data-edit-field="tasks&gt;20&gt;title"');
+    expect(html).toContain('data-edit-kind="text"');
+    // Editable status enum affordance (inv 31-32 — options from the
+    // canonical Zod enum, every value selectable).
+    expect(html).toContain('data-edit-field="tasks&gt;20&gt;status"');
+    expect(html).toContain('data-edit-kind="enum"');
+    expect(html).toContain(
+      'data-edit-options="done,pending,in_progress,blocked,deferred,cancelled,spec_needed,imp_deferred"',
+    );
     // Frontmatter rows (per inv 7)
     expect(html).toContain('data-frontmatter-row="status"');
     expect(html).toContain('data-frontmatter-row="priority"');
@@ -160,8 +174,29 @@ describe("PRODUCT inv 8 (Subtask block: frontmatter + description + testStrategy
     const html = renderToStaticMarkup(
       <TaskListView task={task} ledger={ledger} nav={NAV} />,
     );
-    expect(html).toContain('<h3>ID-20.1: First sub</h3>');
-    expect(html).toContain('<h3>ID-20.2: Second sub</h3>');
+    // ID-20.25: the Subtask heading splits the editable title into a
+    // .record-view-field-value span (so the dispatcher reads it without
+    // the pencil glyph) and carries a text-kind title affordance.
+    expect(html).toContain("ID-20.1: ");
+    expect(html).toContain(
+      '<span class="record-view-field-value">First sub</span>',
+    );
+    expect(html).toContain(
+      '<span class="record-view-field-value">Second sub</span>',
+    );
+    expect(html).toContain(
+      'data-edit-field="tasks&gt;20&gt;subtasks&gt;1&gt;title"',
+    );
+    expect(html).toContain(
+      'data-edit-field="tasks&gt;20&gt;subtasks&gt;2&gt;title"',
+    );
+    // Subtask status enum affordance + the 6-value Subtask subset.
+    expect(html).toContain(
+      'data-edit-field="tasks&gt;20&gt;subtasks&gt;1&gt;status"',
+    );
+    expect(html).toContain(
+      'data-edit-options="done,pending,in_progress,blocked,deferred,cancelled"',
+    );
     expect(html).toContain('data-subtask-id="1"');
     expect(html).toContain('data-subtask-id="2"');
     expect(html).toContain('id="subtask-1"');
@@ -212,6 +247,79 @@ describe("PRODUCT inv 8 (Subtask block: frontmatter + description + testStrategy
     expect(html).toContain("Shipped");
     // The "Journal" label is visible
     expect(html).toContain("Journal");
+  });
+});
+
+// ── ID-20.25 edit affordances ───────────────────────────────────────────────
+
+describe("ID-20.25 (Task + Subtask edit affordances)", () => {
+  test("Task: owner + effort_estimate carry text-kind pencils", () => {
+    const task = mkTask();
+    const ledger = buildLedgerContext({ tasks: [task] });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain('data-edit-field="tasks&gt;20&gt;owner"');
+    expect(html).toContain('data-edit-field="tasks&gt;20&gt;effort_estimate"');
+  });
+
+  test("Task: description pencil carries raw Markdown source (inv 27-28)", () => {
+    const task = mkTask({ description: "## Heading\n\nBody." });
+    const ledger = buildLedgerContext({ tasks: [task] });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain('data-edit-field="tasks&gt;20&gt;description"');
+    expect(html).toContain('data-edit-kind="textarea"');
+    // Raw source carried verbatim on the hook (HTML-escaped by React).
+    expect(html).toContain("## Heading");
+  });
+
+  test("Task: dependencies pencil is array-comma with raw bare-id source (not link labels)", () => {
+    const a = mkTask({ id: "20", dependencies: ["19", "18"] });
+    const ledger = buildLedgerContext({
+      tasks: [a, mkTask({ id: "19" }), mkTask({ id: "18" })],
+    });
+    const html = renderToStaticMarkup(
+      <TaskListView task={a} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain('data-edit-field="tasks&gt;20&gt;dependencies"');
+    expect(html).toContain('data-edit-kind="array-comma"');
+    // Raw value is the bare comma-joined canonical ids, NOT "ID-19, ID-18".
+    expect(html).toContain('data-edit-raw-value="19,18"');
+  });
+
+  test("Subtask: details pencil carries the FULL raw string incl. journal block (inv 28)", () => {
+    const details =
+      "Pre.\n\n<info added on 2026-05-21T15:00:00.000Z>\nShipped.\n</info added on 2026-05-21T15:00:00.000Z>";
+    const task = mkTask({ subtasks: [mkSubtask({ id: 1, details })] });
+    const ledger = buildLedgerContext({ tasks: [task] });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain(
+      'data-edit-field="tasks&gt;20&gt;subtasks&gt;1&gt;details"',
+    );
+    // The journal block survives verbatim in the raw-value hook.
+    expect(html).toContain("info added on 2026-05-21T15:00:00.000Z");
+    expect(html).toContain("Shipped.");
+  });
+
+  test("Subtask: dependencies pencil raw value is bare integer ids", () => {
+    const task = mkTask({
+      subtasks: [
+        mkSubtask({ id: 1 }),
+        mkSubtask({ id: 2, dependencies: [1] }),
+      ],
+    });
+    const ledger = buildLedgerContext({ tasks: [task] });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain(
+      'data-edit-field="tasks&gt;20&gt;subtasks&gt;2&gt;dependencies"',
+    );
+    expect(html).toContain('data-edit-raw-value="1"');
   });
 });
 

@@ -173,17 +173,27 @@ function openEditor(openButton: HTMLElement): void {
 }
 
 /**
- * Read the current displayed value so the input pre-populates. For the
- * rank cell we prefer the authoritative `data-rank-value` hook (empty
- * string = unset); otherwise fall back to trimmed text content (with the
- * "—" unset glyph normalised to "").
+ * Read the current displayed value so the input pre-populates. Resolution
+ * order:
+ *   1. The authoritative `data-rank-value` hook on the rank cell (empty
+ *      string = unset) — the 20.24 Backlog rank path.
+ *   2. ID-20.25: a dedicated `.record-view-field-value` span (emitted by
+ *      the frontmatter card around editable values) so the pencil glyph
+ *      `✎` does NOT contaminate the value — critical for enum current
+ *      value, which must match an `<option>` exactly to pre-select.
+ *   3. The `.record-view-rank-value` span (20.24).
+ *   4. Trimmed `container.textContent`.
+ * The "—" unset glyph is normalised to "" in the span / textContent
+ * fallbacks.
  */
 function readDisplayedValue(container: HTMLElement): string {
   const rankHost =
     container.closest<HTMLElement>("[data-rank-value]") ?? container;
   const rankAttr = rankHost.getAttribute("data-rank-value");
   if (rankAttr !== null) return rankAttr; // "" when unset
-  const valueSpan = container.querySelector(".record-view-rank-value");
+  const fieldSpan = container.querySelector(".record-view-field-value");
+  const valueSpan =
+    fieldSpan ?? container.querySelector(".record-view-rank-value");
   const text = (valueSpan?.textContent ?? container.textContent ?? "").trim();
   return text === "—" ? "" : text;
 }
