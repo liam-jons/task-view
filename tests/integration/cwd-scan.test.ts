@@ -44,20 +44,27 @@ afterEach(async () => {
   await rm(testDir, { recursive: true, force: true });
 });
 
+// Schema-valid fixtures. TaskListSchema is `.strict()` and has NO
+// `last_updated` at the document root; RoadmapSchema uses the Phase-B
+// `themes[]` shape (ID-20.19) with document_name "Knowledge Hub Roadmap".
+// Since 20.20 fail-on-load validates the ledger at boot, these fixtures
+// must pass real Zod validation — not just carry a known document_name.
 const TASK_LIST = {
   document_name: "Knowledge Hub Task List",
   document_purpose: "fixture",
-  last_updated: "test",
   related_documents: [],
   tasks: [],
 };
 
 const ROADMAP = {
-  document_name: "Knowledge Hub Product Roadmap",
+  document_name: "Knowledge Hub Roadmap",
   document_purpose: "fixture",
-  last_updated: "test",
+  date: "2026-05-25",
+  status: "Active",
+  forward_looking_only: true,
   related_documents: [],
-  sections: [],
+  last_updated: "test",
+  themes: [],
 };
 
 async function writeLedger(name: string, body: unknown): Promise<string> {

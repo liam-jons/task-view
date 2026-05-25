@@ -172,6 +172,104 @@ describe("CLI — positional path argument (TECH §6.1)", () => {
   });
 });
 
+describe("CLI — launch-path fail-on-load (PRODUCT inv 4 + 48 / 20.16 S5+S6)", () => {
+  test("server-launch against malformed JSON exits non-zero with a visible error and NO readiness line (S6)", async () => {
+    // S6: bare server launch against unparseable JSON must fail on load,
+    // not boot with "Server ready at …" and defer the error to the first
+    // HTTP GET.
+    const ledgerPath = join(testDir, "task-list.json");
+    await writeFile(ledgerPath, "{ not valid json", "utf8");
+    proc = spawnCli(["--no-browser", "--port", "0", ledgerPath]);
+    const exitCode = await proc.exited;
+    const stdout = await readStreamToString(
+      proc.stdout as ReadableStream<Uint8Array>,
+    );
+    const stderr = await readStreamToString(
+      proc.stderr as ReadableStream<Uint8Array>,
+    );
+    proc = null;
+
+    expect(exitCode).not.toBe(0);
+    // No partial/blank render: the readiness line must NOT appear.
+    expect(stdout).not.toContain("Server ready at");
+    // A visible load error on stderr.
+    expect(stderr.toLowerCase()).toMatch(/failed to read or parse|json|parse/);
+  });
+
+  test("server-launch against unknown document_name exits non-zero with a visible error and NO readiness line (S5)", async () => {
+    // S5: bare server launch against a ledger whose document_name is not
+    // one of the three known values must fail on load.
+    const ledgerPath = join(testDir, "task-list.json");
+    await writeFile(
+      ledgerPath,
+      JSON.stringify(
+        {
+          document_name: "Unknown Document Type",
+          document_purpose: "Fixture for inv 4.",
+          last_updated: "fixture",
+          related_documents: [],
+          tasks: [],
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    proc = spawnCli(["--no-browser", "--port", "0", ledgerPath]);
+    const exitCode = await proc.exited;
+    const stdout = await readStreamToString(
+      proc.stdout as ReadableStream<Uint8Array>,
+    );
+    const stderr = await readStreamToString(
+      proc.stderr as ReadableStream<Uint8Array>,
+    );
+    proc = null;
+
+    expect(exitCode).not.toBe(0);
+    expect(stdout).not.toContain("Server ready at");
+    expect(stderr.toLowerCase()).toMatch(/unknown document_name|unknown document/);
+  });
+
+  test("server-launch against schema-invalid body exits non-zero with a visible error and NO readiness line (inv 48)", async () => {
+    // A known document_name whose body fails Zod parse — the ZodError
+    // must surface on load, not at first GET.
+    const ledgerPath = join(testDir, "task-list.json");
+    await writeFile(
+      ledgerPath,
+      JSON.stringify(
+        {
+          document_name: "Knowledge Hub Task List",
+          // Missing every other required field — TaskListSchema rejects.
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    proc = spawnCli(["--no-browser", "--port", "0", ledgerPath]);
+    const exitCode = await proc.exited;
+    const stdout = await readStreamToString(
+      proc.stdout as ReadableStream<Uint8Array>,
+    );
+    const stderr = await readStreamToString(
+      proc.stderr as ReadableStream<Uint8Array>,
+    );
+    proc = null;
+
+    expect(exitCode).not.toBe(0);
+    expect(stdout).not.toContain("Server ready at");
+    // The formatted error mentions schema / validation failure.
+    expect(stderr.toLowerCase()).toMatch(/schema|invalid|parse|validation/);
+  });
+
+  test("server-launch against a valid ledger still boots (no regression)", async () => {
+    const ledgerPath = await writeLedger();
+    proc = spawnCli(["--no-browser", "--port", "0", ledgerPath]);
+    const stdout = await waitForStdoutMarker(proc, "Server ready at", 5000);
+    expect(stdout).toContain("Server ready at");
+  });
+});
+
 describe("CLI — no-path invocation scans CWD (TECH §2.3 / PRODUCT inv 43)", () => {
   test("when no path is supplied, scans CWD for known document_name JSON files", async () => {
     // Create a ledger in the test dir, then spawn with CWD=testDir

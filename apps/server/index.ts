@@ -23,7 +23,8 @@
  */
 import { parseArgs } from "node:util";
 import { existsSync } from "node:fs";
-import { detectSchema } from "@task-view/server/detect-schema";
+import { ZodError } from "zod";
+import { detectSchema, KNOWN_DOCUMENT_NAMES } from "@task-view/server/detect-schema";
 import { generateMirrors } from "@task-view/server/mirror-generator";
 import { scanForLedgers } from "@task-view/server/path-resolution";
 import { openBrowser } from "@task-view/server/browser";
@@ -180,6 +181,76 @@ async function runRegenCheck(ledgerPath: string): Promise<number> {
   }
 }
 
+// ── Launch-path fail-on-load (Subtask 20.20 / PRODUCT inv 4 + 48) ─────────────
+
+/**
+ * Validate that a ledger can be read + parsed + schema-detected BEFORE we
+ * bind a port and print "Server ready at …".
+ *
+ * 20.16 smoke-test S5 + S6 surfaced a UX defect: the bare server-launch
+ * path booted with a readiness line even against a malformed JSON
+ * (S6: unparseable) or an unknown `document_name` (S5: inv 4) ledger,
+ * deferring the failure until the first `/api/ledger` GET. PRODUCT inv 4
+ * + inv 48 require a non-zero exit ON LOAD with a visible diagnostic — no
+ * silent/partial/blank render.
+ *
+ * This mirrors the `--check` path's read/parse/detect cascade (same exit
+ * codes) but does NOT generate mirrors — auto-regen on boot is Subtask
+ * 20.22's concern, and the data-safety write-gate (`readCanonical` on
+ * every write path) is unchanged.
+ *
+ * Returns `null` when the ledger is loadable (caller proceeds to boot the
+ * server), or a non-zero exit code when validation failed (caller returns
+ * it; the process exits before any port bind).
+ */
+async function validateLedgerForLaunch(ledgerPath: string): Promise<number | null> {
+  let raw: unknown;
+  try {
+    const file = Bun.file(ledgerPath);
+    const text = await file.text();
+    raw = JSON.parse(text);
+  } catch (err) {
+    console.error(
+      `task-view: failed to read or parse ${ledgerPath}: ${
+        (err as Error).message
+      }`,
+    );
+    return 3;
+  }
+  let detected;
+  try {
+    detected = detectSchema(raw);
+  } catch (err) {
+    // detectSchema throws ZodError when a KNOWN document_name routes to a
+    // schema whose body fails validation (PRODUCT inv 48). Surface the
+    // formatted issues so the developer sees what's wrong on load.
+    const message =
+      err instanceof ZodError
+        ? `schema validation failed for ${ledgerPath}:\n${formatZodError(err)}`
+        : `schema validation failed for ${ledgerPath}: ${(err as Error).message}`;
+    console.error(`task-view: ${message}`);
+    return 4;
+  }
+  if (detected.kind === "unknown") {
+    console.error(
+      `task-view: unknown document_name "${detected.documentName ?? "(null)"}" in ${ledgerPath}.\n` +
+        `Expected one of: ${KNOWN_DOCUMENT_NAMES.map((n) => `"${n}"`).join(", ")}.`,
+    );
+    return 4;
+  }
+  return null;
+}
+
+/** Format a ZodError's issues as a readable multi-line stderr block. */
+function formatZodError(err: ZodError): string {
+  return err.issues
+    .map((issue) => {
+      const path = issue.path.length > 0 ? issue.path.join(".") : "(root)";
+      return `  - ${path}: ${issue.message}`;
+    })
+    .join("\n");
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<number> {
@@ -218,6 +289,16 @@ async function main(): Promise<number> {
   if (!existsSync(ledgerPath)) {
     console.error(`task-view: ledger path not found: ${ledgerPath}`);
     return 1;
+  }
+
+  // Fail-on-load (Subtask 20.20 / PRODUCT inv 4 + 48): read + parse +
+  // schema-detect the ledger BEFORE binding a port. A malformed JSON,
+  // unknown document_name, or schema-invalid body must exit non-zero with
+  // a visible diagnostic — never boot with a readiness line and defer the
+  // error to the first HTTP GET (the 20.16 S5 + S6 defect).
+  const launchValidationCode = await validateLedgerForLaunch(ledgerPath);
+  if (launchValidationCode !== null) {
+    return launchValidationCode;
   }
 
   // Start the server (with port retry + browser-close detection).
