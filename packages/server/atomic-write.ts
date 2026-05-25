@@ -23,7 +23,7 @@
  * underlying write fails — callers must ensure mkdir-ed targets.
  */
 
-import { rename, rm, writeFile } from "node:fs/promises";
+import { open, rename, rm, writeFile } from "node:fs/promises";
 
 /**
  * Write `content` to `targetPath` atomically.
@@ -63,5 +63,94 @@ export async function atomicWriteFile(
       // Suppress.
     }
     throw err;
+  }
+}
+
+// ── Two-phase staged write (ID-20.15 cross-ledger transaction) ─────────────────
+
+/**
+ * A staged write: content has been durably written + fsync'd to a temp
+ * file next to its target, but the final rename has NOT happened. Call
+ * {@link commitStagedWrite} to perform the rename (the atomic commit
+ * point), or {@link abortStagedWrite} to discard the temp.
+ *
+ * This splits {@link atomicWriteFile}'s single operation into its two
+ * phases so a CROSS-LEDGER transaction (ID-20.15 §5.x Promote) can stage
+ * BOTH files first, then commit them last. A process kill BEFORE the
+ * commit phase leaves both originals pristine (only orphaned temps
+ * remain, which are harmless).
+ */
+export interface StagedWrite {
+  /** Final destination path. */
+  targetPath: string;
+  /** The temp file holding the new content, fsync'd to disk. */
+  tmpPath: string;
+}
+
+/**
+ * Stage `content` for `targetPath`: write it to a temp file in the SAME
+ * directory and `fsync` so the bytes are durable before any rename. The
+ * canonical file is NOT touched.
+ *
+ * fsync matters for the transaction durability contract: without it the
+ * staged bytes may live only in the page cache, so a power loss between
+ * stage and commit could leave a zero-length temp. fsync forces the data
+ * to stable storage so the commit-phase rename is the only remaining
+ * window.
+ *
+ * @throws Re-throws the underlying write/fsync error after best-effort
+ *         cleanup of the temp file.
+ */
+export async function stageAtomicWrite(
+  targetPath: string,
+  content: string,
+): Promise<StagedWrite> {
+  const tmpPath = `${targetPath}.tmp.${process.pid}.${Date.now()}.${Math.random()
+    .toString(36)
+    .slice(2)}`;
+  let handle;
+  try {
+    handle = await open(tmpPath, "w");
+    await handle.writeFile(content, "utf8");
+    // Force the staged bytes to stable storage so a crash between stage
+    // and commit cannot surface a truncated temp.
+    await handle.sync();
+  } catch (err) {
+    try {
+      if (handle) await handle.close();
+    } catch {
+      // Suppress.
+    }
+    try {
+      await rm(tmpPath, { force: true });
+    } catch {
+      // Suppress.
+    }
+    throw err;
+  }
+  await handle.close();
+  return { targetPath, tmpPath };
+}
+
+/**
+ * Commit a staged write — the atomic commit point. POSIX `rename(2)` over
+ * an existing file is atomic on the same filesystem.
+ *
+ * @throws Re-throws the rename error. The caller decides recovery (for a
+ *         transaction, the first successful rename of two cannot be rolled
+ *         back — see the residual-window note in ledger-transaction.ts).
+ */
+export async function commitStagedWrite(staged: StagedWrite): Promise<void> {
+  await rename(staged.tmpPath, staged.targetPath);
+}
+
+/**
+ * Abort a staged write — best-effort remove the temp file. Never throws.
+ */
+export async function abortStagedWrite(staged: StagedWrite): Promise<void> {
+  try {
+    await rm(staged.tmpPath, { force: true });
+  } catch {
+    // Suppress: aborting is best-effort; a leftover temp is harmless.
   }
 }

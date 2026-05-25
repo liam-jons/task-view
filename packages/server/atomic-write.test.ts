@@ -16,10 +16,22 @@
  *     disjoint temp filenames (no clobber).
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { atomicWriteFile } from "./atomic-write";
+import {
+  atomicWriteFile,
+  stageAtomicWrite,
+  commitStagedWrite,
+  abortStagedWrite,
+} from "./atomic-write";
 
 let testDir: string;
 
@@ -64,7 +76,9 @@ describe("atomicWriteFile — mid-write crash simulation", () => {
     await writeFile(preserved, "canonical-content", "utf8");
 
     const badTarget = join(testDir, "does-not-exist-subdir", "ledger.json");
-    await expect(atomicWriteFile(badTarget, "would-be-written")).rejects.toThrow();
+    await expect(
+      atomicWriteFile(badTarget, "would-be-written"),
+    ).rejects.toThrow();
 
     // The unrelated canonical file is untouched (no spillover):
     expect(await readFile(preserved, "utf8")).toBe("canonical-content");
@@ -93,10 +107,54 @@ describe("atomicWriteFile — mid-write crash simulation", () => {
     // The atomicWriteFile call writes the temp file beside the (missing)
     // target dir, which itself fails, so the canonical target is preserved.
     const badTarget = join(testDir, "missing-dir", "ledger.json");
-    await expect(atomicWriteFile(badTarget, '{"version": 2}')).rejects.toThrow();
+    await expect(
+      atomicWriteFile(badTarget, '{"version": 2}'),
+    ).rejects.toThrow();
 
     // The real canonical file is untouched. PRODUCT inv 36 satisfied.
     expect(await readFile(target, "utf8")).toBe(beforeContent);
+  });
+});
+
+// ── ID-20.15 two-phase staged write (cross-ledger transaction primitive) ──────
+
+describe("stageAtomicWrite / commitStagedWrite — two-phase commit", () => {
+  test("staging does NOT touch the target; commit applies it", async () => {
+    const target = join(testDir, "ledger.json");
+    await writeFile(target, "original", "utf8");
+
+    const staged = await stageAtomicWrite(target, "new content");
+    // Target still holds the ORIGINAL — only the temp has the new bytes.
+    expect(await readFile(target, "utf8")).toBe("original");
+    expect(await readFile(staged.tmpPath, "utf8")).toBe("new content");
+
+    await commitStagedWrite(staged);
+    expect(await readFile(target, "utf8")).toBe("new content");
+  });
+
+  test("abortStagedWrite discards the temp + leaves the target untouched", async () => {
+    const target = join(testDir, "ledger.json");
+    await writeFile(target, "original", "utf8");
+
+    const staged = await stageAtomicWrite(target, "would-be-written");
+    await abortStagedWrite(staged);
+
+    expect(await readFile(target, "utf8")).toBe("original");
+    // The temp is gone:
+    await expect(stat(staged.tmpPath)).rejects.toThrow();
+    // No .tmp.* leftover:
+    const entries = await readdir(testDir);
+    expect(entries.filter((e) => e.includes(".tmp."))).toEqual([]);
+  });
+
+  test("abortStagedWrite never throws even when the temp is already gone", async () => {
+    const target = join(testDir, "ledger.json");
+    await writeFile(target, "original", "utf8");
+    const staged = await stageAtomicWrite(target, "x");
+    await rm(staged.tmpPath, { force: true });
+    // Double-abort must be a no-op, not a throw:
+    await abortStagedWrite(staged);
+    expect(await readFile(target, "utf8")).toBe("original");
   });
 });
 

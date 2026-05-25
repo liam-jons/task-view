@@ -23,7 +23,15 @@
  * gotcha applies to the loopback-bind smoke test.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, stat, utimes, writeFile, readdir } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+  readdir,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startPatchServer, type PatchServerHandle } from "./patch-server";
@@ -49,7 +57,8 @@ afterEach(async () => {
 function makeTaskListLedgerObject() {
   return {
     document_name: "Knowledge Hub Task List",
-    document_purpose: "Active + recently-closed structured work — Taskmaster JSON shape.",
+    document_purpose:
+      "Active + recently-closed structured work — Taskmaster JSON shape.",
     related_documents: [],
     tasks: [
       {
@@ -114,6 +123,73 @@ async function writeFixtureTaskList(path: string): Promise<string> {
   const content = JSON.stringify(makeTaskListLedgerObject(), null, 2);
   await writeFile(path, content, "utf8");
   return content;
+}
+
+function makeBacklogLedgerObject() {
+  return {
+    document_name: "Product Backlog",
+    document_purpose: "Forward-looking work items not yet promoted to Tasks.",
+    related_documents: [],
+    items: [
+      {
+        id: "101",
+        description: "Add CSV export to the procurement table.",
+        type: "feature",
+        status: "ready",
+        effort_estimate: "2-3h",
+        priority: "high",
+        track: "procurement",
+        dependencies: [],
+        session_refs: [],
+        commit_refs: [],
+        cross_doc_links: [],
+        notes: null,
+        details: "A pre-thought brief for the CSV export feature.",
+        testStrategy: "Export matches the on-screen table rows exactly.",
+      },
+      {
+        id: "102",
+        description: "Investigate flaky e2e on CI.",
+        type: "bug",
+        status: "needs_research",
+        effort_estimate: null,
+        priority: "medium",
+        track: "infra",
+        dependencies: [],
+        session_refs: [],
+        commit_refs: [],
+        cross_doc_links: [],
+        notes: null,
+      },
+    ],
+  };
+}
+
+async function writeFixtureBacklog(path: string): Promise<string> {
+  const content = JSON.stringify(makeBacklogLedgerObject(), null, 2);
+  await writeFile(path, content, "utf8");
+  return content;
+}
+
+/** A schema-valid new Task body for CREATE / Promote tests. */
+function makeNewTaskRecord(id: string) {
+  return {
+    id,
+    title: `New task ${id}`,
+    description: "A freshly-created task.",
+    status: "pending",
+    priority: "should",
+    dependencies: [],
+    subtasks: [],
+    updatedAt: "2026-05-25T12:00:00.000Z",
+    effort_estimate: null,
+    owner: null,
+    priority_note: null,
+    status_note: null,
+    cross_doc_links: [],
+    session_refs: [],
+    commit_refs: [],
+  };
 }
 
 async function getLedgerMtime(path: string): Promise<string> {
@@ -322,7 +398,10 @@ describe("PATCH /api/ledger/record/:recordId — happy path", () => {
       body: JSON.stringify({
         baseMtime,
         patches: [
-          { fieldPath: ["tasks", "20", "status"], newValue: "not_a_valid_status" },
+          {
+            fieldPath: ["tasks", "20", "status"],
+            newValue: "not_a_valid_status",
+          },
         ],
       }),
     });
@@ -572,7 +651,10 @@ describe("PATCH /api/ledger/record/:recordId — multi-field save (PRODUCT inv 3
           // valid:
           { fieldPath: ["tasks", "20", "status"], newValue: "done" },
           // INVALID — schema rejects:
-          { fieldPath: ["tasks", "20", "priority"], newValue: "not_a_priority" },
+          {
+            fieldPath: ["tasks", "20", "priority"],
+            newValue: "not_a_priority",
+          },
         ],
       }),
     });
@@ -631,6 +713,459 @@ describe("POST /api/ledger/regen", () => {
   });
 });
 
+// ── ID-20.15 POST /api/ledger/record — record CREATE ─────────────────────────
+
+describe("POST /api/ledger/record — record CREATE (ID-20.15)", () => {
+  test("creates a new Task, returns 201 + new mirror, and persists it", async () => {
+    const ledger = join(testDir, "task-list.json");
+    await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+    await new Promise((r) => setTimeout(r, 5));
+
+    const res = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseMtime, record: makeNewTaskRecord("42") }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      ok: boolean;
+      recordId: string;
+      newMtime: string;
+      mirrorsWritten: string[];
+    };
+    expect(body.ok).toBe(true);
+    expect(body.recordId).toBe("42");
+    expect(body.mirrorsWritten).toContain("ID-42.md");
+    expect(body.newMtime).not.toBe(baseMtime);
+
+    const updated = JSON.parse(await readFile(ledger, "utf8")) as {
+      tasks: { id: string }[];
+    };
+    expect(updated.tasks.map((t) => t.id).sort()).toEqual(["20", "30", "42"]);
+    // The new mirror exists on disk:
+    const written = await readdir(join(testDir, "tasks"));
+    expect(written).toContain("ID-42.md");
+  });
+
+  test("creates a new backlog item with bare-digit id", async () => {
+    const ledger = join(testDir, "product-backlog.json");
+    await writeFixtureBacklog(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const newItem = {
+      id: "103",
+      description: "Brand new item.",
+      type: "feature",
+      status: "ready",
+      effort_estimate: null,
+      priority: "low",
+      track: "platform",
+      dependencies: [],
+      session_refs: [],
+      commit_refs: [],
+      cross_doc_links: [],
+      notes: null,
+    };
+    const res = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseMtime, record: newItem }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      recordId: string;
+      mirrorsWritten: string[];
+    };
+    expect(body.recordId).toBe("103");
+    expect(body.mirrorsWritten).toContain("103.md");
+  });
+
+  test("rejects a duplicate id with 409", async () => {
+    const ledger = join(testDir, "task-list.json");
+    const original = await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseMtime, record: makeNewTaskRecord("20") }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; recordId: string };
+    expect(body.error).toBe("duplicate-id");
+    expect(body.recordId).toBe("20");
+    // Canonical untouched:
+    expect(await readFile(ledger, "utf8")).toBe(original);
+  });
+
+  test("rejects a malformed record with 422 schema-error + leaves canonical untouched", async () => {
+    const ledger = join(testDir, "task-list.json");
+    const original = await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const bad = { ...makeNewTaskRecord("42"), status: "not_a_status" };
+    const res = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseMtime, record: bad }),
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: string; issues: unknown[] };
+    expect(body.error).toBe("schema-error");
+    expect(body.issues.length).toBeGreaterThan(0);
+    expect(await readFile(ledger, "utf8")).toBe(original);
+  });
+
+  test("returns 409 mtime-mismatch when baseMtime is stale", async () => {
+    const ledger = join(testDir, "task-list.json");
+    const original = await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const before = await stat(ledger);
+    await utimes(ledger, before.atime, new Date(before.mtime.getTime() + 5000));
+
+    const res = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseMtime, record: makeNewTaskRecord("42") }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("mtime-mismatch");
+    expect(await readFile(ledger, "utf8")).toBe(original);
+  });
+
+  test("returns 400 when record body is missing", async () => {
+    const ledger = join(testDir, "task-list.json");
+    await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+    const res = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseMtime }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("missing-record");
+  });
+});
+
+// ── ID-20.15 DELETE /api/ledger/record/:recordId — record DELETE ─────────────
+
+describe("DELETE /api/ledger/record/:recordId — record DELETE (ID-20.15)", () => {
+  test("deletes a Task, returns 200, removes the orphaned mirror", async () => {
+    const ledger = join(testDir, "task-list.json");
+    await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+
+    // Materialise both mirrors first.
+    await fetch(`${handle.url}/api/ledger/regen`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(await readdir(join(testDir, "tasks"))).toContain("ID-30.md");
+
+    const baseMtime = await getLedgerMtime(ledger);
+    await new Promise((r) => setTimeout(r, 5));
+
+    const res = await fetch(`${handle.url}/api/ledger/record/30`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseMtime }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ok: boolean;
+      recordId: string;
+      mirrorsDeleted: string[];
+      newMtime: string;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.recordId).toBe("30");
+    expect(body.mirrorsDeleted).toContain("ID-30.md");
+
+    const updated = JSON.parse(await readFile(ledger, "utf8")) as {
+      tasks: { id: string }[];
+    };
+    expect(updated.tasks.map((t) => t.id)).toEqual(["20"]);
+    // Orphaned mirror gone:
+    expect(await readdir(join(testDir, "tasks"))).not.toContain("ID-30.md");
+  });
+
+  test("returns 404 when the record id is absent", async () => {
+    const ledger = join(testDir, "task-list.json");
+    const original = await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record/999`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseMtime }),
+    });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("record-not-found");
+    expect(await readFile(ledger, "utf8")).toBe(original);
+  });
+
+  test("returns 409 mtime-mismatch when baseMtime is stale", async () => {
+    const ledger = join(testDir, "task-list.json");
+    const original = await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const before = await stat(ledger);
+    await utimes(ledger, before.atime, new Date(before.mtime.getTime() + 5000));
+
+    const res = await fetch(`${handle.url}/api/ledger/record/20`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseMtime }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("mtime-mismatch");
+    expect(await readFile(ledger, "utf8")).toBe(original);
+  });
+
+  test("returns 400 when baseMtime is missing", async () => {
+    const ledger = join(testDir, "task-list.json");
+    await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const res = await fetch(`${handle.url}/api/ledger/record/20`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("missing-baseMtime");
+  });
+});
+
+// ── ID-20.15 POST /api/ledger/transaction — cross-ledger Promote ─────────────
+
+describe("POST /api/ledger/transaction — cross-ledger Promote (ID-20.15)", () => {
+  /** Set up a dir with BOTH a task-list + a backlog ledger. */
+  async function setupCrossLedger(): Promise<{
+    taskListPath: string;
+    backlogPath: string;
+  }> {
+    const taskListPath = join(testDir, "task-list.json");
+    const backlogPath = join(testDir, "product-backlog.json");
+    await writeFixtureTaskList(taskListPath);
+    await writeFixtureBacklog(backlogPath);
+    return { taskListPath, backlogPath };
+  }
+
+  test("promote removes the backlog item AND adds the Task in one op", async () => {
+    const { taskListPath, backlogPath } = await setupCrossLedger();
+    // Launch the server against the backlog ledger — the sibling resolver
+    // finds the task-list ledger in the same dir.
+    handle = startPatchServer({ ledgerPath: backlogPath });
+
+    const taskListBaseMtime = await getLedgerMtime(taskListPath);
+    const backlogBaseMtime = await getLedgerMtime(backlogPath);
+
+    const res = await fetch(`${handle.url}/api/ledger/transaction`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        op: "promote",
+        sourceBacklogId: "101",
+        taskRecord: makeNewTaskRecord("42"),
+        taskListBaseMtime,
+        backlogBaseMtime,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ok: boolean;
+      newTaskId: string;
+      removedBacklogId: string;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.newTaskId).toBe("42");
+    expect(body.removedBacklogId).toBe("101");
+
+    // Backlog item removed:
+    const backlog = JSON.parse(await readFile(backlogPath, "utf8")) as {
+      items: { id: string }[];
+    };
+    expect(backlog.items.map((i) => i.id)).toEqual(["102"]);
+    // Task added:
+    const taskList = JSON.parse(await readFile(taskListPath, "utf8")) as {
+      tasks: { id: string }[];
+    };
+    expect(taskList.tasks.map((t) => t.id).sort()).toEqual(["20", "30", "42"]);
+  });
+
+  test("returns 409 when the task-list baseMtime is stale (neither file mutated)", async () => {
+    const { taskListPath, backlogPath } = await setupCrossLedger();
+    handle = startPatchServer({ ledgerPath: backlogPath });
+    const taskListBaseMtime = await getLedgerMtime(taskListPath);
+    const backlogBaseMtime = await getLedgerMtime(backlogPath);
+
+    const taskOriginal = await readFile(taskListPath, "utf8");
+    const backlogOriginal = await readFile(backlogPath, "utf8");
+
+    // Advance task-list mtime out-of-band.
+    const before = await stat(taskListPath);
+    await utimes(
+      taskListPath,
+      before.atime,
+      new Date(before.mtime.getTime() + 5000),
+    );
+
+    const res = await fetch(`${handle.url}/api/ledger/transaction`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        op: "promote",
+        sourceBacklogId: "101",
+        taskRecord: makeNewTaskRecord("42"),
+        taskListBaseMtime,
+        backlogBaseMtime,
+      }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("mtime-mismatch");
+
+    // BOTH files unchanged (content-wise — we only bumped task-list mtime).
+    expect(await readFile(taskListPath, "utf8")).toBe(taskOriginal);
+    expect(await readFile(backlogPath, "utf8")).toBe(backlogOriginal);
+  });
+
+  test("returns 409 when the backlog baseMtime is stale", async () => {
+    const { taskListPath, backlogPath } = await setupCrossLedger();
+    handle = startPatchServer({ ledgerPath: backlogPath });
+    const taskListBaseMtime = await getLedgerMtime(taskListPath);
+    const backlogBaseMtime = await getLedgerMtime(backlogPath);
+    const taskOriginal = await readFile(taskListPath, "utf8");
+    const backlogOriginal = await readFile(backlogPath, "utf8");
+
+    const before = await stat(backlogPath);
+    await utimes(
+      backlogPath,
+      before.atime,
+      new Date(before.mtime.getTime() + 5000),
+    );
+
+    const res = await fetch(`${handle.url}/api/ledger/transaction`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        op: "promote",
+        sourceBacklogId: "101",
+        taskRecord: makeNewTaskRecord("42"),
+        taskListBaseMtime,
+        backlogBaseMtime,
+      }),
+    });
+    expect(res.status).toBe(409);
+    expect(await readFile(taskListPath, "utf8")).toBe(taskOriginal);
+    expect(await readFile(backlogPath, "utf8")).toBe(backlogOriginal);
+  });
+
+  test("returns 404 when the source backlog id is absent", async () => {
+    const { taskListPath, backlogPath } = await setupCrossLedger();
+    handle = startPatchServer({ ledgerPath: backlogPath });
+    const taskListBaseMtime = await getLedgerMtime(taskListPath);
+    const backlogBaseMtime = await getLedgerMtime(backlogPath);
+    const taskOriginal = await readFile(taskListPath, "utf8");
+    const backlogOriginal = await readFile(backlogPath, "utf8");
+
+    const res = await fetch(`${handle.url}/api/ledger/transaction`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        op: "promote",
+        sourceBacklogId: "999",
+        taskRecord: makeNewTaskRecord("42"),
+        taskListBaseMtime,
+        backlogBaseMtime,
+      }),
+    });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("backlog-item-not-found");
+    // Neither file touched (validation-first):
+    expect(await readFile(taskListPath, "utf8")).toBe(taskOriginal);
+    expect(await readFile(backlogPath, "utf8")).toBe(backlogOriginal);
+  });
+
+  test("returns 409 duplicate-id when the new Task id already exists", async () => {
+    const { taskListPath, backlogPath } = await setupCrossLedger();
+    handle = startPatchServer({ ledgerPath: backlogPath });
+    const taskListBaseMtime = await getLedgerMtime(taskListPath);
+    const backlogBaseMtime = await getLedgerMtime(backlogPath);
+    const taskOriginal = await readFile(taskListPath, "utf8");
+    const backlogOriginal = await readFile(backlogPath, "utf8");
+
+    const res = await fetch(`${handle.url}/api/ledger/transaction`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        op: "promote",
+        sourceBacklogId: "101",
+        taskRecord: makeNewTaskRecord("20"), // 20 already exists
+        taskListBaseMtime,
+        backlogBaseMtime,
+      }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("duplicate-id");
+    expect(await readFile(taskListPath, "utf8")).toBe(taskOriginal);
+    expect(await readFile(backlogPath, "utf8")).toBe(backlogOriginal);
+  });
+
+  test("returns 500 no-sibling-ledger when only one ledger is present", async () => {
+    const backlogPath = join(testDir, "product-backlog.json");
+    await writeFixtureBacklog(backlogPath);
+    handle = startPatchServer({ ledgerPath: backlogPath });
+    const backlogBaseMtime = await getLedgerMtime(backlogPath);
+
+    const res = await fetch(`${handle.url}/api/ledger/transaction`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        op: "promote",
+        sourceBacklogId: "101",
+        taskRecord: makeNewTaskRecord("42"),
+        taskListBaseMtime: new Date().toISOString(),
+        backlogBaseMtime,
+      }),
+    });
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("no-sibling-ledger");
+  });
+
+  test("rejects an unsupported op with 400", async () => {
+    const { backlogPath } = await setupCrossLedger();
+    handle = startPatchServer({ ledgerPath: backlogPath });
+    const res = await fetch(`${handle.url}/api/ledger/transaction`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ op: "demote" }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("unsupported-op");
+  });
+});
+
 // ── Method routing + 404 ─────────────────────────────────────────────────────
 
 describe("HTTP routing — method-not-allowed + 404", () => {
@@ -638,10 +1173,15 @@ describe("HTTP routing — method-not-allowed + 404", () => {
     const ledger = join(testDir, "task-list.json");
     await writeFixtureTaskList(ledger);
     handle = startPatchServer({ ledgerPath: ledger });
-    const res = await fetch(`${handle.url}/api/ledger/record/20`, { method: "DELETE" });
+    // PUT is genuinely unsupported (GET/PATCH/DELETE are routed; ID-20.15
+    // added DELETE so it can no longer stand in for "unsupported").
+    const res = await fetch(`${handle.url}/api/ledger/record/20`, {
+      method: "PUT",
+    });
     expect(res.status).toBe(405);
     expect(res.headers.get("allow")).toContain("GET");
     expect(res.headers.get("allow")).toContain("PATCH");
+    expect(res.headers.get("allow")).toContain("DELETE");
   });
 
   test("returns 404 for unknown paths", async () => {
@@ -670,7 +1210,10 @@ describe("PATCH end-to-end — atomic write integrity (PRODUCT inv 36)", () => {
       body: JSON.stringify({
         baseMtime,
         patches: [
-          { fieldPath: ["tasks", "20", "description"], newValue: "Updated body." },
+          {
+            fieldPath: ["tasks", "20", "description"],
+            newValue: "Updated body.",
+          },
         ],
       }),
     });

@@ -66,7 +66,7 @@
  */
 
 import { stat } from "node:fs/promises";
-import { ZodError } from "zod";
+import { dirname, join } from "node:path";
 
 import { detectSchema, type DetectSchemaResult } from "./detect-schema";
 import {
@@ -83,10 +83,10 @@ import {
   type FieldPatch,
 } from "./patch-apply";
 import { atomicWriteFile } from "./atomic-write";
-import {
-  LOOPBACK_HOSTNAME,
-  resolveServerHostname,
-} from "./loopback-bind";
+import { insertRecord, removeRecord } from "./record-mutate";
+import { promoteTransaction } from "./ledger-transaction";
+import { scanForLedgers } from "./path-resolution";
+import { LOOPBACK_HOSTNAME, resolveServerHostname } from "./loopback-bind";
 import { renderViewer } from "./render-viewer";
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -195,7 +195,9 @@ function computeMirrorFilename(
  * Serialise the parsed ledger back to JSON with the same indent as the
  * existing ledgers (2-space, per the canonical KH ledger files).
  */
-function serialiseLedger(detected: Exclude<DetectSchemaResult, { kind: "unknown" }>): string {
+function serialiseLedger(
+  detected: Exclude<DetectSchemaResult, { kind: "unknown" }>,
+): string {
   return JSON.stringify(detected.data, null, 2);
 }
 
@@ -227,7 +229,11 @@ async function handleGetRoot(
     canonical = await readCanonical(ctx.ledgerPath);
   } catch (err) {
     return jsonResponse(
-      { ok: false, error: "ledger-read-failed", detail: (err as Error).message },
+      {
+        ok: false,
+        error: "ledger-read-failed",
+        detail: (err as Error).message,
+      },
       { status: 500 },
     );
   }
@@ -254,7 +260,11 @@ async function handleGetLedger(ctx: RequestContext): Promise<Response> {
     canonical = await readCanonical(ctx.ledgerPath);
   } catch (err) {
     return jsonResponse(
-      { ok: false, error: "ledger-read-failed", detail: (err as Error).message },
+      {
+        ok: false,
+        error: "ledger-read-failed",
+        detail: (err as Error).message,
+      },
       { status: 500 },
     );
   }
@@ -288,7 +298,11 @@ async function handleGetRecord(
     canonical = await readCanonical(ctx.ledgerPath);
   } catch (err) {
     return jsonResponse(
-      { ok: false, error: "ledger-read-failed", detail: (err as Error).message },
+      {
+        ok: false,
+        error: "ledger-read-failed",
+        detail: (err as Error).message,
+      },
       { status: 500 },
     );
   }
@@ -366,7 +380,11 @@ async function handlePatchRecord(
     canonical = await readCanonical(ctx.ledgerPath);
   } catch (err) {
     return jsonResponse(
-      { ok: false, error: "ledger-read-failed", detail: (err as Error).message },
+      {
+        ok: false,
+        error: "ledger-read-failed",
+        detail: (err as Error).message,
+      },
       { status: 500 },
     );
   }
@@ -411,7 +429,9 @@ async function handlePatchRecord(
   // copy (we re-read anyway, but cleanliness first).
   const detectedForPatch = {
     kind: canonical.detected.kind,
-    data: structuredClone(canonical.detected.data) as typeof canonical.detected.data,
+    data: structuredClone(
+      canonical.detected.data,
+    ) as typeof canonical.detected.data,
   } as Exclude<DetectSchemaResult, { kind: "unknown" }>;
 
   const applyResult = applyPatches(detectedForPatch, patches);
@@ -505,6 +525,459 @@ async function handlePatchRecord(
   });
 }
 
+/**
+ * POST /api/ledger/record — CREATE a new record (ID-20.15).
+ *
+ * Body: { baseMtime: string, record: <full record object> }
+ *   → 201 { ok: true, newMtime, recordId, mirrorsWritten, ... }
+ *   → 409 { error: 'mtime-mismatch' } stale baseMtime
+ *   → 409 { error: 'duplicate-id' }   record id already present
+ *   → 422 { error: 'schema-error', issues } record fails its schema
+ *   → 400 invalid body / mtime
+ *
+ * Honours the SAME safety guarantees as PATCH: mtime collision → 409,
+ * atomic write, single Zod re-parse of the WHOLE ledger (so document-level
+ * invariants — backlog unique-id, task sibling-deps — run), scoped mirror
+ * regen for the new record.
+ */
+async function handlePostRecord(
+  ctx: RequestContext,
+  request: Request,
+): Promise<Response> {
+  let body: { baseMtime?: unknown; record?: unknown };
+  try {
+    body = (await request.json()) as { baseMtime?: unknown; record?: unknown };
+  } catch (err) {
+    return jsonResponse(
+      { ok: false, error: "invalid-json", detail: (err as Error).message },
+      { status: 400 },
+    );
+  }
+  if (typeof body.baseMtime !== "string" || body.baseMtime === "") {
+    return jsonResponse(
+      { ok: false, error: "missing-baseMtime" },
+      { status: 400 },
+    );
+  }
+  if (body.record == null || typeof body.record !== "object") {
+    return jsonResponse(
+      { ok: false, error: "missing-record" },
+      { status: 400 },
+    );
+  }
+
+  let canonical;
+  try {
+    canonical = await readCanonical(ctx.ledgerPath);
+  } catch (err) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "ledger-read-failed",
+        detail: (err as Error).message,
+      },
+      { status: 500 },
+    );
+  }
+  if (canonical.detected.kind === "unknown") {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "unknown-document-name",
+        documentName: canonical.detected.documentName,
+      },
+      { status: 422 },
+    );
+  }
+
+  // §5.4 mtime check — BEFORE mutation.
+  const baseMtimeMs = Date.parse(body.baseMtime);
+  if (!Number.isFinite(baseMtimeMs)) {
+    return jsonResponse(
+      { ok: false, error: "invalid-baseMtime", detail: body.baseMtime },
+      { status: 400 },
+    );
+  }
+  if (Date.parse(canonical.mtimeIso) > baseMtimeMs) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "mtime-mismatch",
+        currentMtime: canonical.mtimeIso,
+        hint: "ledger changed underneath you — reload from disk and re-apply your edit",
+      },
+      { status: 409 },
+    );
+  }
+
+  const result = insertRecord(canonical.detected, body.record);
+  if (!result.ok) {
+    if (result.kind === "duplicate-id") {
+      return jsonResponse(
+        { ok: false, error: "duplicate-id", recordId: result.recordId },
+        { status: 409 },
+      );
+    }
+    if (result.kind === "schema-error") {
+      return jsonResponse(
+        { ok: false, error: "schema-error", issues: result.zodError.issues },
+        { status: 422 },
+      );
+    }
+    return jsonResponse(
+      {
+        ok: false,
+        error: result.kind,
+        detail: "detail" in result ? result.detail : undefined,
+      },
+      { status: 422 },
+    );
+  }
+
+  const serialised = serialiseLedger(result.detected);
+  try {
+    await atomicWriteFile(ctx.ledgerPath, serialised);
+  } catch (err) {
+    return jsonResponse(
+      { ok: false, error: "write-failed", detail: (err as Error).message },
+      { status: 500 },
+    );
+  }
+
+  // Scoped mirror regen for the newly-created record (a CREATE only adds a
+  // record; it never orphans an existing mirror, so a scoped write is
+  // correct + cheap — matches the 20.23 PATCH regen discipline).
+  let regen;
+  try {
+    regen = await generateRecordMirror(
+      result.detected,
+      ctx.ledgerPath,
+      result.recordId,
+    );
+  } catch (err) {
+    const newMtime = (await stat(ctx.ledgerPath)).mtime.toISOString();
+    return jsonResponse(
+      {
+        ok: false,
+        error: "mirror-regen-failed",
+        detail: (err as Error).message,
+        canonicalWritten: true,
+        newMtime,
+      },
+      { status: 500 },
+    );
+  }
+
+  const newMtime = (await stat(ctx.ledgerPath)).mtime.toISOString();
+  return jsonResponse(
+    {
+      ok: true,
+      newMtime,
+      recordId: result.recordId,
+      mirrorDir: regen.mirrorDir,
+      mirrorsWritten: regen.written,
+      mirrorsDeleted: regen.deleted,
+    },
+    { status: 201 },
+  );
+}
+
+/**
+ * DELETE /api/ledger/record/:recordId — remove a record (ID-20.15).
+ *
+ * Body: { baseMtime: string }
+ *   → 200 { ok: true, newMtime, recordId, mirrorsDeleted }
+ *   → 404 { error: 'record-not-found' }
+ *   → 409 { error: 'mtime-mismatch' }
+ *
+ * After the atomic write, the deleted record's orphaned mirror is removed
+ * via a full regen of the now-smaller ledger (the generator's §3.4 orphan
+ * deletion drops any .md no longer in the planned set). A full regen is the
+ * right tool here — unlike PATCH/CREATE, a DELETE changes the orphan set.
+ */
+async function handleDeleteRecord(
+  ctx: RequestContext,
+  recordId: string,
+  request: Request,
+): Promise<Response> {
+  let body: { baseMtime?: unknown };
+  try {
+    body = (await request.json()) as { baseMtime?: unknown };
+  } catch (err) {
+    return jsonResponse(
+      { ok: false, error: "invalid-json", detail: (err as Error).message },
+      { status: 400 },
+    );
+  }
+  if (typeof body.baseMtime !== "string" || body.baseMtime === "") {
+    return jsonResponse(
+      { ok: false, error: "missing-baseMtime" },
+      { status: 400 },
+    );
+  }
+
+  let canonical;
+  try {
+    canonical = await readCanonical(ctx.ledgerPath);
+  } catch (err) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "ledger-read-failed",
+        detail: (err as Error).message,
+      },
+      { status: 500 },
+    );
+  }
+  if (canonical.detected.kind === "unknown") {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "unknown-document-name",
+        documentName: canonical.detected.documentName,
+      },
+      { status: 422 },
+    );
+  }
+
+  const baseMtimeMs = Date.parse(body.baseMtime);
+  if (!Number.isFinite(baseMtimeMs)) {
+    return jsonResponse(
+      { ok: false, error: "invalid-baseMtime", detail: body.baseMtime },
+      { status: 400 },
+    );
+  }
+  if (Date.parse(canonical.mtimeIso) > baseMtimeMs) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "mtime-mismatch",
+        currentMtime: canonical.mtimeIso,
+        hint: "ledger changed underneath you — reload from disk and re-apply your edit",
+      },
+      { status: 409 },
+    );
+  }
+
+  const result = removeRecord(canonical.detected, recordId);
+  if (!result.ok) {
+    if (result.kind === "record-not-found") {
+      return jsonResponse(
+        { ok: false, error: "record-not-found", recordId },
+        { status: 404 },
+      );
+    }
+    if (result.kind === "schema-error") {
+      return jsonResponse(
+        { ok: false, error: "schema-error", issues: result.zodError.issues },
+        { status: 422 },
+      );
+    }
+    return jsonResponse({ ok: false, error: result.kind }, { status: 422 });
+  }
+
+  const serialised = serialiseLedger(result.detected);
+  try {
+    await atomicWriteFile(ctx.ledgerPath, serialised);
+  } catch (err) {
+    return jsonResponse(
+      { ok: false, error: "write-failed", detail: (err as Error).message },
+      { status: 500 },
+    );
+  }
+
+  // Full regen so the deleted record's mirror is orphan-deleted (§3.4).
+  let regen;
+  try {
+    regen = await generateMirrors(result.detected, ctx.ledgerPath);
+  } catch (err) {
+    const newMtime = (await stat(ctx.ledgerPath)).mtime.toISOString();
+    return jsonResponse(
+      {
+        ok: false,
+        error: "mirror-regen-failed",
+        detail: (err as Error).message,
+        canonicalWritten: true,
+        newMtime,
+      },
+      { status: 500 },
+    );
+  }
+
+  const newMtime = (await stat(ctx.ledgerPath)).mtime.toISOString();
+  return jsonResponse({
+    ok: true,
+    newMtime,
+    recordId,
+    mirrorDir: regen.mirrorDir,
+    mirrorsWritten: regen.written,
+    mirrorsDeleted: regen.deleted,
+  });
+}
+
+/**
+ * Resolve the task-list + backlog sibling ledger paths from the launched
+ * ledger's directory (TECH §2.2/§2.3 sibling logic). The transaction
+ * spans BOTH ledgers regardless of which one the server was launched
+ * against, so we scan the directory for both by document_name.
+ *
+ * Returns null when either sibling is absent.
+ */
+async function resolveTransactionSiblings(
+  ledgerPath: string,
+): Promise<{ taskListPath: string; backlogPath: string } | null> {
+  const dir = dirname(ledgerPath);
+  const scan = await scanForLedgers(dir);
+  const byName: Record<string, string> = {};
+  if (scan.kind === "one") {
+    byName[scan.documentName] = scan.path;
+  } else if (scan.kind === "multiple") {
+    for (const p of scan.paths) byName[scan.perPathName[p]] = p;
+  }
+  const taskListPath = byName["Knowledge Hub Task List"];
+  const backlogPath = byName["Product Backlog"];
+  if (!taskListPath || !backlogPath) {
+    // Defensive fallback: derive the missing sibling by conventional
+    // filename in the same directory (covers a dir where one sibling is
+    // present + the other named non-canonically — rare, but keeps the
+    // error message actionable).
+    return null;
+  }
+  return { taskListPath, backlogPath };
+}
+
+/**
+ * POST /api/ledger/transaction — cross-ledger atomic Promote (ID-20.15).
+ *
+ * The canonical case: remove an item from product-backlog.json AND add a
+ * corresponding Task to task-list.json in a single all-or-nothing op.
+ *
+ * Body:
+ *   {
+ *     op: "promote",
+ *     sourceBacklogId: string,        // backlog item id to remove
+ *     taskRecord: <full Task object>, // task to insert into task-list
+ *     taskListBaseMtime: string,      // client's last-seen task-list mtime
+ *     backlogBaseMtime: string,       // client's last-seen backlog mtime
+ *   }
+ *
+ * Responses:
+ *   → 200 { ok: true, newTaskId, removedBacklogId, taskListMtime, backlogMtime, ... }
+ *   → 409 { error: 'mtime-mismatch' | 'duplicate-id' }
+ *   → 404 { error: 'backlog-item-not-found' }
+ *   → 422 { error: 'schema-error', issues } | { error: 'unknown-document-name' | ... }
+ *   → 400 invalid body / mtime
+ *   → 500 { error: 'no-sibling-ledger' | 'stage-failed' | 'commit-failed' }
+ *
+ * Atomicity: validate-everything → stage-both (fsync) → commit-last. See
+ * ledger-transaction.ts for the full model + residual-window discussion.
+ */
+async function handlePostTransaction(
+  ctx: RequestContext,
+  request: Request,
+): Promise<Response> {
+  let body: {
+    op?: unknown;
+    sourceBacklogId?: unknown;
+    taskRecord?: unknown;
+    taskListBaseMtime?: unknown;
+    backlogBaseMtime?: unknown;
+  };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch (err) {
+    return jsonResponse(
+      { ok: false, error: "invalid-json", detail: (err as Error).message },
+      { status: 400 },
+    );
+  }
+  if (body.op !== "promote") {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "unsupported-op",
+        detail: `Only "promote" is supported; got ${String(body.op)}.`,
+      },
+      { status: 400 },
+    );
+  }
+  if (typeof body.sourceBacklogId !== "string" || body.sourceBacklogId === "") {
+    return jsonResponse(
+      { ok: false, error: "missing-sourceBacklogId" },
+      { status: 400 },
+    );
+  }
+  if (body.taskRecord == null || typeof body.taskRecord !== "object") {
+    return jsonResponse(
+      { ok: false, error: "missing-taskRecord" },
+      { status: 400 },
+    );
+  }
+  if (
+    typeof body.taskListBaseMtime !== "string" ||
+    body.taskListBaseMtime === ""
+  ) {
+    return jsonResponse(
+      { ok: false, error: "missing-taskListBaseMtime" },
+      { status: 400 },
+    );
+  }
+  if (
+    typeof body.backlogBaseMtime !== "string" ||
+    body.backlogBaseMtime === ""
+  ) {
+    return jsonResponse(
+      { ok: false, error: "missing-backlogBaseMtime" },
+      { status: 400 },
+    );
+  }
+
+  const siblings = await resolveTransactionSiblings(ctx.ledgerPath);
+  if (!siblings) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "no-sibling-ledger",
+        detail:
+          "Promote requires both a 'Knowledge Hub Task List' and a 'Product Backlog' " +
+          "ledger in the launched ledger's directory.",
+      },
+      { status: 500 },
+    );
+  }
+
+  const result = await promoteTransaction({
+    taskListPath: siblings.taskListPath,
+    backlogPath: siblings.backlogPath,
+    taskListBaseMtime: body.taskListBaseMtime,
+    backlogBaseMtime: body.backlogBaseMtime,
+    sourceBacklogId: body.sourceBacklogId,
+    taskRecord: body.taskRecord,
+  });
+
+  if (!result.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: result.error,
+        detail: result.detail,
+        issues: result.issues,
+      },
+      { status: result.status },
+    );
+  }
+
+  return jsonResponse({
+    ok: true,
+    newTaskId: result.newTaskId,
+    removedBacklogId: result.removedBacklogId,
+    taskListMtime: result.taskListMtime,
+    backlogMtime: result.backlogMtime,
+    mirrorsWritten: result.mirrorsWritten,
+    mirrorsDeleted: result.mirrorsDeleted,
+  });
+}
+
 async function handlePostRegen(
   ctx: RequestContext,
   request: Request,
@@ -522,7 +995,11 @@ async function handlePostRegen(
     canonical = await readCanonical(ctx.ledgerPath);
   } catch (err) {
     return jsonResponse(
-      { ok: false, error: "ledger-read-failed", detail: (err as Error).message },
+      {
+        ok: false,
+        error: "ledger-read-failed",
+        detail: (err as Error).message,
+      },
       { status: 500 },
     );
   }
@@ -588,7 +1065,19 @@ function buildFetchHandler(ctx: RequestContext) {
       return handleGetLedger(ctx);
     }
 
-    // GET / PATCH /api/ledger/record/:recordId
+    // POST /api/ledger/record — record-level CREATE (ID-20.15). Exact path
+    // (no recordId) — matched BEFORE the /:recordId regex below so the
+    // collection-level POST is not swallowed by the per-record route.
+    if (path === "/api/ledger/record" && request.method === "POST") {
+      return handlePostRecord(ctx, request);
+    }
+
+    // POST /api/ledger/transaction — cross-ledger atomic Promote (ID-20.15).
+    if (path === "/api/ledger/transaction" && request.method === "POST") {
+      return handlePostTransaction(ctx, request);
+    }
+
+    // GET / PATCH / DELETE /api/ledger/record/:recordId
     const recordMatch = path.match(/^\/api\/ledger\/record\/(.+)$/);
     if (recordMatch) {
       const recordId = decodeURIComponent(recordMatch[1]);
@@ -598,9 +1087,12 @@ function buildFetchHandler(ctx: RequestContext) {
       if (request.method === "PATCH") {
         return handlePatchRecord(ctx, recordId, request);
       }
+      if (request.method === "DELETE") {
+        return handleDeleteRecord(ctx, recordId, request);
+      }
       return jsonResponse(
         { ok: false, error: "method-not-allowed" },
-        { status: 405, headers: { allow: "GET, PATCH" } },
+        { status: 405, headers: { allow: "GET, PATCH, DELETE" } },
       );
     }
 
@@ -630,9 +1122,7 @@ function buildFetchHandler(ctx: RequestContext) {
  * Throws (rejects) when the hostname override is non-loopback —
  * security-relevant per PRODUCT inv 44 / TECH §5.8.
  */
-export function startPatchServer(
-  opts: PatchServerOptions,
-): PatchServerHandle {
+export function startPatchServer(opts: PatchServerOptions): PatchServerHandle {
   const hostname = resolveServerHostname(opts.hostname); // throws if non-loopback
   // Default to OS-assigned port (0) when caller doesn't specify. Port
   // retry policy (§6.6) lands in 20.11 — for 20.8 we expose the bare

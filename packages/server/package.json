@@ -15,6 +15,9 @@
     "./path-resolution": "./path-resolution.ts",
     "./ledger": "./ledger.ts",
     "./patch-server": "./patch-server.ts",
+    "./record-mutate": "./record-mutate.ts",
+    "./ledger-transaction": "./ledger-transaction.ts",
+    "./atomic-write": "./atomic-write.ts",
     "./loopback-bind": "./loopback-bind.ts",
     "./render-viewer": "./render-viewer.tsx"
   },
