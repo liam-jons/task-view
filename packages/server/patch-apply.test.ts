@@ -318,6 +318,58 @@ describe("applyTaskListPatches — walk errors", () => {
     }
   });
 
+  // ── ID-20.26: optional-field guard fix ──────────────────────────────────────
+
+  test("ID-20.26: SET Task.capability_theme (optional, absent on fixture) succeeds", () => {
+    // capability_theme is z.string().nullable().optional() — absent on the
+    // makeTaskList() fixture. The fix must allow writing it even though
+    // hasOwnProperty would have returned false on the instance.
+    const snapshot = makeTaskList();
+    expect("capability_theme" in snapshot.tasks[0]).toBe(false);
+    const result = applyTaskListPatches(snapshot, [
+      { fieldPath: ["tasks", "20", "capability_theme"], newValue: "foundation" },
+    ]);
+    if (!result.ok) throw new Error(`expected ok; got kind=${result.kind} detail=${result.kind === "walk-error" ? result.detail : ""}`);
+    expect(result.parsed.tasks[0].capability_theme).toBe("foundation");
+  });
+
+  test("ID-20.26: SET Subtask.updatedAt (optional, absent on one fixture subtask) succeeds", () => {
+    // Subtask 2 (id: 2) has no updatedAt in the fixture — updatedAt is optional.
+    const snapshot = makeTaskList();
+    const subtaskTwo = snapshot.tasks[0].subtasks[1];
+    expect("updatedAt" in subtaskTwo).toBe(false);
+    const result = applyTaskListPatches(snapshot, [
+      { fieldPath: ["tasks", "20", "subtasks", "2", "updatedAt"], newValue: "2026-05-25T10:00:00.000Z" },
+    ]);
+    if (!result.ok) throw new Error(`expected ok; got kind=${result.kind} detail=${result.kind === "walk-error" ? result.detail : ""}`);
+    expect(result.parsed.tasks[0].subtasks[1].updatedAt).toBe("2026-05-25T10:00:00.000Z");
+  });
+
+  test("ID-20.26: typo'd field on Task still errors — not a silent no-op (TaskSchema is strict)", () => {
+    // TaskSchema uses .strict() so a typo'd field written to the snapshot
+    // will produce a schema-error at re-parse even without the guard.
+    // After the fix (schema-keyset guard), it surfaces as a walk-error
+    // before Zod even runs — either way it must NOT return ok.
+    const snapshot = makeTaskList();
+    const result = applyTaskListPatches(snapshot, [
+      { fieldPath: ["tasks", "20", "statsu_note"], newValue: "typo" }, // deliberate typo
+    ]);
+    expect(result.ok).toBe(false);
+    expect(["walk-error", "schema-error"]).toContain(result.ok ? "ok" : result.kind);
+    if (!result.ok && result.kind === "walk-error") {
+      expect(result.detail).toContain("statsu_note");
+    }
+  });
+
+  test("ID-20.26: typo'd field on Subtask still errors — not a silent no-op", () => {
+    const snapshot = makeTaskList();
+    const result = applyTaskListPatches(snapshot, [
+      { fieldPath: ["tasks", "20", "subtasks", "1", "dtails"], newValue: "typo" }, // deliberate typo
+    ]);
+    expect(result.ok).toBe(false);
+    expect(["walk-error", "schema-error"]).toContain(result.ok ? "ok" : result.kind);
+  });
+
   test("rejects unknown subtask id within a known Task", () => {
     const snapshot = makeTaskList();
     const result = applyTaskListPatches(snapshot, [
@@ -520,6 +572,49 @@ describe("applyBacklogPatches — item field replacement", () => {
     ]);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.kind).toBe("schema-error");
+  });
+
+  // ── ID-20.26: optional-field guard fix ──────────────────────────────────────
+
+  test("ID-20.26: SET rank (optional, absent on live records) succeeds — not a walk-error", () => {
+    // 'rank' is z.number().int().nullable().optional() — absent on every live
+    // backlog item. Before this fix the hasOwnProperty guard rejected the write
+    // with a walk-error (400). After the fix, the write succeeds and re-parse
+    // validates the value via Zod.
+    const snapshot = makeBacklog();
+    // Confirm rank is absent on the fixture item (pre-condition)
+    expect("rank" in snapshot.items[0]).toBe(false);
+    const result = applyBacklogPatches(snapshot, [
+      { fieldPath: ["items", "30", "rank"], newValue: 3 },
+    ]);
+    if (!result.ok) throw new Error(`expected ok; got kind=${result.kind} detail=${result.kind === "walk-error" ? result.detail : ""}`);
+    expect(result.parsed.items[0].rank).toBe(3);
+  });
+
+  test("ID-20.26: SET details (optional, absent on live records) succeeds", () => {
+    const snapshot = makeBacklog();
+    expect("details" in snapshot.items[0]).toBe(false);
+    const result = applyBacklogPatches(snapshot, [
+      { fieldPath: ["items", "30", "details"], newValue: "Expanded brief for this item." },
+    ]);
+    if (!result.ok) throw new Error(`expected ok; got kind=${result.kind} detail=${result.kind === "walk-error" ? result.detail : ""}`);
+    expect(result.parsed.items[0].details).toBe("Expanded brief for this item.");
+  });
+
+  test("ID-20.26: typo'd field on BacklogItem still errors — not a silent no-op", () => {
+    // BacklogItemSchema is NOT .strict() — a typo'd field would be silently
+    // stripped by Zod. The schema-keyset guard MUST catch it as a walk-error
+    // before Zod sees it, so the PATCH never returns 200/ok with nothing written.
+    const snapshot = makeBacklog();
+    const result = applyBacklogPatches(snapshot, [
+      { fieldPath: ["items", "30", "statsu_note"], newValue: "typo" }, // deliberate typo
+    ]);
+    expect(result.ok).toBe(false);
+    // Must be walk-error (from guard) OR schema-error — NOT silent ok
+    expect(["walk-error", "schema-error"]).toContain(result.ok ? "ok" : result.kind);
+    if (!result.ok && result.kind === "walk-error") {
+      expect(result.detail).toContain("statsu_note");
+    }
   });
 });
 

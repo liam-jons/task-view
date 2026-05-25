@@ -37,10 +37,43 @@
  */
 
 import { TaskListSchema, type TaskList } from "@task-view/schemas/task-list";
+import { TaskSchema, SubtaskSchema } from "@task-view/schemas/task-list";
 import { RoadmapSchema, type Roadmap } from "@task-view/schemas/roadmap";
-import { BacklogSchema, type BacklogDocument } from "@task-view/schemas/backlog";
+import { RoadmapThemeSchema } from "@task-view/schemas/roadmap";
+import { BacklogSchema, BacklogItemSchema, type BacklogDocument } from "@task-view/schemas/backlog";
 import { ZodError } from "zod";
 import type { DetectSchemaResult } from "./detect-schema";
+
+// ── Schema-keyset sets ────────────────────────────────────────────────────────
+//
+// ID-20.26: The `hasOwnProperty` guard used to double-duty as:
+//   (a) permit writes to fields that ARE on the record instance, and
+//   (b) reject writes to fields that are NOT on the record instance.
+//
+// The problem: optional fields (e.g. `rank`, `capability_theme`, `updatedAt`)
+// are absent on live records — `hasOwnProperty` returned false for them, so
+// SET operations were incorrectly rejected as walk-errors.
+//
+// Fix (preferred approach): guard against the SCHEMA's known-key set rather
+// than the instance's own properties. A field is permitted iff it is declared
+// in the record type's Zod schema shape, regardless of whether it is present
+// on the instance. Genuinely unknown / typo'd fields are absent from the shape
+// and are still rejected as walk-errors — exactly as before.
+//
+// For task-list (TaskSchema, SubtaskSchema) and roadmap (RoadmapThemeSchema)
+// the final Zod re-parse uses `.strict()` and would also catch unknown keys as
+// a schema-error. For backlog (BacklogItemSchema) the schema does NOT use
+// `.strict()` (it strips unknown keys silently), so the schema-keyset guard is
+// ESSENTIAL — without it a typo'd field would silently no-op and return 200.
+//
+// Each Set is derived from the Zod `.shape` object of the corresponding schema.
+// `.strict()` and `.superRefine()` both preserve the `.shape` accessor on
+// ZodObject in Zod v4 (verified against node_modules/zod/v4/classic/schemas.d.ts).
+
+const TASK_KNOWN_FIELDS = new Set(Object.keys(TaskSchema.shape));
+const SUBTASK_KNOWN_FIELDS = new Set(Object.keys(SubtaskSchema.shape));
+const ROADMAP_THEME_KNOWN_FIELDS = new Set(Object.keys(RoadmapThemeSchema.shape));
+const BACKLOG_ITEM_KNOWN_FIELDS = new Set(Object.keys(BacklogItemSchema.shape));
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -124,10 +157,12 @@ function applyTaskListPatch(
   // Direct task-field patch: ['tasks', taskId, fieldName]
   if (afterTask.length === 1) {
     const field = afterTask[0];
-    if (!Object.prototype.hasOwnProperty.call(task, field)) {
+    // ID-20.26: guard against schema known-key set (not instance hasOwnProperty)
+    // so that optional fields absent on the record instance can still be SET.
+    if (!TASK_KNOWN_FIELDS.has(field)) {
       return {
         fieldPath: patch.fieldPath,
-        detail: `Field "${field}" is not present on Task ${taskId}. Available fields: ${Object.keys(task).join(", ")}.`,
+        detail: `Field "${field}" is not a known field on Task records. Known fields: ${[...TASK_KNOWN_FIELDS].join(", ")}.`,
       };
     }
     (task as Record<string, unknown>)[field] = patch.newValue;
@@ -172,10 +207,12 @@ function applyTaskListPatch(
     };
   }
   const subField = subtaskFieldPathRest[0];
-  if (!Object.prototype.hasOwnProperty.call(subtask, subField)) {
+  // ID-20.26: guard against schema known-key set (not instance hasOwnProperty)
+  // so that optional fields absent on the record instance can still be SET.
+  if (!SUBTASK_KNOWN_FIELDS.has(subField)) {
     return {
       fieldPath: patch.fieldPath,
-      detail: `Field "${subField}" is not present on Subtask ${subtaskIdNum} of Task ${taskId}. Available fields: ${Object.keys(subtask).join(", ")}.`,
+      detail: `Field "${subField}" is not a known field on Subtask records. Known fields: ${[...SUBTASK_KNOWN_FIELDS].join(", ")}.`,
     };
   }
   (subtask as Record<string, unknown>)[subField] = patch.newValue;
@@ -231,10 +268,12 @@ function applyRoadmapPatch(
     };
   }
   const field = rest[0];
-  if (!Object.prototype.hasOwnProperty.call(theme, field)) {
+  // ID-20.26: guard against schema known-key set (not instance hasOwnProperty)
+  // so that optional fields absent on the record instance can still be SET.
+  if (!ROADMAP_THEME_KNOWN_FIELDS.has(field)) {
     return {
       fieldPath: patch.fieldPath,
-      detail: `Field "${field}" is not present on Theme ${themeId}. Available fields: ${Object.keys(theme).join(", ")}.`,
+      detail: `Field "${field}" is not a known field on RoadmapTheme records. Known fields: ${[...ROADMAP_THEME_KNOWN_FIELDS].join(", ")}.`,
     };
   }
   (theme as Record<string, unknown>)[field] = patch.newValue;
@@ -277,10 +316,16 @@ function applyBacklogPatch(
     };
   }
   const field = rest[0];
-  if (!Object.prototype.hasOwnProperty.call(item, field)) {
+  // ID-20.26: guard against schema known-key set (not instance hasOwnProperty)
+  // so that optional fields absent on the record instance can still be SET.
+  // CRITICAL for backlog: BacklogItemSchema does NOT use .strict(), so a
+  // typo'd field written to the snapshot would be silently stripped by Zod
+  // and the PATCH would return 200/ok having written nothing — a silent no-op.
+  // The schema-keyset guard MUST catch unknown fields before Zod sees them.
+  if (!BACKLOG_ITEM_KNOWN_FIELDS.has(field)) {
     return {
       fieldPath: patch.fieldPath,
-      detail: `Field "${field}" is not present on Backlog item ${itemId}. Available fields: ${Object.keys(item).join(", ")}.`,
+      detail: `Field "${field}" is not a known field on BacklogItem records. Known fields: ${[...BACKLOG_ITEM_KNOWN_FIELDS].join(", ")}.`,
     };
   }
   (item as Record<string, unknown>)[field] = patch.newValue;
