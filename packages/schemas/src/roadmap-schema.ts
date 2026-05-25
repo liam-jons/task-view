@@ -3,7 +3,9 @@
  *
  * VENDORED into task-view from Knowledge Hub `lib/validation/roadmap-schema.ts`
  * — see CONTRIBUTING.md for re-vendoring procedure. Per TECH §1.5 of
- * per-task-mirror, task-view consumes its own frozen copy.
+ * per-task-mirror, the BARE_ID_REGEX import (from KH's separate
+ * `lib/validation/schemas.ts`) is inlined below since the 4-file vendor
+ * bundle does not include the full KH schemas.ts.
  *
  * Single source of truth for the JSON shape of `docs/reference/product-roadmap.json`
  * (the JSON-authoritative artefact replacing the legacy MD-only `product-roadmap.md`
@@ -31,6 +33,14 @@
 
 import { z } from 'zod';
 import { Priority } from './work-status';
+
+// Inlined from upstream KH `lib/validation/schemas.ts`. The full
+// schemas.ts module is out of scope for the task-view vendor bundle
+// (TECH §1.5 specifies a 4-file bundle: task-list-schema, roadmap-schema,
+// backlog-schema, work-status). The regex stays in sync via the
+// re-vendoring procedure in CONTRIBUTING.md — match KH's source verbatim
+// when re-vendoring.
+const BARE_ID_REGEX = /^\d+$/;
 
 // ──────────────────────────────────────────
 // Enums
@@ -104,133 +114,62 @@ export const DocLinkSchema = z
 export type DocLink = z.infer<typeof DocLinkSchema>;
 
 // ──────────────────────────────────────────
-// Item
+// Theme (Subtask 30.6 / TECH §3.1)
+//
+// Phase-B Roadmap shape — Linear-style themes grouping related Tasks under
+// time horizons (now / next / later). Authoritative back-link from Roadmap
+// theme → Task via `linked_tasks[]`; Task carries a convenience
+// `capability_theme` back-link that the curator skill maintains in sync.
+//
+// 10 fields, all required (arrays default to empty, notes nullable).
+// Strict — no unknown fields permitted.
 // ──────────────────────────────────────────
 
-export const RoadmapItemSchema = z
+export const RoadmapThemeSchema = z
   .object({
-    id: z
-      .string()
-      .min(1)
-      .describe('Dotted-decimal positional ID (e.g. 1.3, 3.1.8, 9.18.1)'),
-    section_id: z
-      .string()
-      .min(1)
-      .describe('Pointer to Section.id; redundant for query convenience'),
+    /** Bare-digit theme id (e.g. "1", "42"). Matches BARE_ID_REGEX. */
+    id: z.string().regex(BARE_ID_REGEX, 'Theme id must be a bare-digit string'),
+    /** Short noun phrase title for the theme. */
     title: z.string().min(1),
-    /**
-     * Item 5 ratification — `Phase` column source (§3.7, §4.1, §4.2, §6)
-     * gets surfaced separately so the title remains the canonical heading.
-     */
-    phase_label: z.string().nullable(),
-    /**
-     * Markdown-preserved (multi-paragraph allowed). Round-trip rendering
-     * must reproduce this verbatim minus pipe-padding.
-     */
+    /** Markdown description of the theme's scope and intent. */
     description: z.string().min(1),
     /**
-     * Item 7 ratification — freetext per backlog precedent. Examples:
-     * `~15 min`, `1-2 sessions`, `Multiple sessions`, `XS`, `TBD`.
+     * Linear-style time horizon — `now` (in flight), `next` (queued for
+     * next cycle), `later` (parked for future cycles).
      */
-    effort_estimate: z.string().nullable(),
-    priority: RoadmapPriority.nullable(),
+    time_horizon: z.enum(['now', 'next', 'later']),
     /**
-     * Phase 2 addition (kh-prod-readiness-S39 W1) — preserves the original
-     * priority cell text verbatim when it carries editorial annotation
-     * beyond the canonical enum (e.g. "Should (demoted from Must)",
-     * "Medium (deferred)", "Low (H2)"). Renderer prefers `priority_note`
-     * over the canonical capitalised enum so round-trip is lossless.
-     * Null when the source cell was the unannotated canonical form.
+     * Theme-level status. 3 values per P-OQ-1 default: pending | in_progress
+     * | done. Themes do not adopt the wider Task-level status vocabulary
+     * (no blocked / deferred at theme level — those belong on Tasks).
      */
-    priority_note: z.string().nullable(),
+    status: z.enum(['pending', 'in_progress', 'done']),
     /**
-     * Item 8 ratification — §3.2 only (gap-analysis grading C2/H5/M4).
-     * Null on every other section.
+     * Authoritative back-link to Tasks under this theme. Mirrored by each
+     * Task's optional `capability_theme` convenience field.
      */
-    severity: z.string().nullable(),
-    status: RoadmapStatus.nullable(),
-    /**
-     * Item 3 ratification — residual freetext when status doesn't fit
-     * the enum (e.g. "Blocked on bid-to-template linkage", "EP8 build
-     * remains.").
-     */
-    status_note: z.string().nullable(),
-    /**
-     * Per-item owner override (§1, §12.0 only). Falls back to
-     * Section.owner when null.
-     */
-    owner: z.string().nullable(),
-    /**
-     * Item 6 ratification — hybrid parsing. High-confidence patterns
-     * (`§N.M`, `D-NN`, `OPS-NN`) parsed into structured arrays; the rest
-     * stays in description / status_note.
-     *
-     * Per ID-15.6 OQ-3 ratification — intentional divergence from Backlog +
-     * Task list flat dependencies[]. Captures strategic decomposition (forward
-     * dep / reverse dep / lateral coordination).
-     */
-    depends_on: z.array(z.string()),
-    blocks: z.array(z.string()),
-    coordinates_with: z.array(z.string()),
+    linked_tasks: z.array(z.string()),
+    /** Optional back-link to Backlog items related to the theme. */
+    linked_backlog: z.array(z.string()),
+    /** Session references for structured provenance. */
+    session_refs: z.array(z.string()),
+    /** Commit SHA references for structured provenance. */
+    commit_refs: z.array(z.string()),
+    /** Cross-document links for structured provenance. */
     cross_doc_links: z.array(DocLinkSchema),
-    session_refs: z
-      .array(z.string())
-      .describe('e.g. ["S203 WP-C1", "kh-prod-readiness-S35"]'),
-    commit_refs: z
-      .array(z.string())
-      .describe('Short or full SHA strings extracted from descriptions'),
+    /** Optional prose notes, nullable. */
+    notes: z.string().nullable(),
   })
   .strict();
-export type RoadmapItem = z.infer<typeof RoadmapItemSchema>;
+export type RoadmapTheme = z.infer<typeof RoadmapThemeSchema>;
 
 // ──────────────────────────────────────────
-// Section
-// ──────────────────────────────────────────
-
-export const RoadmapSectionSchema = z
-  .object({
-    id: z
-      .string()
-      .min(1)
-      .describe('Dotted-decimal stable ID (e.g. "1", "3.1", "9.15")'),
-    parent_id: z
-      .string()
-      .nullable()
-      .describe('Null for top-level numbered sections; parent ID otherwise'),
-    /**
-     * Human-facing label — same as `id` today; surfaced separately so
-     * future renderers can substitute (e.g. "I" / "II" / "III" Roman).
-     */
-    number: z.string().min(1),
-    title: z.string().min(1),
-    /**
-     * Item 1 ratification — markdown-preserved free-text prose between
-     * the heading and the table. May be null when the section is pure
-     * tabular content.
-     */
-    narrative: z.string().nullable(),
-    /**
-     * Item 1 ratification — structured `Spec:` / `Plan:` / `Source:` /
-     * inline-link extraction in addition to keeping the source text in
-     * `narrative`. Round-trip retains both.
-     */
-    spec_links: z.array(DocLinkSchema),
-    /**
-     * Section-level owner declaration (`**Owner:**` line at the top of
-     * §9.7, §12.0 narrative). Items inherit when their per-item owner
-     * is null.
-     */
-    owner: z.string().nullable(),
-    table_columns: ColumnSet,
-    items: z
-      .array(RoadmapItemSchema)
-      .describe('Empty allowed (e.g. §2 root, §9.17 narrative-only).'),
-  })
-  .strict();
-export type RoadmapSection = z.infer<typeof RoadmapSectionSchema>;
-
-// ──────────────────────────────────────────
-// Roadmap (root)
+// Roadmap (root) — themes-only shape (Subtask 30.12 / TECH §3.1 PR-C)
+//
+// Phase-B is the only supported shape. The transitional union root from
+// Subtask 30.6 (sections[] XOR themes[] via .superRefine()) is removed in
+// PR-C per TECH §3.1 + §7 risk row 1. `themes` is REQUIRED; legacy
+// sections-shape documents are rejected at parse time.
 // ──────────────────────────────────────────
 
 export const RoadmapSchema = z
@@ -257,7 +196,60 @@ export const RoadmapSchema = z
      * one-liner of the form "kh-prod-readiness-SNN <wave> close-out".
      */
     last_updated: z.string().min(1),
-    sections: z.array(RoadmapSectionSchema),
+    /**
+     * Phase-B themes shape. REQUIRED — Linear-style theme grouping. The
+     * Phase-A sections[] shape was retired in Subtask 30.12 (PR-C). The
+     * strict() root rejects any document that retains the legacy
+     * sections[] field.
+     */
+    themes: z.array(RoadmapThemeSchema),
   })
   .strict();
 export type Roadmap = z.infer<typeof RoadmapSchema>;
+
+// ──────────────────────────────────────────
+// parseRoadmapWithWarnings — PRODUCT inv 8 (12-theme soft ceiling)
+// ──────────────────────────────────────────
+
+/**
+ * A warning raised by `parseRoadmapWithWarnings` when a document exceeds the
+ * 12-theme soft ceiling defined in PRODUCT inv 8.
+ */
+export interface RoadmapWarning {
+  themeCount?: number;
+  message: string;
+}
+
+/**
+ * Parse a Roadmap and surface warnings for any document that exceeds the
+ * 12-theme soft ceiling (PRODUCT inv 8).
+ *
+ * The soft ceiling is NOT enforced as a schema rejection — `RoadmapSchema.parse()`
+ * continues to accept documents with >12 themes because the invariant is a
+ * planning signal, not a hard constraint. Consumers that want to surface the
+ * warning (e.g. a Planner agent) call this helper; consumers that don't care
+ * continue using `RoadmapSchema.parse()` directly.
+ *
+ * Throws `ZodError` on hard validation failure (same behaviour as
+ * `RoadmapSchema.parse()`). On success, returns the parsed `Roadmap` plus a
+ * `warnings` array — empty when the document is within the ceiling.
+ *
+ * One warning entry per offending document (not per excess theme). Mirrors the
+ * `parseTaskListWithWarnings` shape from task-list-schema.ts.
+ */
+export function parseRoadmapWithWarnings(input: unknown): {
+  value: Roadmap;
+  warnings: RoadmapWarning[];
+} {
+  const value = RoadmapSchema.parse(input);
+  const warnings: RoadmapWarning[] = [];
+  if (value.themes.length > 12) {
+    warnings.push({
+      themeCount: value.themes.length,
+      message:
+        `Roadmap has ${value.themes.length} themes (>12). ` +
+        `Per PRODUCT inv 8, consider merging.`,
+    });
+  }
+  return { value, warnings };
+}

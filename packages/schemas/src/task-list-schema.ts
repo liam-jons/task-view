@@ -51,11 +51,11 @@ export { TaskListStatus } from './work-status';
 
 /**
  * Subtask-level status — strict subset of TaskListStatus.
- * Drops: cancelled | spec_needed | imp_deferred (Task-level-only values).
- * Per PRODUCT inv 21.
+ * Drops: spec_needed | imp_deferred (Task-level-only values).
+ * 'cancelled' is intentionally retained at Subtask level (Liam request, S261).
+ * Per PRODUCT inv 21 (amended).
  */
 export const SubtaskStatus = TaskListStatus.exclude([
-  'cancelled',
   'spec_needed',
   'imp_deferred',
 ]);
@@ -86,7 +86,7 @@ export const SubtaskSchema = z
      * Append-extensible via <info added on ...> blocks (inv 13).
      */
     details: z.string(),
-    /** Subtask-level subset: done | pending | in_progress | blocked | deferred. */
+    /** Subtask-level subset: done | pending | in_progress | blocked | deferred | cancelled. */
     status: SubtaskStatus,
     /**
      * Sibling integer ids. Validated at TaskSchema level via superRefine (inv 14).
@@ -140,6 +140,14 @@ export const TaskSchema = z
     cross_doc_links: z.array(DocLinkSchema),
     session_refs: z.array(z.string()),
     commit_refs: z.array(z.string()),
+
+    /**
+     * Optional back-link to a Roadmap theme (OQ-6 ratification). Authoritative
+     * direction is theme.linked_tasks[]; capability_theme is convenience
+     * back-link the curator skill maintains in sync. Absent = unaffiliated.
+     * Per TECH §3.1 (Subtask 30.6).
+     */
+    capability_theme: z.string().nullable().optional(),
   })
   .strict() // inv 7 (no details/testStrategy), inv 8 (no parentId)
   .superRefine((task, ctx) => {
@@ -175,11 +183,6 @@ export const TaskListSchema = z
     document_name: z.literal('Knowledge Hub Task List'),
     /** One-paragraph human-readable purpose (inv 4). */
     document_purpose: z.string().min(1),
-    /**
-     * Freetext one-liner of the form "kh-prod-readiness-SNN <wave> close-out".
-     * Matches Roadmap and Backlog convention (PRODUCT inv 52).
-     */
-    last_updated: z.string().min(1),
     /** Array of repo-relative paths to related documents (inv 4). */
     related_documents: z.array(z.string()),
     /** Array of Task objects — empty allowed (inv 4, 19). */

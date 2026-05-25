@@ -40,8 +40,15 @@ const BARE_ID_REGEX = /^\d+$/;
 // work-status.ts directly, per the per-surface re-export convention in TECH §1.0).
 // ──────────────────────────────────────────────────────────────────────────────
 
-export { BacklogStatus };
-export type BacklogStatus = z.infer<typeof BacklogStatus>;
+// Vendoring adaptation: a single re-export from './work-status' carries
+// BOTH the value (Zod schema) and the type alias, since work-status.ts
+// exports `BacklogStatus` as value + type. The upstream KH source pairs
+// `export { BacklogStatus }` (the local import) with a separate
+// `export type BacklogStatus = z.infer<...>` line; under the vendor
+// package's `isolatedModules` tsconfig that pairing trips TS2440/TS2484
+// (import/local-declaration conflict). Re-exporting from the source module
+// is semantically identical and conflict-free.
+export { BacklogStatus } from './work-status';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Backlog item type enum — values observed in the live data.
@@ -78,7 +85,9 @@ export type BacklogItemType = z.infer<typeof BacklogItemType>;
 
 export const BacklogItemSchema = z.object({
   /** Item identifier — bare-digit canonical form after ID-15.4 migration (inv 37). */
-  id: z.string().regex(BARE_ID_REGEX, 'Backlog item id must be a bare digit string'),
+  id: z
+    .string()
+    .regex(BARE_ID_REGEX, 'Backlog item id must be a bare digit string'),
 
   /** One-sentence summary of the work item. */
   description: z.string().min(1),
@@ -134,11 +143,11 @@ export const BacklogItemSchema = z.object({
   notes: z.string().nullable(),
 
   /**
-   * Within-priority deterministic ordering. Lower integer = higher rank
-   * within tier. Default null; pre-existing items omit. Schema does NOT
-   * enforce uniqueness or contiguity within tier (roadmap-backlog-
-   * consolidation PRODUCT inv 3). Curator skill maintains discipline
-   * (Subtask 30.5 + P-OQ-3 auto-shift default). Per TECH §3.1 (30.6).
+   * Within-priority deterministic ordering. Lower integer = higher rank.
+   * Default null; pre-existing items omit. Schema does NOT enforce uniqueness
+   * or contiguity within tier (PRODUCT inv 3). Curator skill maintains
+   * discipline (Subtask 30.5 + P-OQ-3 auto-shift default). Per TECH §3.1
+   * (Subtask 30.6).
    *
    * Re-vendored from upstream KH `lib/validation/backlog-schema.ts` for
    * Subtask 30.8 (per-task-mirror 20.14 extension); kept in sync via
@@ -176,9 +185,6 @@ export const BacklogSchema = z
 
     /** One-paragraph human-readable purpose. */
     document_purpose: z.string().min(1),
-
-    /** Freetext one-liner matching the Roadmap convention. */
-    last_updated: z.string().min(1),
 
     /** Repo-relative paths to related documents. */
     related_documents: z.array(z.string()),

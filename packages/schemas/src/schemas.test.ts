@@ -18,7 +18,6 @@ import { WorkStatus, TaskListStatus, BacklogStatus, RoadmapStatus, Priority } fr
 const minimalTaskList = {
   document_name: "Knowledge Hub Task List",
   document_purpose: "Active + recently-closed structured work — Taskmaster JSON shape.",
-  last_updated: "kh-prod-readiness-S62 W2 representative fixture",
   related_documents: [
     "docs/reference/product-roadmap.json",
     "docs/reference/product-backlog.json",
@@ -50,6 +49,7 @@ const minimalTaskList = {
       cross_doc_links: [],
       session_refs: [],
       commit_refs: [],
+      capability_theme: "1",
     },
   ],
 };
@@ -62,38 +62,19 @@ const minimalRoadmap = {
   forward_looking_only: true,
   related_documents: ["docs/reference/product-backlog.json"],
   last_updated: "kh-prod-readiness-S62 W2 representative fixture",
-  sections: [
+  themes: [
     {
       id: "1",
-      parent_id: null,
-      number: "1",
       title: "Foundation",
-      narrative: "Build the foundations.",
-      spec_links: [],
-      owner: "Engineering",
-      table_columns: "item_desc_owner_effort_status",
-      items: [
-        {
-          id: "1.1",
-          section_id: "1",
-          title: "First item",
-          phase_label: null,
-          description: "First item description.",
-          effort_estimate: null,
-          priority: "must",
-          priority_note: null,
-          severity: null,
-          status: "pending",
-          status_note: null,
-          owner: null,
-          depends_on: [],
-          blocks: [],
-          coordinates_with: [],
-          cross_doc_links: [],
-          session_refs: [],
-          commit_refs: [],
-        },
-      ],
+      description: "Build the foundations.",
+      time_horizon: "now",
+      status: "in_progress",
+      linked_tasks: ["20"],
+      linked_backlog: [],
+      session_refs: [],
+      commit_refs: [],
+      cross_doc_links: [],
+      notes: null,
     },
   ],
 };
@@ -101,7 +82,6 @@ const minimalRoadmap = {
 const minimalBacklog = {
   document_name: "Product Backlog",
   document_purpose: "Forward-looking backlog of unscheduled work items.",
-  last_updated: "kh-prod-readiness-S62 W2 representative fixture",
   related_documents: ["docs/reference/product-roadmap.json"],
   items: [
     {
@@ -141,13 +121,53 @@ describe("Vendored schemas: parse acceptance", () => {
     expect(envelope.warnings).toHaveLength(0);
   });
 
-  test("RoadmapSchema parses representative roadmap JSON", () => {
+  test("RoadmapSchema parses representative themes[] roadmap JSON", () => {
     const result = RoadmapSchema.safeParse(minimalRoadmap);
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.document_name).toBe("Knowledge Hub Roadmap");
-      expect(result.data.sections[0].items[0].id).toBe("1.1");
+      expect(result.data.themes[0].id).toBe("1");
+      expect(result.data.themes[0].time_horizon).toBe("now");
+      expect(result.data.themes[0].linked_tasks).toEqual(["20"]);
     }
+  });
+
+  test("RoadmapSchema rejects the retired sections[] shape", () => {
+    const legacy = {
+      ...minimalRoadmap,
+      themes: undefined,
+      sections: [],
+    };
+    delete (legacy as { themes?: unknown }).themes;
+    const result = RoadmapSchema.safeParse(legacy);
+    expect(result.success).toBe(false);
+  });
+
+  test("TaskSchema accepts capability_theme back-link", () => {
+    const result = TaskListSchema.safeParse(minimalTaskList);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.tasks[0].capability_theme).toBe("1");
+    }
+  });
+
+  test("SubtaskStatus accepts 'cancelled' (S261/S262 amendment)", () => {
+    const withCancelledSubtask = {
+      ...minimalTaskList,
+      tasks: [
+        {
+          ...minimalTaskList.tasks[0],
+          subtasks: [
+            {
+              ...minimalTaskList.tasks[0].subtasks[0],
+              status: "cancelled",
+            },
+          ],
+        },
+      ],
+    };
+    const result = TaskListSchema.safeParse(withCancelledSubtask);
+    expect(result.success).toBe(true);
   });
 
   test("BacklogSchema parses representative backlog JSON", () => {

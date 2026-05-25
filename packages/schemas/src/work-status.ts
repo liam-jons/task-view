@@ -77,7 +77,7 @@ export type BacklogStatus = z.infer<typeof BacklogStatus>;
  * Task list subset — in-work (active Tasks and Subtasks).
  * Task level: done | pending | in_progress | blocked | deferred |
  *             cancelled | spec_needed | imp_deferred  (8 values)
- * Subtask level: further excludes 'cancelled', 'spec_needed', 'imp_deferred'
+ * Subtask level: further excludes 'spec_needed', 'imp_deferred'
  *                — applied in task-list-schema.ts.
  * Excluded from Task level: needs_research | parked | ready
  */
