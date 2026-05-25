@@ -32,6 +32,8 @@
  * test suite so assertions don't require 30-second waits.
  */
 import { startPatchServer, type PatchServerHandle } from "./patch-server";
+import { detectSchema } from "./detect-schema";
+import { generateMirrors } from "./mirror-generator";
 
 // ── Public constants ─────────────────────────────────────────────────────────
 
@@ -152,10 +154,51 @@ function bindWithRetry(
   );
 }
 
+// ── Internal: boot-time mirror regen (Subtask 20.22 / inv 5 + 40) ────────────
+
+/**
+ * Regenerate the on-disk mirrors from the current canonical ledger BEFORE
+ * the server starts serving.
+ *
+ * 20.16 smoke-test S1 + Side-observation 3 surfaced the gap: a bare server
+ * launch printed "Server ready at …" without writing any mirror, so a
+ * ledger that changed since its mirrors were last written would render a
+ * stale mirror on first view. PRODUCT inv 5 ("generates on launch") + inv
+ * 40 ("robust to mirror absence — generates them on the fly") require the
+ * rendered mirror to match current ledger content from the first render.
+ *
+ * Resilience: this runs at boot for BOTH the CLI binary and the plugin
+ * entrypoint. The CLI already fails-on-load (Subtask 20.20) for malformed
+ * / unknown ledgers before reaching here, but the plugin path may call
+ * `startTaskViewServer` directly, so a read/parse/unknown failure here is
+ * swallowed — the JSON endpoints surface the diagnostic to the client. We
+ * never let a regen failure block the port bind.
+ */
+async function regenerateMirrorsOnBoot(ledgerPath: string): Promise<void> {
+  let detected;
+  try {
+    const file = Bun.file(ledgerPath);
+    const text = await file.text();
+    detected = detectSchema(JSON.parse(text));
+  } catch {
+    // Read / parse / schema-validation failure — defer to the GET handlers
+    // (and to the CLI's fail-on-load gate). Do not block boot.
+    return;
+  }
+  if (detected.kind === "unknown") return;
+  try {
+    await generateMirrors(detected, ledgerPath);
+  } catch {
+    // Mirror write failure must not prevent the server starting; the
+    // client can re-issue POST /api/ledger/regen.
+  }
+}
+
 // ── Public: factory ──────────────────────────────────────────────────────────
 
 /**
  * Start a task-view server with full lifecycle:
+ *   - Boot-time mirror regen (§3 / Subtask 20.22 / inv 5 + 40)
  *   - Port retry (§6.6)
  *   - Request tracking + browser-close idle detection (§6.5)
  *   - waitForExit() promise
@@ -166,6 +209,11 @@ export async function startTaskViewServer(
   const port = parsePortOption(opts.port);
   const idleMs = opts._testIdleMs ?? BROWSER_CLOSE_IDLE_MS;
   const tickMs = opts._testTickMs ?? 1_000;
+
+  // ── Boot-time mirror regen (Subtask 20.22) ────────────────────────────────
+  // Bring the on-disk mirror in line with the current ledger BEFORE binding
+  // the port + serving the first render.
+  await regenerateMirrorsOnBoot(opts.ledgerPath);
 
   // ── Tracker state for browser-close detection (§6.5) ──────────────────────
   let lastRequestAt = Date.now();

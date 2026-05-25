@@ -21,7 +21,7 @@
  * run via the Claude harness — same gotcha as patch-server.test.ts.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -100,6 +100,78 @@ describe("startTaskViewServer — basic boot", () => {
     const body = await resp.json();
     expect(body.ok).toBe(true);
     expect(body.kind).toBe("task-list");
+  });
+});
+
+describe("startTaskViewServer — auto-regen mirrors on boot (Subtask 20.22 / inv 5 + 40)", () => {
+  function makeLedgerWithTask(title: string) {
+    return {
+      document_name: "Knowledge Hub Task List",
+      document_purpose: "Boot-regen fixture.",
+      related_documents: [],
+      tasks: [
+        {
+          id: "20",
+          title,
+          description: "Outer task description.",
+          status: "in_progress" as const,
+          priority: "must" as const,
+          dependencies: [],
+          subtasks: [],
+          updatedAt: "2026-05-25T10:00:00.000Z",
+          effort_estimate: null,
+          owner: null,
+          priority_note: null,
+          status_note: null,
+          cross_doc_links: [],
+          session_refs: [],
+          commit_refs: [],
+        },
+      ],
+    };
+  }
+
+  test("regenerates the on-disk mirror to match current ledger BEFORE first render", async () => {
+    const ledgerPath = join(testDir, "task-list.json");
+    // Ledger reflects the CURRENT title.
+    await writeFile(
+      ledgerPath,
+      JSON.stringify(makeLedgerWithTask("Current title"), null, 2),
+      "utf8",
+    );
+    // A STALE mirror on disk carries an out-of-date title — as if the
+    // ledger changed since the mirror was last written.
+    const mirrorDir = join(testDir, "tasks");
+    await mkdir(mirrorDir, { recursive: true });
+    const mirrorPath = join(mirrorDir, "ID-20.md");
+    await writeFile(
+      mirrorPath,
+      "---\ntype: task\nid: \"20\"\ntitle: STALE TITLE\n---\n\n# ID-20: STALE TITLE\n",
+      "utf8",
+    );
+
+    // Boot the server. No HTTP request is issued — the mirror must already
+    // be refreshed by the boot-time regen.
+    handle = await startTaskViewServer({ ledgerPath });
+
+    const mirrorAfterBoot = await readFile(mirrorPath, "utf8");
+    expect(mirrorAfterBoot).toContain("Current title");
+    expect(mirrorAfterBoot).not.toContain("STALE TITLE");
+  });
+
+  test("generates the mirror on first boot when none exists yet (inv 40 tolerance)", async () => {
+    const ledgerPath = join(testDir, "task-list.json");
+    await writeFile(
+      ledgerPath,
+      JSON.stringify(makeLedgerWithTask("Fresh task"), null, 2),
+      "utf8",
+    );
+    // No mirror dir / file exists yet.
+    handle = await startTaskViewServer({ ledgerPath });
+
+    const mirrorPath = join(testDir, "tasks", "ID-20.md");
+    const mirror = await readFile(mirrorPath, "utf8");
+    expect(mirror).toContain("Fresh task");
   });
 });
 
