@@ -20,7 +20,9 @@
  */
 import React from "react";
 import type { RoadmapTheme } from "@task-view/schemas/roadmap";
+import { RoadmapThemeSchema } from "@task-view/schemas/roadmap";
 import { MaybeCrossDocLink, MaybeRecordLink } from "./broken-target";
+import { FieldPencil } from "./field-pencil";
 import { NavStrip } from "./nav-strip";
 import {
   RecordFrontmatterCard,
@@ -30,6 +32,11 @@ import { MarkdownBody } from "./markdown-renderer";
 import { taskMirrorHref, backlogItemHref } from "./anchors";
 import type { LedgerContext, NavStripData } from "./types";
 
+// Theme status enum literals sourced from the canonical Zod enum at
+// render time (PRODUCT inv 31). RoadmapTheme.status is a required
+// (non-nullable) 3-value enum: pending | in_progress | done.
+const THEME_STATUS_OPTIONS = RoadmapThemeSchema.shape.status.options;
+
 export const RoadmapThemeView: React.FC<{
   theme: RoadmapTheme;
   ledger: LedgerContext;
@@ -38,7 +45,19 @@ export const RoadmapThemeView: React.FC<{
   const rows: FrontmatterRow[] = [
     { key: "id", label: "ID", value: theme.id },
     { key: "time_horizon", label: "Time horizon", value: theme.time_horizon },
-    { key: "status", label: "Status", value: theme.status },
+    {
+      key: "status",
+      label: "Status",
+      value: theme.status,
+      editAffordance: (
+        <FieldPencil
+          fieldPath={["themes", theme.id, "status"]}
+          kind="enum"
+          options={THEME_STATUS_OPTIONS}
+          ariaLabel={`Edit status for theme ${theme.id}`}
+        />
+      ),
+    },
     {
       key: "session_refs",
       label: "Session refs",
@@ -63,8 +82,16 @@ export const RoadmapThemeView: React.FC<{
       {/* Inv 19: no shipped-framing UI. The renderer surfaces no `shipped`
           affordance — `last_updated` narrative on the root document is
           plain text per the spec. */}
-      <header>
-        <h1>{`${theme.id}: ${theme.title}`}</h1>
+      <header data-edit-container>
+        <h1>
+          {`${theme.id}: `}
+          <span className="record-view-field-value">{theme.title}</span>
+        </h1>
+        <FieldPencil
+          fieldPath={["themes", theme.id, "title"]}
+          kind="text"
+          ariaLabel={`Edit title for theme ${theme.id}`}
+        />
       </header>
 
       <RecordFrontmatterCard
@@ -75,8 +102,17 @@ export const RoadmapThemeView: React.FC<{
       <section
         className="record-view-roadmap-theme-description"
         data-section="description"
+        data-edit-container
       >
-        <MarkdownBody markdown={theme.description} />
+        <span className="record-view-field-value">
+          <MarkdownBody markdown={theme.description} />
+        </span>
+        <FieldPencil
+          fieldPath={["themes", theme.id, "description"]}
+          kind="textarea"
+          rawValue={theme.description}
+          ariaLabel={`Edit description for theme ${theme.id}`}
+        />
       </section>
 
       <LinkedRecordList
@@ -122,9 +158,18 @@ export const RoadmapThemeView: React.FC<{
         <section
           className="record-view-roadmap-theme-notes"
           data-section="notes"
+          data-edit-container
         >
           <h2>Notes</h2>
-          <MarkdownBody markdown={theme.notes} />
+          <span className="record-view-field-value">
+            <MarkdownBody markdown={theme.notes} />
+          </span>
+          <FieldPencil
+            fieldPath={["themes", theme.id, "notes"]}
+            kind="textarea"
+            rawValue={theme.notes}
+            ariaLabel={`Edit notes for theme ${theme.id}`}
+          />
         </section>
       )}
     </article>

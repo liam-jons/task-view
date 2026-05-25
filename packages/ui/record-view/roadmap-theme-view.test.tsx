@@ -86,11 +86,34 @@ describe("RoadmapThemeView — core surfaces", () => {
     const html = renderToStaticMarkup(
       <RoadmapThemeView theme={theme} ledger={ledger} nav={NAV} />,
     );
-    expect(html).toContain("1: Theme 1");
+    // ID-20.25: title split into a .record-view-field-value span + a
+    // text-kind pencil so the dispatcher reads the title cleanly.
+    expect(html).toContain("1: ");
+    expect(html).toContain(
+      '<span class="record-view-field-value">Theme 1</span>',
+    );
     expect(html).toContain("Theme 1 description");
     expect(html).toContain('data-frontmatter-row="id"');
     expect(html).toContain('data-frontmatter-row="time_horizon"');
     expect(html).toContain('data-frontmatter-row="status"');
+    // Status enum affordance (inv 31): theme status is the 3-value enum.
+    expect(html).toContain('data-edit-field="themes&gt;1&gt;status"');
+    expect(html).toContain('data-edit-kind="enum"');
+    expect(html).toContain('data-edit-options="pending,in_progress,done"');
+    // Title + description affordances.
+    expect(html).toContain('data-edit-field="themes&gt;1&gt;title"');
+    expect(html).toContain('data-edit-field="themes&gt;1&gt;description"');
+  });
+
+  test("notes section carries a textarea-kind pencil with raw source (ID-20.25)", () => {
+    const theme = mkTheme({ notes: "## Notes\n\nRaw markdown." });
+    const ledger = buildLedgerContext({ roadmap: mkRoadmap([theme]) });
+    const html = renderToStaticMarkup(
+      <RoadmapThemeView theme={theme} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain('data-edit-field="themes&gt;1&gt;notes"');
+    expect(html).toContain('data-edit-kind="textarea"');
+    expect(html).toContain("## Notes");
   });
 
   test("renders linked_tasks as live cross-record links when present in ledger", () => {

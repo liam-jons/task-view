@@ -11,11 +11,13 @@
  */
 import React from "react";
 import type { BacklogItem } from "@task-view/schemas/backlog";
+import { BacklogStatus } from "@task-view/schemas/backlog";
 import {
   MaybeCrossDocLink,
   MaybeRecordLink,
   PageTopWarning,
 } from "./broken-target";
+import { FieldPencil } from "./field-pencil";
 import { NavStrip } from "./nav-strip";
 import {
   RecordFrontmatterCard,
@@ -47,11 +49,30 @@ export const BacklogItemView: React.FC<{
   const rows: FrontmatterRow[] = [
     { key: "id", label: "ID", value: item.id },
     { key: "type", label: "Type", value: item.type },
-    { key: "status", label: "Status", value: item.status },
+    {
+      key: "status",
+      label: "Status",
+      value: item.status,
+      editAffordance: (
+        <FieldPencil
+          fieldPath={["items", item.id, "status"]}
+          kind="enum"
+          options={BacklogStatus.options}
+          ariaLabel={`Edit status for backlog item ${item.id}`}
+        />
+      ),
+    },
     {
       key: "effort_estimate",
       label: "Effort estimate",
       value: item.effort_estimate,
+      editAffordance: (
+        <FieldPencil
+          fieldPath={["items", item.id, "effort_estimate"]}
+          kind="text"
+          ariaLabel={`Edit effort estimate for backlog item ${item.id}`}
+        />
+      ),
     },
     { key: "priority", label: "Priority", value: item.priority },
     { key: "track", label: "Track", value: item.track },
@@ -72,6 +93,14 @@ export const BacklogItemView: React.FC<{
               )),
               ", ",
             ),
+      editAffordance: (
+        <FieldPencil
+          fieldPath={["items", item.id, "dependencies"]}
+          kind="array-comma"
+          rawValue={item.dependencies.join(",")}
+          ariaLabel={`Edit dependencies for backlog item ${item.id}`}
+        />
+      ),
     },
     {
       key: "session_refs",
@@ -157,10 +186,17 @@ export const BacklogItemView: React.FC<{
         missingIds={missingDeps}
       />
 
-      <header className="record-view-backlog-header">
+      <header className="record-view-backlog-header" data-edit-container>
         <h1>
-          {`${item.id}: ${item.description}`}
+          {`${item.id}: `}
+          <span className="record-view-field-value">{item.description}</span>
         </h1>
+        <FieldPencil
+          fieldPath={["items", item.id, "description"]}
+          kind="textarea"
+          rawValue={item.description}
+          ariaLabel={`Edit description for backlog item ${item.id}`}
+        />
         {promotionReady && (
           <span
             className="record-view-promotion-badge"
@@ -180,8 +216,17 @@ export const BacklogItemView: React.FC<{
         <section
           className="record-view-backlog-notes"
           data-section="notes"
+          data-edit-container
         >
-          <MarkdownBody markdown={item.notes} />
+          <span className="record-view-field-value">
+            <MarkdownBody markdown={item.notes} />
+          </span>
+          <FieldPencil
+            fieldPath={["items", item.id, "notes"]}
+            kind="textarea"
+            rawValue={item.notes}
+            ariaLabel={`Edit notes for backlog item ${item.id}`}
+          />
         </section>
       )}
 
@@ -189,9 +234,20 @@ export const BacklogItemView: React.FC<{
         <section
           className="record-view-backlog-details"
           data-section="details"
+          data-edit-container
         >
           <h2>Details</h2>
-          <DetailsBodyWithJournal details={item.details} />
+          <span className="record-view-field-value">
+            <DetailsBodyWithJournal details={item.details} />
+          </span>
+          <FieldPencil
+            fieldPath={["items", item.id, "details"]}
+            kind="textarea"
+            // Full raw details string incl. <info added on …> journal
+            // blocks (PRODUCT inv 28).
+            rawValue={item.details}
+            ariaLabel={`Edit details for backlog item ${item.id}`}
+          />
         </section>
       )}
 
@@ -199,9 +255,20 @@ export const BacklogItemView: React.FC<{
         <section
           className="record-view-backlog-test-strategy"
           data-section="test-strategy"
+          data-edit-container
         >
           <h2>Test strategy</h2>
-          <p>{item.testStrategy}</p>
+          <p>
+            <span className="record-view-field-value">
+              {item.testStrategy}
+            </span>
+            <FieldPencil
+              fieldPath={["items", item.id, "testStrategy"]}
+              kind="textarea"
+              rawValue={item.testStrategy}
+              ariaLabel={`Edit test strategy for backlog item ${item.id}`}
+            />
+          </p>
         </section>
       )}
     </article>

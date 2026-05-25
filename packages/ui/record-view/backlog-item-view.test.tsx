@@ -53,8 +53,44 @@ describe("PRODUCT inv 21 (Backlog per-item: frontmatter + description + notes + 
     expect(html).toContain('data-frontmatter-row="commit_refs"');
     expect(html).toContain('data-frontmatter-row="cross_doc_links"');
     expect(html).toContain('data-frontmatter-row="notes"');
-    // Description in the heading
-    expect(html).toContain("45: Backlog item description");
+    // Description in the heading — ID-20.25 splits it into a
+    // .record-view-field-value span (so the dispatcher reads it cleanly)
+    // + a textarea-kind pencil.
+    expect(html).toContain("45: ");
+    expect(html).toContain(
+      '<span class="record-view-field-value">Backlog item description.</span>',
+    );
+    // Status enum affordance (inv 31): 5-value Backlog subset.
+    expect(html).toContain('data-edit-field="items&gt;45&gt;status"');
+    expect(html).toContain('data-edit-kind="enum"');
+    expect(html).toContain(
+      'data-edit-options="blocked,spec_needed,needs_research,parked,ready"',
+    );
+  });
+
+  test("ID-20.25: description / effort_estimate / dependencies carry affordances", () => {
+    const item = mkItem({ dependencies: ["44", "43"] });
+    const ledger = buildLedgerContext({ backlogItems: [item] });
+    const html = renderToStaticMarkup(
+      <BacklogItemView item={item} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain('data-edit-field="items&gt;45&gt;description"');
+    expect(html).toContain('data-edit-field="items&gt;45&gt;effort_estimate"');
+    expect(html).toContain('data-edit-field="items&gt;45&gt;dependencies"');
+    expect(html).toContain('data-edit-kind="array-comma"');
+    expect(html).toContain('data-edit-raw-value="44,43"');
+  });
+
+  test("ID-20.25: details section pencil carries the full raw string incl. journal (inv 28)", () => {
+    const details =
+      "Brief.\n\n<info added on 2026-05-25T00:00:00.000Z>\nNote.\n</info added on 2026-05-25T00:00:00.000Z>";
+    const item = mkItem({ details });
+    const ledger = buildLedgerContext({ backlogItems: [item] });
+    const html = renderToStaticMarkup(
+      <BacklogItemView item={item} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain('data-edit-field="items&gt;45&gt;details"');
+    expect(html).toContain("info added on 2026-05-25T00:00:00.000Z");
   });
 
   test("renders notes as markdown when present", () => {

@@ -159,12 +159,20 @@ describe("Task-list end-to-end render (inv 7-13 happy path)", () => {
     const html = renderToStaticMarkup(
       <TaskListView task={task} ledger={ledger} nav={NAV} />,
     );
-    // Inv 7: frontmatter + description + Subtasks + nav strip
-    expect(html).toContain("ID-20: End-to-end Task");
+    // Inv 7: frontmatter + description + Subtasks + nav strip.
+    // ID-20.25: title/heading split the editable text into a
+    // .record-view-field-value span beside the id prefix.
+    expect(html).toContain("ID-20: ");
+    expect(html).toContain(
+      '<span class="record-view-field-value">End-to-end Task</span>',
+    );
     expect(html).toContain("data-nav-strip");
     expect(html).toContain("Roundtrip description");
     // Inv 8: Subtask blocks with details + journal
-    expect(html).toContain('<h3>ID-20.1: First</h3>');
+    expect(html).toContain(
+      '<span class="record-view-field-value">First</span>',
+    );
+    expect(html).toContain("ID-20.1: ");
     expect(html).toContain('data-segment="journal"');
     expect(html).toContain('data-journal-timestamp="2026-05-21T16:00:00.000Z"');
     // Inv 9 negative: with 2 subtasks, no empty-state placeholder
@@ -196,7 +204,11 @@ describe("Backlog end-to-end render (inv 21-25 happy path)", () => {
     const html = renderToStaticMarkup(
       <BacklogItemView item={item} ledger={ledger} nav={NAV} />,
     );
-    expect(html).toContain("45: Promotion-ready item");
+    // ID-20.25: description split into a .record-view-field-value span.
+    expect(html).toContain("45: ");
+    expect(html).toContain(
+      '<span class="record-view-field-value">Promotion-ready item.</span>',
+    );
     expect(html).toContain("data-blocked-banner");
     expect(html).toContain("data-promotion-ready");
     expect(html).toContain('data-section="details"');
@@ -259,7 +271,11 @@ describe("Roadmap end-to-end render (themes[] happy path — ID-20.19)", () => {
     const html = renderToStaticMarkup(
       <RoadmapThemeView theme={theme} ledger={ledger} nav={NAV} />,
     );
-    expect(html).toContain("3: Theme 3");
+    // ID-20.25: title split into a .record-view-field-value span.
+    expect(html).toContain("3: ");
+    expect(html).toContain(
+      '<span class="record-view-field-value">Theme 3</span>',
+    );
     expect(html).toContain("Theme description");
     // time_horizon + status frontmatter rows
     expect(html).toContain('data-frontmatter-row="time_horizon"');

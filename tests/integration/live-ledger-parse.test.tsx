@@ -110,7 +110,12 @@ describe("Round-trip render against live-shaped fixtures (ID-20.19)", () => {
     const html = renderToStaticMarkup(
       <RoadmapThemeView theme={theme} ledger={ledger} nav={NAV} />,
     );
-    expect(html).toContain(`${theme.id}: ${theme.title}`);
+    // ID-20.25: title split into a .record-view-field-value span (the
+    // editable value) beside the id prefix + a text-kind pencil.
+    expect(html).toContain(`${theme.id}: `);
+    expect(html).toContain(
+      `<span class="record-view-field-value">${theme.title}</span>`,
+    );
     expect(html).toContain('data-record-kind="roadmap-theme"');
     expect(html).toContain('data-frontmatter-row="time_horizon"');
   });
@@ -124,6 +129,10 @@ describe("Round-trip render against live-shaped fixtures (ID-20.19)", () => {
     const html = renderToStaticMarkup(
       <TaskListView task={task} ledger={ledger} nav={NAV} />,
     );
-    expect(html).toContain(`ID-${task.id}: ${task.title}`);
+    // ID-20.25: title split into a .record-view-field-value span.
+    expect(html).toContain(`ID-${task.id}: `);
+    expect(html).toContain(
+      `<span class="record-view-field-value">${task.title}</span>`,
+    );
   });
 });
