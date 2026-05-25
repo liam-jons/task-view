@@ -30,6 +30,12 @@
  * textarea / enum / array-comma / doc-links) into the per-record views,
  * those affordances carry the same hooks and Just Work here — zero client
  * changes.
+ *
+ * ID-20.27: adds the `doc-links` branch to buildEditForm, collectDocLinks
+ * helper for saveEditor, and handleDocLinkAction for the add/delete row
+ * interactions. The raw-value is a JSON string of DocLink[] (parsed in
+ * openEditor when kind === "doc-links"). Full-array REPLACEMENT per
+ * TECH §5.1 + PRODUCT inv 34-35.
  */
 // NB: relative imports (NOT the `@task-view/ui` workspace alias) so
 // `Bun.build` resolves the entry purely by filesystem path regardless of
@@ -111,6 +117,12 @@ interface ActiveEdit {
   recordId: string;
   /** Cloned original child nodes, restored verbatim on cancel. */
   originalNodes: Node[];
+  /**
+   * The primary form input — used for all kinds EXCEPT `doc-links`, where
+   * `collectDocLinks()` reads the full row table instead. For `doc-links`,
+   * this is a hidden sentinel `<input>` (value always "") to satisfy the
+   * type without branching every consumer.
+   */
   input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
 }
 
@@ -151,11 +163,28 @@ function openEditor(openButton: HTMLElement): void {
   // value selectable (inv 32 — no state-machine gating).
   const optionsAttr = openButton.getAttribute("data-edit-options");
 
+  // ID-20.27: doc-links raw-value is a JSON string of DocLink[]. Parse it
+  // here so buildEditForm receives the structured array. Falls back to []
+  // when the JSON is absent or malformed (defensive; the SSR always emits
+  // valid JSON from JSON.stringify).
+  let parsedDocLinks: Array<{ path: string; anchor: string | null; raw: string }> = [];
+  if (kind === "doc-links" && rawValueAttr !== null) {
+    try {
+      const parsed = JSON.parse(rawValueAttr) as unknown;
+      if (Array.isArray(parsed)) {
+        parsedDocLinks = parsed as typeof parsedDocLinks;
+      }
+    } catch {
+      // malformed JSON → start with empty array
+    }
+  }
+
   const { wrapper, input } = buildEditForm(
     kind,
     fieldAttr ?? "",
     currentValue,
     optionsAttr,
+    parsedDocLinks,
   );
   clearChildren(container);
   container.appendChild(wrapper);
@@ -198,12 +227,20 @@ function readDisplayedValue(container: HTMLElement): string {
   return text === "—" ? "" : text;
 }
 
-/** Build the on-demand edit form for a kind. Returns wrapper + the input. */
+/**
+ * Build the on-demand edit form for a kind. Returns wrapper + the input.
+ *
+ * ID-20.27: for `doc-links`, `parsedDocLinks` carries the pre-populated
+ * array (from the JSON raw-value). The form is a `<table>` of rows; the
+ * returned `input` is a hidden sentinel (value ""), because the save path
+ * collects data via `collectDocLinks()` instead of reading `input.value`.
+ */
 function buildEditForm(
   kind: DispatchKind,
   fieldAttr: string,
   currentValue: string,
   optionsAttr?: string | null,
+  parsedDocLinks?: Array<{ path: string; anchor: string | null; raw: string }>,
 ): {
   wrapper: HTMLFormElement;
   input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
@@ -215,13 +252,65 @@ function buildEditForm(
   form.setAttribute("data-edit-kind", kind);
 
   let input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
-  if (kind === "textarea") {
+
+  if (kind === "doc-links") {
+    // ID-20.27 — multi-row doc-links editor (PRODUCT inv 35).
+    // Build a <table> with one row per existing link + Add/Delete controls.
+    // The sentinel <input> satisfies the ActiveEdit.input type without
+    // being visible or focussed — data flows through collectDocLinks() on save.
+    const table = document.createElement("table");
+    table.className = "record-view-doclink-table";
+
+    const thead = document.createElement("thead");
+    const headerRow = document.createElement("tr");
+    for (const label of ["Path", "Anchor", "Raw", ""]) {
+      const th = document.createElement("th");
+      th.scope = "col";
+      th.textContent = label;
+      headerRow.appendChild(th);
+    }
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    tbody.setAttribute("data-doclink-rows", "");
+    table.appendChild(tbody);
+    form.appendChild(table);
+
+    // Populate existing rows from parsedDocLinks
+    const links = parsedDocLinks ?? [];
+    links.forEach((link, i) => {
+      tbody.appendChild(buildDocLinkRow(i, link.path, link.anchor ?? "", link.raw));
+    });
+
+    // "Add link" button — appends a fresh blank row via delegated click
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "record-view-doclink-add";
+    addBtn.setAttribute("data-doclink-action", "add");
+    addBtn.textContent = "Add link";
+    form.appendChild(addBtn);
+
+    // Hidden sentinel satisfies ActiveEdit.input
+    const sentinel = document.createElement("input");
+    sentinel.type = "hidden";
+    sentinel.value = "";
+    sentinel.setAttribute("data-edit-input", "");
+    sentinel.setAttribute("data-edit-field", fieldAttr);
+    sentinel.setAttribute("data-keyboard-shortcut", "cmd-enter,esc");
+    form.appendChild(sentinel);
+    input = sentinel;
+  } else if (kind === "textarea") {
     const ta = document.createElement("textarea");
     ta.className = "record-view-textarea";
     ta.rows = 4;
     ta.value = currentValue;
     ta.addEventListener("input", () => autosize(ta));
     input = ta;
+    input.setAttribute("data-edit-input", "");
+    input.setAttribute("data-edit-field", fieldAttr);
+    input.setAttribute("data-keyboard-shortcut", "cmd-enter,esc");
+    form.appendChild(input);
   } else if (kind === "enum" || kind === "enum-nullable") {
     // ID-20.25: enum dropdown built from the `data-edit-options` hook
     // (PRODUCT inv 30-32). For `enum-nullable` an empty-value "(unset)"
@@ -248,6 +337,10 @@ function buildEditForm(
     // (e.g. an unset nullable), the empty sentinel stays selected.
     select.value = currentValue;
     input = select;
+    input.setAttribute("data-edit-input", "");
+    input.setAttribute("data-edit-field", fieldAttr);
+    input.setAttribute("data-keyboard-shortcut", "cmd-enter,esc");
+    form.appendChild(input);
   } else {
     const el = document.createElement("input");
     el.type =
@@ -255,17 +348,137 @@ function buildEditForm(
     el.className = "record-view-text-input";
     el.value = currentValue;
     input = el;
+    input.setAttribute("data-edit-input", "");
+    input.setAttribute("data-edit-field", fieldAttr);
+    input.setAttribute("data-keyboard-shortcut", "cmd-enter,esc");
+    form.appendChild(input);
   }
-  input.setAttribute("data-edit-input", "");
-  input.setAttribute("data-edit-field", fieldAttr);
-  input.setAttribute("data-keyboard-shortcut", "cmd-enter,esc");
-  form.appendChild(input);
 
   form.appendChild(makeActionButton("save", "Save", "record-view-save-button", fieldAttr));
   form.appendChild(
     makeActionButton("cancel", "Cancel", "record-view-cancel-button", fieldAttr),
   );
   return { wrapper: form, input };
+}
+
+/**
+ * Build a single doc-link row `<tr>` with 3 text inputs (path / anchor /
+ * raw) + a Delete button. Uses createElement + .value — no innerHTML.
+ *
+ * ID-20.27: `data-doclink-row-index` is the row's position in the tbody
+ * at append time; when rows are deleted the indices are reassigned via
+ * `renumberDocLinkRows()`.
+ */
+function buildDocLinkRow(
+  index: number,
+  path: string,
+  anchor: string,
+  raw: string,
+): HTMLTableRowElement {
+  const tr = document.createElement("tr");
+  tr.className = "record-view-doclink-row";
+  tr.setAttribute("data-doclink-row-index", String(index));
+
+  for (const [field, val] of [
+    ["path", path],
+    ["anchor", anchor],
+    ["raw", raw],
+  ] as const) {
+    const td = document.createElement("td");
+    const inp = document.createElement("input");
+    inp.type = "text";
+    inp.className = `record-view-doclink-${field}`;
+    inp.setAttribute("data-doclink-field", field);
+    inp.setAttribute("data-doclink-row-index", String(index));
+    inp.value = val;
+    td.appendChild(inp);
+    tr.appendChild(td);
+  }
+
+  // Delete button
+  const deleteTd = document.createElement("td");
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className = "record-view-doclink-delete";
+  deleteBtn.setAttribute("data-doclink-action", "delete");
+  deleteBtn.setAttribute("data-doclink-row-index", String(index));
+  deleteBtn.setAttribute("aria-label", `Delete cross-doc link ${index + 1}`);
+  deleteBtn.textContent = "Delete";
+  deleteTd.appendChild(deleteBtn);
+  tr.appendChild(deleteTd);
+
+  return tr;
+}
+
+/**
+ * Re-number all rows in a doc-links `<tbody>` after an add or delete.
+ * Updates `data-doclink-row-index` on the `<tr>` and all its child inputs
+ * + delete button so the indices stay contiguous.
+ */
+function renumberDocLinkRows(tbody: HTMLElement): void {
+  const rows = Array.from(tbody.querySelectorAll<HTMLElement>("tr[data-doclink-row-index]"));
+  rows.forEach((row, i) => {
+    row.setAttribute("data-doclink-row-index", String(i));
+    row.querySelectorAll<HTMLElement>("[data-doclink-row-index]").forEach((el) => {
+      el.setAttribute("data-doclink-row-index", String(i));
+    });
+  });
+}
+
+/**
+ * Collect the current doc-link rows from a form into a DocLinkRowInput[].
+ * Reads `data-doclink-row-index` + `data-doclink-field` from inputs;
+ * empty anchor → null per the affordance contract.
+ *
+ * ID-20.27: called by saveEditor when kind === "doc-links". Produces the
+ * exact array shape `buildPatchForKind`'s doc-links case expects.
+ */
+function collectDocLinks(
+  form: HTMLElement,
+): Array<{ path: string; anchor: string | null; raw: string }> {
+  const tbody = form.querySelector<HTMLElement>("[data-doclink-rows]");
+  if (!tbody) return [];
+
+  const rows = Array.from(
+    tbody.querySelectorAll<HTMLElement>("tr[data-doclink-row-index]"),
+  );
+  return rows.map((row) => {
+    const pathInput = row.querySelector<HTMLInputElement>('[data-doclink-field="path"]');
+    const anchorInput = row.querySelector<HTMLInputElement>('[data-doclink-field="anchor"]');
+    const rawInput = row.querySelector<HTMLInputElement>('[data-doclink-field="raw"]');
+    const anchor = anchorInput?.value ?? "";
+    return {
+      path: pathInput?.value ?? "",
+      anchor: anchor === "" ? null : anchor,
+      raw: rawInput?.value ?? "",
+    };
+  });
+}
+
+/**
+ * Handle add / delete row actions on a doc-links form.
+ * Called from onClick when `data-doclink-action` is present.
+ */
+function handleDocLinkAction(target: HTMLElement): void {
+  const form = target.closest<HTMLElement>("form.record-view-edit-form");
+  if (!form) return;
+  const tbody = form.querySelector<HTMLElement>("[data-doclink-rows]");
+  if (!tbody) return;
+
+  const action = target.getAttribute("data-doclink-action");
+  if (action === "add") {
+    const rowCount = tbody.querySelectorAll("tr[data-doclink-row-index]").length;
+    tbody.appendChild(buildDocLinkRow(rowCount, "", "", ""));
+  } else if (action === "delete") {
+    const rowIndex = target.getAttribute("data-doclink-row-index");
+    const row = tbody.querySelector<HTMLElement>(
+      `tr[data-doclink-row-index="${rowIndex}"]`,
+    );
+    if (row) {
+      tbody.removeChild(row);
+      renumberDocLinkRows(tbody);
+    }
+  }
 }
 
 function makeActionButton(
@@ -318,7 +531,15 @@ async function saveEditor(container: HTMLElement): Promise<void> {
   if (!active) return;
   clearInlineError(container);
 
-  const rawValue = active.input.value;
+  // ID-20.27: doc-links kind collects structured rows instead of reading
+  // a single input.value — full-array replacement per TECH §5.1 + inv 34-35.
+  let rawValue: string | readonly { path: string; anchor: string | null; raw: string }[];
+  if (active.kind === "doc-links") {
+    const form = container.querySelector<HTMLElement>("form.record-view-edit-form");
+    rawValue = form ? collectDocLinks(form) : [];
+  } else {
+    rawValue = active.input.value;
+  }
   const patch = buildPatchForKind(active.kind, active.fieldPath, rawValue);
 
   let base: string;
@@ -376,35 +597,65 @@ async function saveEditor(container: HTMLElement): Promise<void> {
   }
 }
 
-/** Replace the editor with the new value display + a fresh pencil. */
+/**
+ * Replace the editor with the new value display + a fresh pencil.
+ *
+ * ID-20.27: for `doc-links`, rawSaved is the collected DocLink[]. The
+ * display shows the `raw` labels joined by ", " (the same text the SSR
+ * originally rendered); the pencil's `data-edit-raw-value` is updated to
+ * the serialised JSON of the new array so a re-open pre-fills correctly.
+ */
 function commitDisplay(
   container: HTMLElement,
   active: ActiveEdit,
-  rawValue: string,
+  rawSaved: string | readonly { path: string; anchor: string | null; raw: string }[],
 ): void {
-  const trimmed = rawValue.trim();
-  const display = trimmed === "" ? "—" : trimmed;
-  // Update the authoritative rank-value hook when present so a re-open
-  // reads the new value.
-  const rankHost =
-    container.closest<HTMLElement>("[data-rank-value]") ?? container;
-  if (rankHost.hasAttribute("data-rank-value")) {
-    rankHost.setAttribute("data-rank-value", trimmed);
-  }
   const fieldAttr = active.fieldPath.join(">");
   clearChildren(container);
 
   const valueSpan = document.createElement("span");
-  valueSpan.className = "record-view-rank-value";
-  valueSpan.textContent = display;
-
   const pencil = document.createElement("button");
-  pencil.type = "button";
-  pencil.className = "record-view-pencil-button";
-  pencil.setAttribute("data-edit-action", "open");
-  pencil.setAttribute("data-edit-field", fieldAttr);
-  pencil.setAttribute("data-edit-kind", active.kind);
-  pencil.setAttribute("aria-label", "Edit");
+
+  if (active.kind === "doc-links") {
+    // Build the post-save display for doc-links.
+    const links = Array.isArray(rawSaved)
+      ? (rawSaved as readonly { path: string; anchor: string | null; raw: string }[])
+      : [];
+    const displayText =
+      links.length === 0 ? "—" : links.map((l) => l.raw).join(", ");
+    valueSpan.className = "record-view-field-value";
+    valueSpan.textContent = displayText;
+
+    pencil.type = "button";
+    pencil.className = "record-view-pencil-button";
+    pencil.setAttribute("data-edit-action", "open");
+    pencil.setAttribute("data-edit-field", fieldAttr);
+    pencil.setAttribute("data-edit-kind", "doc-links");
+    // Update the raw-value hook so a re-open uses the new saved JSON.
+    pencil.setAttribute("data-edit-raw-value", JSON.stringify(links));
+    pencil.setAttribute("aria-label", "Edit");
+  } else {
+    const rawStr = typeof rawSaved === "string" ? rawSaved : "";
+    const trimmed = rawStr.trim();
+    const display = trimmed === "" ? "—" : trimmed;
+    // Update the authoritative rank-value hook when present so a re-open
+    // reads the new value.
+    const rankHost =
+      container.closest<HTMLElement>("[data-rank-value]") ?? container;
+    if (rankHost.hasAttribute("data-rank-value")) {
+      rankHost.setAttribute("data-rank-value", trimmed);
+    }
+    valueSpan.className = "record-view-rank-value";
+    valueSpan.textContent = display;
+
+    pencil.type = "button";
+    pencil.className = "record-view-pencil-button";
+    pencil.setAttribute("data-edit-action", "open");
+    pencil.setAttribute("data-edit-field", fieldAttr);
+    pencil.setAttribute("data-edit-kind", active.kind);
+    pencil.setAttribute("aria-label", "Edit");
+  }
+
   const glyph = document.createElement("span");
   glyph.setAttribute("aria-hidden", "true");
   glyph.textContent = "✎";
@@ -439,6 +690,17 @@ function clearInlineError(container: HTMLElement): void {
 function onClick(event: MouseEvent): void {
   const target = event.target as Element | null;
   if (!target) return;
+
+  // ID-20.27: doc-link row actions (add / delete) are nested inside the
+  // edit form and carry `data-doclink-action` rather than `data-edit-action`.
+  // Check for these FIRST so they don't fall through to the edit-action handler.
+  const doclinkEl = target.closest<HTMLElement>("[data-doclink-action]");
+  if (doclinkEl) {
+    event.preventDefault();
+    handleDocLinkAction(doclinkEl);
+    return;
+  }
+
   const actionEl = target.closest<HTMLElement>("[data-edit-action]");
   if (!actionEl) return;
   const action = actionEl.getAttribute("data-edit-action");

@@ -133,26 +133,38 @@ export const RoadmapThemeView: React.FC<{
         existsFor={(id) => ledger.backlogItemIds.has(id)}
       />
 
-      {theme.cross_doc_links.length > 0 && (
-        <section
-          className="record-view-roadmap-theme-cross-doc-links"
-          data-section="cross-doc-links"
-        >
-          <h2>Cross-doc links</h2>
-          <ul>
-            {theme.cross_doc_links.map((link, i) => (
-              <li key={`${link.path}#${i}`}>
-                <MaybeCrossDocLink
-                  path={link.path}
-                  anchor={link.anchor}
-                  label={link.raw}
-                  existingPaths={ledger.existingPaths}
-                />
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+      {/* ID-20.27: cross_doc_links section always rendered (even when empty)
+          so the pencil affordance is visible and the field is always editable.
+          data-edit-container makes the section the dispatcher's edit boundary. */}
+      <section
+        className="record-view-roadmap-theme-cross-doc-links"
+        data-section="cross-doc-links"
+        data-edit-container
+      >
+        <h2>Cross-doc links</h2>
+        <span className="record-view-field-value">
+          {theme.cross_doc_links.length === 0 ? null : (
+            <ul>
+              {theme.cross_doc_links.map((link, i) => (
+                <li key={`${link.path}#${i}`}>
+                  <MaybeCrossDocLink
+                    path={link.path}
+                    anchor={link.anchor}
+                    label={link.raw}
+                    existingPaths={ledger.existingPaths}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+        </span>
+        <FieldPencil
+          fieldPath={["themes", theme.id, "cross_doc_links"]}
+          kind="doc-links"
+          rawValue={JSON.stringify(theme.cross_doc_links)}
+          ariaLabel={`Edit cross-doc links for theme ${theme.id}`}
+        />
+      </section>
 
       {theme.notes !== null && (
         <section

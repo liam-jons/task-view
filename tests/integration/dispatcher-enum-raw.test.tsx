@@ -1,6 +1,8 @@
 /**
- * tests/integration/dispatcher-enum-raw.test.tsx — ID-20.25 dispatcher
- * extensions: the enum `<select>` editor branch + raw-value prefill.
+ * tests/integration/dispatcher-enum-raw.test.tsx — ID-20.25 + ID-20.27
+ * dispatcher extensions.
+ *
+ * ID-20.25 (original): enum `<select>` editor branch + raw-value prefill.
  *
  * The 20.24 PE dispatcher (apps/server/web/index.tsx) built only a
  * `<textarea>` (kind="textarea") or an `<input>` (text/number) on
@@ -17,6 +19,9 @@
  *      editor with the RAW source (inv 27/28 — raw Markdown incl.
  *      `<info added on …>` journal blocks), NOT the rendered textContent.
  *
+ * ID-20.27 (appended): `doc-links` multi-row editor — add / delete rows,
+ * JSON pre-fill, full-array save, empty-array save, 409/422/Esc.
+ *
  * These tests mount the REAL dispatcher in a happy-dom document and drive
  * it via real DOM events (click / change / keydown) — the first DOM-level
  * coverage of the dispatcher (20.24 only had SSR-markup + pure-helper
@@ -24,6 +29,10 @@
  *
  * No 20.24 regression: text/textarea/integer/rank behaviour is exercised
  * here too to lock it in.
+ *
+ * Note: GlobalRegistrator is a singleton — doc-links tests are appended to
+ * THIS file rather than a separate file so they share the same happy-dom
+ * registration lifecycle without cross-file interference.
  */
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import {
@@ -521,5 +530,474 @@ describe("ID-20.25 dispatcher — 20.24 paths preserved (no regression)", () => 
     const input = cell.querySelector("input") as HTMLInputElement;
     expect(input.type).toBe("number");
     expect(input.value).toBe("5");
+  });
+});
+
+// ── ID-20.27: doc-links multi-row editor ────────────────────────────────────────
+
+/**
+ * These tests cover the `doc-links` kind dispatcher branch: multi-row
+ * editor, JSON raw-value pre-fill, add-row, delete-row, save (full-array
+ * patch), empty-array save, 409/422, and Esc.
+ *
+ * Appended to this file (rather than a separate test file) to share the
+ * existing happy-dom GlobalRegistrator lifecycle without cross-file
+ * interference.
+ */
+
+interface DocLink {
+  path: string;
+  anchor: string | null;
+  raw: string;
+}
+
+const SAMPLE_DOC_LINKS: DocLink[] = [
+  {
+    path: "docs/specs/per-task-mirror/PRODUCT.md",
+    anchor: "§3.2 invariant 4",
+    raw: "PRODUCT.md §3.2 inv 4",
+  },
+  {
+    path: "docs/runbooks/staging-refresh.md",
+    anchor: null,
+    raw: "staging-refresh runbook",
+  },
+];
+
+function mountDocLinksPencil(opts: {
+  recordId: string;
+  recordKind: string;
+  fieldPath: string;
+  links?: DocLink[];
+}): { pencil: HTMLButtonElement; container: HTMLElement } {
+  const links = opts.links ?? SAMPLE_DOC_LINKS;
+
+  const host = document.createElement("article");
+  host.setAttribute("data-record-id", opts.recordId);
+  host.setAttribute("data-record-kind", opts.recordKind);
+
+  const container = document.createElement("div");
+  container.setAttribute("data-edit-container", "");
+
+  const value = document.createElement("span");
+  value.className = "record-view-field-value";
+  value.textContent = links.map((l) => l.raw).join(", ");
+  container.appendChild(value);
+
+  const pencil = document.createElement("button");
+  pencil.type = "button";
+  pencil.className = "record-view-pencil-button";
+  pencil.setAttribute("data-edit-action", "open");
+  pencil.setAttribute("data-edit-field", opts.fieldPath);
+  pencil.setAttribute("data-edit-kind", "doc-links");
+  pencil.setAttribute("data-edit-raw-value", JSON.stringify(links));
+  container.appendChild(pencil);
+
+  host.appendChild(container);
+  document.body.appendChild(host);
+  return { pencil, container };
+}
+
+function docLinkRows(container: HTMLElement): HTMLElement[] {
+  return Array.from(
+    container.querySelectorAll<HTMLElement>("[data-doclink-row-index]"),
+  ).filter((el) => el.tagName.toLowerCase() === "tr");
+}
+
+function rowFieldValue(
+  row: HTMLElement,
+  field: "path" | "anchor" | "raw",
+): string {
+  const input = row.querySelector<HTMLInputElement>(
+    `[data-doclink-field="${field}"]`,
+  );
+  return input?.value ?? "";
+}
+
+describe("ID-20.27 — doc-links editor open + pre-fill from JSON raw-value", () => {
+  test("pencil(kind=doc-links) opens a form with one row per existing link", () => {
+    const { pencil } = mountDocLinksPencil({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>cross_doc_links",
+    });
+    const container = clickOpen(pencil);
+
+    const form = container.querySelector("form");
+    expect(form).not.toBeNull();
+    expect(form!.getAttribute("data-edit-kind")).toBe("doc-links");
+
+    const rows = docLinkRows(container);
+    expect(rows).toHaveLength(2);
+  });
+
+  test("rows are pre-filled with path / anchor / raw from the JSON raw-value", () => {
+    const { pencil } = mountDocLinksPencil({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>cross_doc_links",
+    });
+    const container = clickOpen(pencil);
+    const rows = docLinkRows(container);
+
+    expect(rowFieldValue(rows[0], "path")).toBe(
+      "docs/specs/per-task-mirror/PRODUCT.md",
+    );
+    expect(rowFieldValue(rows[0], "anchor")).toBe("§3.2 invariant 4");
+    expect(rowFieldValue(rows[0], "raw")).toBe("PRODUCT.md §3.2 inv 4");
+
+    expect(rowFieldValue(rows[1], "path")).toBe(
+      "docs/runbooks/staging-refresh.md",
+    );
+    expect(rowFieldValue(rows[1], "anchor")).toBe(""); // null → empty
+    expect(rowFieldValue(rows[1], "raw")).toBe("staging-refresh runbook");
+  });
+
+  test("anchor=null serialises as empty string in the input (not the literal 'null')", () => {
+    const { pencil } = mountDocLinksPencil({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>cross_doc_links",
+      links: [{ path: "docs/foo.md", anchor: null, raw: "foo" }],
+    });
+    const container = clickOpen(pencil);
+    const rows = docLinkRows(container);
+    expect(rows).toHaveLength(1);
+    const anchorInput = rows[0].querySelector<HTMLInputElement>(
+      '[data-doclink-field="anchor"]',
+    );
+    expect(anchorInput?.value).toBe("");
+    expect(anchorInput?.value).not.toBe("null");
+  });
+
+  test("empty-array raw-value: opens form with zero rows + Add link button", () => {
+    const { pencil } = mountDocLinksPencil({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>cross_doc_links",
+      links: [],
+    });
+    const container = clickOpen(pencil);
+    expect(docLinkRows(container)).toHaveLength(0);
+    const addBtn = container.querySelector('[data-doclink-action="add"]');
+    expect(addBtn).not.toBeNull();
+  });
+
+  test("Save + Cancel controls are present in the form", () => {
+    const { pencil } = mountDocLinksPencil({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>cross_doc_links",
+    });
+    const container = clickOpen(pencil);
+    expect(container.querySelector('[data-edit-action="save"]')).not.toBeNull();
+    expect(container.querySelector('[data-edit-action="cancel"]')).not.toBeNull();
+  });
+});
+
+describe("ID-20.27 — doc-links editor add-row", () => {
+  test("clicking Add link appends a blank row (3 empty inputs + Delete button)", () => {
+    const { pencil } = mountDocLinksPencil({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>cross_doc_links",
+      links: [SAMPLE_DOC_LINKS[0]],
+    });
+    const container = clickOpen(pencil);
+    expect(docLinkRows(container)).toHaveLength(1);
+
+    const addBtn = container.querySelector<HTMLButtonElement>(
+      '[data-doclink-action="add"]',
+    );
+    expect(addBtn).not.toBeNull();
+    addBtn!.dispatchEvent(new Event("click", { bubbles: true }));
+
+    const rowsAfter = docLinkRows(container);
+    expect(rowsAfter).toHaveLength(2);
+    expect(rowFieldValue(rowsAfter[1], "path")).toBe("");
+    expect(rowFieldValue(rowsAfter[1], "anchor")).toBe("");
+    expect(rowFieldValue(rowsAfter[1], "raw")).toBe("");
+    expect(
+      rowsAfter[1].querySelector('[data-doclink-action="delete"]'),
+    ).not.toBeNull();
+  });
+
+  test("multiple adds accumulate rows", () => {
+    const { pencil } = mountDocLinksPencil({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>cross_doc_links",
+      links: [],
+    });
+    const container = clickOpen(pencil);
+    const addBtn = container.querySelector<HTMLButtonElement>(
+      '[data-doclink-action="add"]',
+    )!;
+
+    addBtn.dispatchEvent(new Event("click", { bubbles: true }));
+    addBtn.dispatchEvent(new Event("click", { bubbles: true }));
+    addBtn.dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(docLinkRows(container)).toHaveLength(3);
+  });
+});
+
+describe("ID-20.27 — doc-links editor delete-row", () => {
+  test("clicking Delete on a row removes only that row", () => {
+    const { pencil } = mountDocLinksPencil({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>cross_doc_links",
+    }); // 2 rows
+    const container = clickOpen(pencil);
+    expect(docLinkRows(container)).toHaveLength(2);
+
+    const firstRow = docLinkRows(container)[0];
+    firstRow
+      .querySelector<HTMLButtonElement>('[data-doclink-action="delete"]')!
+      .dispatchEvent(new Event("click", { bubbles: true }));
+
+    const rowsAfter = docLinkRows(container);
+    expect(rowsAfter).toHaveLength(1);
+    expect(rowFieldValue(rowsAfter[0], "path")).toBe(
+      "docs/runbooks/staging-refresh.md",
+    );
+  });
+
+  test("deleting all rows leaves an empty tbody (not null)", () => {
+    const { pencil } = mountDocLinksPencil({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>cross_doc_links",
+      links: [SAMPLE_DOC_LINKS[0]],
+    });
+    const container = clickOpen(pencil);
+    docLinkRows(container)[0]
+      .querySelector<HTMLButtonElement>('[data-doclink-action="delete"]')!
+      .dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(docLinkRows(container)).toHaveLength(0);
+    const tbody = container.querySelector("[data-doclink-rows]");
+    expect(tbody).not.toBeNull();
+  });
+});
+
+describe("ID-20.27 — doc-links editor save → full-array patch", () => {
+  test("Save sends a DocLink[] full-replacement patch (both rows present)", async () => {
+    const { pencil } = mountDocLinksPencil({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>cross_doc_links",
+    });
+    queuePatchResponse(200, { ok: true, newMtime: "2026-05-26T00:00:02.000Z" });
+    const container = clickOpen(pencil);
+
+    (
+      container.querySelector('[data-edit-action="save"]') as HTMLButtonElement
+    ).dispatchEvent(new Event("click", { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+
+    const patchCall = fetchCalls.find((c) => c.init?.method === "PATCH");
+    expect(patchCall).toBeDefined();
+    const body = JSON.parse(String(patchCall!.init!.body));
+    expect(body.patches[0].fieldPath).toEqual(["tasks", "20", "cross_doc_links"]);
+    const links = body.patches[0].newValue as DocLink[];
+    expect(links).toHaveLength(2);
+    expect(links[0].path).toBe("docs/specs/per-task-mirror/PRODUCT.md");
+    expect(links[0].anchor).toBe("§3.2 invariant 4");
+    expect(links[0].raw).toBe("PRODUCT.md §3.2 inv 4");
+    expect(links[1].path).toBe("docs/runbooks/staging-refresh.md");
+    expect(links[1].anchor).toBeNull(); // empty string → null
+    expect(links[1].raw).toBe("staging-refresh runbook");
+  });
+
+  test("add-row then save: new row appears in the patch", async () => {
+    const { pencil } = mountDocLinksPencil({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>cross_doc_links",
+      links: [SAMPLE_DOC_LINKS[0]],
+    });
+    queuePatchResponse(200, { ok: true, newMtime: "2026-05-26T00:00:03.000Z" });
+    const container = clickOpen(pencil);
+
+    const addBtn = container.querySelector<HTMLButtonElement>(
+      '[data-doclink-action="add"]',
+    )!;
+    addBtn.dispatchEvent(new Event("click", { bubbles: true }));
+
+    const rows = docLinkRows(container);
+    expect(rows).toHaveLength(2);
+    const newRow = rows[1];
+    newRow.querySelector<HTMLInputElement>('[data-doclink-field="path"]')!.value =
+      "docs/new-spec.md";
+    newRow.querySelector<HTMLInputElement>('[data-doclink-field="raw"]')!.value =
+      "new spec link";
+
+    (
+      container.querySelector('[data-edit-action="save"]') as HTMLButtonElement
+    ).dispatchEvent(new Event("click", { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+
+    const patchCall = fetchCalls.find((c) => c.init?.method === "PATCH");
+    const body = JSON.parse(String(patchCall!.init!.body));
+    const links = body.patches[0].newValue as DocLink[];
+    expect(links).toHaveLength(2);
+    expect(links[1].path).toBe("docs/new-spec.md");
+    expect(links[1].raw).toBe("new spec link");
+    expect(links[1].anchor).toBeNull();
+  });
+
+  test("delete-row then save: deleted row absent from patch", async () => {
+    const { pencil } = mountDocLinksPencil({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>cross_doc_links",
+    }); // 2 rows
+    queuePatchResponse(200, { ok: true, newMtime: "2026-05-26T00:00:04.000Z" });
+    const container = clickOpen(pencil);
+
+    docLinkRows(container)[0]
+      .querySelector<HTMLButtonElement>('[data-doclink-action="delete"]')!
+      .dispatchEvent(new Event("click", { bubbles: true }));
+
+    (
+      container.querySelector('[data-edit-action="save"]') as HTMLButtonElement
+    ).dispatchEvent(new Event("click", { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+
+    const patchCall = fetchCalls.find((c) => c.init?.method === "PATCH");
+    const body = JSON.parse(String(patchCall!.init!.body));
+    const links = body.patches[0].newValue as DocLink[];
+    expect(links).toHaveLength(1);
+    expect(links[0].path).toBe("docs/runbooks/staging-refresh.md");
+  });
+
+  test("saving an EMPTY array (all rows deleted) persists [] — not a silent no-op", async () => {
+    const { pencil } = mountDocLinksPencil({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>cross_doc_links",
+      links: [SAMPLE_DOC_LINKS[0]],
+    });
+    queuePatchResponse(200, { ok: true, newMtime: "2026-05-26T00:00:05.000Z" });
+    const container = clickOpen(pencil);
+
+    docLinkRows(container)[0]
+      .querySelector<HTMLButtonElement>('[data-doclink-action="delete"]')!
+      .dispatchEvent(new Event("click", { bubbles: true }));
+
+    (
+      container.querySelector('[data-edit-action="save"]') as HTMLButtonElement
+    ).dispatchEvent(new Event("click", { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+
+    const patchCall = fetchCalls.find((c) => c.init?.method === "PATCH");
+    expect(patchCall).toBeDefined(); // PATCH was sent (not silently skipped)
+    const body = JSON.parse(String(patchCall!.init!.body));
+    expect(body.patches[0].newValue).toEqual([]);
+  });
+
+  test("200 success: editor closes + container shows updated display", async () => {
+    const { pencil } = mountDocLinksPencil({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>cross_doc_links",
+    });
+    queuePatchResponse(200, { ok: true, newMtime: "2026-05-26T00:00:06.000Z" });
+    const container = clickOpen(pencil);
+
+    (
+      container.querySelector('[data-edit-action="save"]') as HTMLButtonElement
+    ).dispatchEvent(new Event("click", { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+
+    expect(container.querySelector("form")).toBeNull();
+  });
+});
+
+describe("ID-20.27 — doc-links editor 409 / 422 / Esc", () => {
+  test("409 stale-mtime keeps the form open + shows inline error", async () => {
+    const { pencil } = mountDocLinksPencil({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>cross_doc_links",
+    });
+    queuePatchResponse(409, {
+      ok: false,
+      error: "mtime-mismatch",
+      currentMtime: "2026-05-26T01:00:00.000Z",
+      hint: "Ledger changed underneath you — reload and re-apply.",
+    });
+    const container = clickOpen(pencil);
+
+    (
+      container.querySelector('[data-edit-action="save"]') as HTMLButtonElement
+    ).dispatchEvent(new Event("click", { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+
+    expect(container.querySelector("form")).not.toBeNull();
+    const err = container.querySelector("[data-edit-error]");
+    expect(err).not.toBeNull();
+    expect(err!.textContent).toContain("Ledger changed");
+  });
+
+  test("422 schema-error keeps the form open + shows inline error", async () => {
+    const { pencil } = mountDocLinksPencil({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>cross_doc_links",
+    });
+    queuePatchResponse(422, {
+      ok: false,
+      error: "schema-error",
+      issues: [
+        {
+          path: ["tasks", 0, "cross_doc_links", 0, "path"],
+          message: "String must contain at least 1 character(s)",
+        },
+      ],
+    });
+    const container = clickOpen(pencil);
+
+    (
+      container.querySelector('[data-edit-action="save"]') as HTMLButtonElement
+    ).dispatchEvent(new Event("click", { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+
+    expect(container.querySelector("form")).not.toBeNull();
+    const err = container.querySelector("[data-edit-error]");
+    expect(err).not.toBeNull();
+    expect(err!.textContent).toContain("String must contain");
+  });
+
+  test("Esc discards the editor without sending a PATCH", () => {
+    const { pencil } = mountDocLinksPencil({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>cross_doc_links",
+    });
+    const container = clickOpen(pencil);
+
+    // Add a row to confirm the discard is real
+    container
+      .querySelector<HTMLButtonElement>('[data-doclink-action="add"]')!
+      .dispatchEvent(new Event("click", { bubbles: true }));
+    expect(docLinkRows(container)).toHaveLength(3);
+
+    container.querySelector<HTMLFormElement>("form")!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+
+    expect(container.querySelector("form")).toBeNull();
+    expect(fetchCalls.find((c) => c.init?.method === "PATCH")).toBeUndefined();
+    expect(container.textContent).toContain("PRODUCT.md §3.2 inv 4");
   });
 });

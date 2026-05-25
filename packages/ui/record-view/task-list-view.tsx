@@ -207,6 +207,16 @@ export const TaskListView: React.FC<{
               )),
               ", ",
             ),
+      editAffordance: (
+        <FieldPencil
+          fieldPath={["tasks", task.id, "cross_doc_links"]}
+          kind="doc-links"
+          // JSON-serialised DocLink[] — the dispatcher parses this in openEditor
+          // to pre-fill the multi-row editor (ID-20.27).
+          rawValue={JSON.stringify(task.cross_doc_links)}
+          ariaLabel={`Edit cross-doc links for Task ID-${task.id}`}
+        />
+      ),
     },
   ];
 

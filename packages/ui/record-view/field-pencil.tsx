@@ -36,13 +36,16 @@ import type { FieldPath } from "./edit-state";
  * dispatcher's full DispatchKind union (the views never emit the numeric
  * `integer` kind — only Backlog `rank` uses `integer-nullable`, and that
  * is emitted directly by backlog-index-view, not via FieldPencil).
+ *
+ * ID-20.27: adds `doc-links` for `cross_doc_links[]` affordances.
  */
 export type FieldPencilKind =
   | "text"
   | "textarea"
   | "enum"
   | "enum-nullable"
-  | "array-comma";
+  | "array-comma"
+  | "doc-links";
 
 export const FieldPencil: React.FC<{
   fieldPath: FieldPath;
@@ -64,6 +67,9 @@ export const FieldPencil: React.FC<{
    *   - `array-comma` — the raw comma-joined canonical ids (e.g.
    *     "19,18"), not the rendered link labels (e.g. "ID-19, ID-18")
    *     which would round-trip the wrong values.
+   *   - `doc-links` — the JSON-serialised DocLink[] array (the full
+   *     current value), so the multi-row editor pre-fills from the
+   *     structured data rather than the rendered text (ID-20.27).
    * The dispatcher prefers this hook over the displayed value when
    * present. Omit for kinds whose rendered value equals the editable
    * value (text / enum).
@@ -74,8 +80,13 @@ export const FieldPencil: React.FC<{
     (kind === "enum" || kind === "enum-nullable") && options !== undefined
       ? options.join(",")
       : undefined;
+  // ID-20.27: doc-links passes a JSON string via rawValue (just like
+  // textarea / array-comma). No special encoding beyond JSON.stringify
+  // in the view — the dispatcher parses it in openEditor.
   const dataRawValue =
-    kind === "textarea" || kind === "array-comma" ? rawValue : undefined;
+    kind === "textarea" || kind === "array-comma" || kind === "doc-links"
+      ? rawValue
+      : undefined;
   return (
     <button
       type="button"

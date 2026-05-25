@@ -134,6 +134,16 @@ export const BacklogItemView: React.FC<{
               )),
               ", ",
             ),
+      editAffordance: (
+        <FieldPencil
+          fieldPath={["items", item.id, "cross_doc_links"]}
+          kind="doc-links"
+          // JSON-serialised DocLink[] — the dispatcher parses this in openEditor
+          // to pre-fill the multi-row editor (ID-20.27).
+          rawValue={JSON.stringify(item.cross_doc_links)}
+          ariaLabel={`Edit cross-doc links for backlog item ${item.id}`}
+        />
+      ),
     },
     {
       key: "notes",
