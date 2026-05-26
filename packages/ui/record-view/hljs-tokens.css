@@ -1,0 +1,111 @@
+/* hljs-tokens.css — theme-neutral highlight.js token palette (OQ-1 Option B).
+ *
+ * highlight.js ships per-theme stylesheets (e.g. github-dark.css) with
+ * hardcoded hex colours. Inlining one of those would fight whatever record-
+ * view theme is active. Instead this maps hljs's token classes onto the
+ * active theme's CSS custom properties (+ color-mix/oklch derivations), so
+ * syntax highlighting tracks the theme — readable in light AND dark.
+ *
+ * The client dispatcher runs hljs.highlightElement over `pre code.hljs`
+ * after DOM parse (apps/server/web/index.tsx); hljs adds <span class="hljs-…">
+ * wrappers that these rules colour. With JS off, the code block is still
+ * legible from record-view.css's `pre` rule alone (SV-32).
+ *
+ * Background is intentionally NOT set here — the `pre` background comes from
+ * record-view.css (`--code-bg`), so highlight colours sit on the themed code
+ * surface. We only colour foreground tokens.
+ */
+
+.record-view-markdown-body .hljs,
+.record-view-details .hljs,
+.record-view-details-prose .hljs,
+.record-view-details-journal-body .hljs {
+  color: var(--foreground);
+  background: transparent;
+}
+
+/* Comments / quotes — muted. */
+.record-view-markdown-body .hljs-comment,
+.record-view-markdown-body .hljs-quote,
+.record-view-details .hljs-comment,
+.record-view-details .hljs-quote {
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+/* Keywords / control flow — primary accent. */
+.record-view-markdown-body .hljs-keyword,
+.record-view-markdown-body .hljs-selector-tag,
+.record-view-markdown-body .hljs-literal,
+.record-view-markdown-body .hljs-section,
+.record-view-markdown-body .hljs-doctag,
+.record-view-markdown-body .hljs-type,
+.record-view-details .hljs-keyword,
+.record-view-details .hljs-selector-tag,
+.record-view-details .hljs-literal,
+.record-view-details .hljs-section,
+.record-view-details .hljs-doctag,
+.record-view-details .hljs-type {
+  color: var(--primary);
+}
+
+/* Strings / added — success-tinted. */
+.record-view-markdown-body .hljs-string,
+.record-view-markdown-body .hljs-addition,
+.record-view-markdown-body .hljs-meta-string,
+.record-view-details .hljs-string,
+.record-view-details .hljs-addition,
+.record-view-details .hljs-meta-string {
+  color: color-mix(in oklab, var(--success) 80%, var(--foreground));
+}
+
+/* Numbers / constants / symbols — accent. */
+.record-view-markdown-body .hljs-number,
+.record-view-markdown-body .hljs-symbol,
+.record-view-markdown-body .hljs-bullet,
+.record-view-markdown-body .hljs-meta,
+.record-view-markdown-body .hljs-built_in,
+.record-view-markdown-body .hljs-class .hljs-title,
+.record-view-details .hljs-number,
+.record-view-details .hljs-symbol,
+.record-view-details .hljs-bullet,
+.record-view-details .hljs-meta,
+.record-view-details .hljs-built_in,
+.record-view-details .hljs-class .hljs-title {
+  color: var(--accent);
+}
+
+/* Function / attribute names / variables — secondary. */
+.record-view-markdown-body .hljs-title,
+.record-view-markdown-body .hljs-function .hljs-title,
+.record-view-markdown-body .hljs-attr,
+.record-view-markdown-body .hljs-attribute,
+.record-view-markdown-body .hljs-variable,
+.record-view-markdown-body .hljs-template-variable,
+.record-view-details .hljs-title,
+.record-view-details .hljs-function .hljs-title,
+.record-view-details .hljs-attr,
+.record-view-details .hljs-attribute,
+.record-view-details .hljs-variable,
+.record-view-details .hljs-template-variable {
+  color: var(--secondary);
+}
+
+/* Tags / names / selectors — destructive-tinted for contrast against keywords. */
+.record-view-markdown-body .hljs-name,
+.record-view-markdown-body .hljs-selector-id,
+.record-view-markdown-body .hljs-selector-class,
+.record-view-markdown-body .hljs-regexp,
+.record-view-markdown-body .hljs-deletion,
+.record-view-details .hljs-name,
+.record-view-details .hljs-selector-id,
+.record-view-details .hljs-selector-class,
+.record-view-details .hljs-regexp,
+.record-view-details .hljs-deletion {
+  color: color-mix(in oklab, var(--destructive) 75%, var(--foreground));
+}
+
+.record-view-markdown-body .hljs-emphasis,
+.record-view-details .hljs-emphasis { font-style: italic; }
+.record-view-markdown-body .hljs-strong,
+.record-view-details .hljs-strong { font-weight: 600; }

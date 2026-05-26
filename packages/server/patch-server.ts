@@ -89,6 +89,8 @@ import { scanForLedgers } from "./path-resolution";
 import { LOOPBACK_HOSTNAME, resolveServerHostname } from "./loopback-bind";
 import { renderViewer } from "./render-viewer";
 import { getClientBundle } from "./client-bundle";
+import { getViewerStyles } from "./viewer-styles";
+import { resolveThemePreference } from "@task-view/ui/record-view/theme-preference";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -213,6 +215,7 @@ function serialiseLedger(
 async function handleGetRoot(
   ctx: RequestContext,
   search: URLSearchParams,
+  cookieHeader: string | null,
 ): Promise<Response> {
   let canonical;
   try {
@@ -237,19 +240,54 @@ async function handleGetRoot(
       { status: 422 },
     );
   }
-  // Inline the progressive-enhancement client bundle (ID-20.24). Built +
-  // cached once at boot via Bun.build; never blocks the read-only render
-  // (getClientBundle returns an inert fallback on build failure).
-  const clientScript = await getClientBundle();
+  // Resolve the theme preference (record-view-styling SPEC SV-8): query
+  // override > cookie (the SAME keys ThemeProvider writes) > default
+  // task-view/dark. Then assemble the inline stylesheet + <html> class
+  // (cached at boot; safety-stylesheet fallback on a read failure — never
+  // throws). The server READS the cookie but writes none (SV-10).
+  const pref = resolveThemePreference({ cookieHeader, query: search });
+  const styles = await getViewerStyles(pref.themeId, pref.mode);
+
   const result = renderViewer({
     detected: canonical.detected,
     search,
-    clientScript,
+    clientScriptSrc: CLIENT_BUNDLE_ROUTE,
+    styles,
   });
   return new Response(result.html, {
     status: result.status,
     headers: { "content-type": "text/html; charset=utf-8" },
   });
+}
+
+/**
+ * Route the SSR HTML references for the progressive-enhancement client
+ * bundle (ID-20.24). Served as a standalone resource rather than inlined,
+ * so the ~1MB minified bundle is fetched once + revalidated cheaply
+ * instead of re-shipped inside every page's HTML.
+ */
+const CLIENT_BUNDLE_ROUTE = "/client.js";
+
+/**
+ * GET /client.js — serve the boot-built client bundle from memory with a
+ * content-derived weak ETag so the browser caches it across navigations
+ * and revalidates with a cheap 304. The ETag changes when the server
+ * restarts with a rebuilt bundle, so there is no stale-after-restart trap.
+ * getClientBundle() returns an inert fallback on build failure (never
+ * throws), so this route always 200s.
+ */
+async function handleGetClientBundle(request: Request): Promise<Response> {
+  const js = await getClientBundle();
+  const etag = `W/"${Bun.hash(js).toString(16)}"`;
+  const headers: Record<string, string> = {
+    "content-type": "text/javascript; charset=utf-8",
+    "cache-control": "no-cache",
+    etag,
+  };
+  if (request.headers.get("if-none-match") === etag) {
+    return new Response(null, { status: 304, headers });
+  }
+  return new Response(js, { status: 200, headers });
 }
 
 async function handleGetLedger(ctx: RequestContext): Promise<Response> {
@@ -1055,7 +1093,13 @@ function buildFetchHandler(ctx: RequestContext) {
 
     // GET / → SSR-rendered viewer (Subtask 20.17).
     if (path === "/" && request.method === "GET") {
-      return handleGetRoot(ctx, url.searchParams);
+      return handleGetRoot(ctx, url.searchParams, request.headers.get("cookie"));
+    }
+
+    // GET /client.js → progressive-enhancement client bundle, served as a
+    // separate cacheable resource (referenced by the SSR HTML, not inlined).
+    if (path === CLIENT_BUNDLE_ROUTE && request.method === "GET") {
+      return handleGetClientBundle(request);
     }
 
     // GET /api/ledger

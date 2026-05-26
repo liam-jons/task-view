@@ -41,6 +41,7 @@ import {
 } from "@task-view/ui/record-view/types";
 import { decodeBacklogFilters } from "@task-view/ui/record-view/url-state";
 import { recordRouteHref } from "@task-view/ui/record-view/anchors";
+import { ThemePicker } from "@task-view/ui/record-view/theme-picker";
 import type { DetectSchemaResult } from "./detect-schema";
 import type {
   Task,
@@ -54,13 +55,36 @@ export interface RenderViewerInput {
   detected: KnownDetected;
   search: URLSearchParams;
   /**
-   * The progressive-enhancement client bundle JS to inline inside a
-   * `<script>` at the end of `<body>` (ID-20.24). Built + cached at
-   * server boot by `client-bundle.ts` (Bun.build). When omitted (e.g.
-   * pure SSR tests), no script is emitted and the page renders
-   * read-only — the SSR markup is fully usable without it.
+   * URL the progressive-enhancement client bundle is served from (e.g.
+   * `/client.js`). Emitted as `<script type="module" src=…>` at the end
+   * of `<body>` (ID-20.24). The patch-server serves the bundle as a
+   * separate, cacheable resource rather than inlining it, so the ~1MB JS
+   * is fetched once and revalidated (304) instead of re-shipped inside
+   * every page's HTML. When omitted (pure-SSR tests), no script is
+   * emitted and the page renders read-only — the SSR markup is fully
+   * usable without it.
    */
-  clientScript?: string;
+  clientScriptSrc?: string;
+  /**
+   * Pre-resolved record-view stylesheet + `<html>` theme class
+   * (record-view-styling SPEC SV-2/SV-3). Assembled by
+   * `viewer-styles.ts#getViewerStyles` (async, cached at boot) and threaded
+   * in by `handleGetRoot`, which reads the theme cookie/query first.
+   *
+   * `renderViewer` is synchronous, so the async assembly happens upstream
+   * and the result is passed here. When omitted (pure-SSR unit tests), a
+   * tiny hermetic fallback stylesheet + the default `theme-task-view` class
+   * are emitted so EVERY route is still styled (SV-3) without a disk read.
+   */
+  styles?: ViewerStylesInput;
+}
+
+/** Shape of the resolved styling injected into `wrapHtml` (SV-2/SV-3). */
+export interface ViewerStylesInput {
+  /** Full stylesheet text inlined into a single `<style>` in `<head>`. */
+  css: string;
+  /** The `theme-{id}[ light]` class for the served `<html>`. */
+  htmlClass: string;
 }
 
 export interface RenderViewerResult {
@@ -72,9 +96,27 @@ export function renderViewer(input: RenderViewerInput): RenderViewerResult {
   const body = renderBody(input);
   return {
     status: body.status,
-    html: wrapHtml(body.markup, input.clientScript),
+    html: wrapHtml(body.markup, input.clientScriptSrc, input.styles),
   };
 }
+
+/**
+ * Hermetic fallback styling for pure-SSR callers (unit tests) that don't
+ * thread real assembled styles in. Keeps every route styled (SV-3) and the
+ * `<html>` themed (default `task-view` dark) without a disk read. This is a
+ * deliberately tiny token + base sheet — production always passes the full
+ * assembled stylesheet from `getViewerStyles`.
+ */
+const FALLBACK_STYLES: ViewerStylesInput = {
+  htmlClass: "theme-task-view",
+  css:
+    ".theme-task-view{--background:#16161f;--foreground:#e6e6ef;--card:#1f1f2b;" +
+    "--muted:#262633;--muted-foreground:#b7b7c6;--primary:#a78bfa;--border:#3a3a4a;" +
+    "--ring:#a78bfa;--radius:0.625rem;--font-sans:system-ui,sans-serif;--code-bg:#262633}" +
+    "body{background:var(--background);color:var(--foreground);font-family:var(--font-sans)}" +
+    ":focus-visible{outline:2px solid var(--ring);outline-offset:2px}" +
+    ".record-view-frontmatter-card{border-collapse:collapse}",
+};
 
 interface RenderedBody {
   status: 200 | 404;
@@ -209,27 +251,66 @@ function computeThemeNav(
   };
 }
 
-function wrapHtml(body: string, clientScript?: string): string {
-  // Inline the progressive-enhancement client at the end of <body> so it
-  // runs after the SSR markup is parsed (ID-20.24). The bundle is a
-  // self-contained IIFE; we defensively neutralise any literal
-  // `</script>` sequence so a future bundle string can never break out of
-  // the script element.
+function wrapHtml(
+  body: string,
+  clientScriptSrc?: string,
+  styles?: ViewerStylesInput,
+): string {
+  // Reference the progressive-enhancement client at the end of <body> so it
+  // runs after the SSR markup is parsed (ID-20.24). The bundle is served by
+  // the patch-server as a separate cacheable resource (GET /client.js) and
+  // referenced by src rather than inlined — the ~1MB minified IIFE is then
+  // fetched once + revalidated (304) instead of re-shipped in every page.
+  // `clientScriptSrc` is a server-controlled constant, so there is no
+  // injection surface to neutralise.
   const scriptTag =
-    typeof clientScript === "string" && clientScript.length > 0
-      ? '<script type="module">' +
-        clientScript.replace(/<\/script>/gi, "<\\/script>") +
-        "</script>\n"
+    typeof clientScriptSrc === "string" && clientScriptSrc.length > 0
+      ? `<script type="module" src="${clientScriptSrc}"></script>\n`
       : "";
+
+  // Inline the record-view stylesheet into a single <style> in <head>
+  // (record-view-styling SPEC SV-3) and bake the resolved theme class onto
+  // the served <html> (SV-2) — no ThemeProvider runs on this surface, so the
+  // class must be a server-side string. Defensively neutralise any literal
+  // `</style>` in the assembled CSS the same way the script guards
+  // `</script>`, so authored CSS can never break out of the element (the
+  // only real `</style>` is the one we emit — SV-50). When no styles are
+  // threaded in (pure-SSR tests), fall back to a tiny hermetic sheet so
+  // every route is still themed.
+  const resolved = styles ?? FALLBACK_STYLES;
+  const styleTag =
+    "<style>" + resolved.css.replace(/<\/style>/gi, "<\\/style>") + "</style>\n";
+  // The <html> class is built from validated theme ids only (the resolver +
+  // assembler guarantee this), so it is safe to interpolate directly.
+  const htmlClassAttr = ` class="${resolved.htmlClass}"`;
+
+  // OQ-3 — in-page theme picker. Derive the active theme id from the resolved
+  // <html> class (`theme-{id}[ light]`) and render the server-side <select>
+  // into a small top toolbar; the inlined dispatcher wires its change to the
+  // cookie + a live <html> re-class. Rendered once here so every surface
+  // (index + per-record + 404) carries it without per-component prop threading.
+  const activeThemeId = resolved.htmlClass
+    .replace(/(^|\s)light(\s|$)/g, " ")
+    .trim()
+    .replace(/^theme-/, "");
+  const toolbar =
+    '<div class="record-view-toolbar" data-record-view-toolbar>' +
+    renderToStaticMarkup(<ThemePicker activeThemeId={activeThemeId} />) +
+    "</div>\n";
+
   return (
     "<!doctype html>\n" +
-    '<html lang="en">\n' +
+    '<html lang="en"' +
+    htmlClassAttr +
+    ">\n" +
     "<head>\n" +
     '<meta charset="utf-8">\n' +
     '<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
     "<title>task-view</title>\n" +
+    styleTag +
     "</head>\n" +
     '<body data-app="task-view">\n' +
+    toolbar +
     body +
     "\n" +
     scriptTag +

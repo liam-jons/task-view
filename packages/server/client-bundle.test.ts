@@ -2,9 +2,11 @@
  * client-bundle.test.ts — ID-20.24 build-bridge.
  *
  * Verifies that the progressive-enhancement client bundle is built (via
- * Bun.build at boot), cached in-process, and inlined into the GET / SSR
- * HTML as a self-contained <script> — with no separate dev server and no
- * committed dist artifact (PRODUCT inv 44 single-file CLI distribution).
+ * Bun.build at boot), cached in-process, and SERVED from its own cacheable
+ * route (GET /client.js) — referenced by the SSR HTML rather than inlined,
+ * so the ~1MB bundle is fetched once + revalidated (304) instead of
+ * re-shipped in every page. No separate dev server, no committed dist
+ * artifact (PRODUCT inv 44 single-file CLI distribution).
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -79,8 +81,8 @@ describe("getClientBundle — Bun.build at boot, cached", () => {
   });
 });
 
-describe("GET / — inlines the client bundle <script> (ID-20.24)", () => {
-  test("HTML carries the doctype, the SSR markup, and an inline module <script>", async () => {
+describe("GET / + GET /client.js — client bundle served, not inlined (ID-20.24)", () => {
+  test("GET / references the client bundle via <script src> (not inlined)", async () => {
     const ledger = await writeBacklog();
     handle = startPatchServer({ ledgerPath: ledger });
 
@@ -93,23 +95,42 @@ describe("GET / — inlines the client bundle <script> (ID-20.24)", () => {
     expect(html).toContain('data-record-kind="backlog-index"');
     expect(html).toContain('data-edit-action="open"');
     expect(html).toContain('data-edit-kind="integer-nullable"');
-    // The hydration script is inlined (no separate dev server).
-    expect(html).toContain('<script type="module">');
-    expect(html).toContain("/api/ledger/record/");
-    // Script sits at the end of <body> after the markup.
-    const scriptIdx = html.indexOf('<script type="module">');
+    // The hydration bundle is referenced by src — NOT inlined (the ~1MB JS
+    // no longer rides inside every page; its body lives behind /client.js).
+    expect(html).toContain('<script type="module" src="/client.js"></script>');
+    expect(html).not.toContain("/api/ledger/record/");
+    // Script tag sits at the end of <body> after the markup.
+    const scriptIdx = html.indexOf("<script");
     const markupIdx = html.indexOf('data-record-kind="backlog-index"');
     expect(scriptIdx).toBeGreaterThan(markupIdx);
   });
 
-  test("the bundle inlined into HTML is byte-identical to getClientBundle()", async () => {
+  test("GET /client.js serves the byte-identical bundle as JavaScript", async () => {
     const ledger = await writeBacklog();
     handle = startPatchServer({ ledgerPath: ledger });
-    const res = await fetch(`${handle.url}/`);
-    const html = await res.text();
+
+    const res = await fetch(`${handle.url}/client.js`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("javascript");
+    const served = await res.text();
     const bundle = await getClientBundle();
-    // The inlined script body contains the bundle (modulo </script>
-    // neutralisation, which the minified IIFE bundle does not trigger).
-    expect(html).toContain(bundle);
+    expect(served).toBe(bundle);
+    // The dispatch wiring lives in the served bundle, not the page HTML.
+    expect(served).toContain("/api/ledger/record/");
+  });
+
+  test("GET /client.js revalidates via ETag (304 on If-None-Match)", async () => {
+    const ledger = await writeBacklog();
+    handle = startPatchServer({ ledgerPath: ledger });
+
+    const first = await fetch(`${handle.url}/client.js`);
+    const etag = first.headers.get("etag");
+    expect(etag).toBeTruthy();
+    await first.text();
+
+    const second = await fetch(`${handle.url}/client.js`, {
+      headers: { "if-none-match": etag as string },
+    });
+    expect(second.status).toBe(304);
   });
 });

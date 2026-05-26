@@ -11,6 +11,7 @@
 import React from "react";
 import type { Roadmap } from "@task-view/schemas/roadmap";
 import { recordRouteHref } from "./anchors";
+import { StatusBadge } from "./status-badge";
 
 export const RoadmapIndexView: React.FC<{
   roadmap: Roadmap;
@@ -68,7 +69,9 @@ export const RoadmapIndexView: React.FC<{
                 </td>
                 <td>{theme.title}</td>
                 <td>{theme.time_horizon}</td>
-                <td>{theme.status}</td>
+                <td>
+                  <StatusBadge status={theme.status} />
+                </td>
                 <td>{theme.linked_tasks.length}</td>
               </tr>
             ))}

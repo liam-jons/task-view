@@ -11,6 +11,7 @@
 import React from "react";
 import type { Task } from "@task-view/schemas/task-list";
 import { recordRouteHref } from "./anchors";
+import { PriorityBadge, StatusBadge } from "./status-badge";
 
 export const TaskListIndexView: React.FC<{
   tasks: readonly Task[];
@@ -65,8 +66,12 @@ export const TaskListIndexView: React.FC<{
                   </a>
                 </td>
                 <td>{task.title}</td>
-                <td>{task.status}</td>
-                <td>{task.priority}</td>
+                <td>
+                  <StatusBadge status={task.status} />
+                </td>
+                <td>
+                  <PriorityBadge priority={task.priority} />
+                </td>
                 <td>{task.subtasks.length}</td>
               </tr>
             ))}

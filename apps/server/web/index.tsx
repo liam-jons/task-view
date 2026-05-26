@@ -43,6 +43,15 @@
 // `Bun.build` invoked from inside `bun test` fails to resolve the
 // workspace subpath, returning an empty-log build failure. Relative
 // paths are runner-agnostic.
+// NB: hljs (OQ-1 client-side syntax highlighting) is imported via the
+// packages/ui re-export shim, NOT the bare `highlight.js` specifier. The
+// package is reachable only under packages/ui/node_modules (no root hoist), so
+// a bare import from this entry's location fails BOTH when `bun test` loads
+// this module directly AND when Bun.build bundles it. The shim (inside
+// packages/ui) fixes the direct-import path; client-bundle.ts's onResolve
+// plugin fixes the Bun.build path. Same runner-agnostic spirit as the relative
+// edit-dispatch imports below.
+import hljs from "../../../packages/ui/record-view/hljs";
 import {
   buildPatchForKind,
   buildPatchRequest,
@@ -53,6 +62,10 @@ import {
   type DocLinkRowInput,
 } from "../../../packages/ui/record-view/edit-dispatch";
 import { classifySaveResult } from "../../../packages/ui/record-view/edit-state";
+import {
+  applyThemeClassesToHtml,
+  writeThemeCookie,
+} from "../../../packages/ui/record-view/theme-client";
 
 /** Selector for the container that holds both a value + its affordance. */
 const CONTAINER_SELECTOR =
@@ -790,9 +803,71 @@ function onKeydown(event: KeyboardEvent): void {
   }
 }
 
+// ── OQ-1: client-side syntax highlighting ────────────────────────────────────
+//
+// The SSR markdown emits `<pre><code class="hljs font-mono language-…">…</code>`
+// (the React CodeBlock's useEffect hljs pass does NOT run during
+// renderToStaticMarkup). Run hljs over those nodes once after DOM parse so
+// code blocks gain real syntax highlighting. Colours come from the inlined
+// theme-neutral hljs-tokens.css (token-driven), so they track the active
+// theme. Base legibility (mono on --code-bg) holds even if this never runs.
+function highlightCodeBlocks(): void {
+  const nodes = document.querySelectorAll<HTMLElement>(
+    ".record-view-markdown-body pre code, .record-view-details pre code",
+  );
+  nodes.forEach((node) => {
+    // Idempotent: skip nodes hljs already processed.
+    if (node.getAttribute("data-highlighted") === "yes") return;
+    try {
+      hljs.highlightElement(node);
+    } catch {
+      // A failed highlight must never break the page — leave the node as the
+      // legible token-styled plaintext it already is.
+    }
+  });
+}
+
+// ── print.css integration: toggle `.task-view-print` on <html> ───────────────
+//
+// Plannotator's print.css uses a two-pronged approach (print.css:10-13):
+// `@media print` rules PLUS a `.task-view-print` class added on
+// beforeprint/afterprint for overrides that must beat the hljs theme colours.
+// Mirror that mechanism here so the record-view prints cleanly.
+function wirePrintClassToggle(): void {
+  const root = document.documentElement;
+  window.addEventListener("beforeprint", () => {
+    root.classList.add("task-view-print");
+  });
+  window.addEventListener("afterprint", () => {
+    root.classList.remove("task-view-print");
+  });
+}
+
+// ── OQ-3: in-page theme picker ───────────────────────────────────────────────
+//
+// The nav strip carries a server-rendered <select data-theme-picker> wired to
+// the SAME cookie keys ThemeProvider uses. On change we write the cookie +
+// re-class <html> via the shared applyThemeClassesToHtml (no reload). Mode is
+// kept at the current resolved value (dark unless the page is `.light`).
+function wireThemePicker(): void {
+  const picker = document.querySelector<HTMLSelectElement>("[data-theme-picker]");
+  if (!picker) return;
+  picker.addEventListener("change", () => {
+    const themeId = picker.value;
+    const mode = document.documentElement.classList.contains("light")
+      ? "light"
+      : "dark";
+    writeThemeCookie(themeId, mode);
+    applyThemeClassesToHtml(themeId, mode);
+  });
+}
+
 function init(): void {
   document.addEventListener("click", onClick);
   document.addEventListener("keydown", onKeydown);
+  highlightCodeBlocks();
+  wirePrintClassToggle();
+  wireThemePicker();
 }
 
 if (typeof document !== "undefined") {

@@ -40,6 +40,7 @@ import {
   subtaskHref,
   taskDepLabel,
 } from "./anchors";
+import { PriorityBadge, StatusBadge } from "./status-badge";
 import type { LedgerContext, NavStripData } from "./types";
 
 /**
@@ -106,7 +107,7 @@ export const TaskListView: React.FC<{
     {
       key: "status",
       label: "Status",
-      value: task.status,
+      value: <StatusBadge status={task.status} />,
       editAffordance: (
         <FieldPencil
           fieldPath={["tasks", task.id, "status"]}
@@ -116,7 +117,11 @@ export const TaskListView: React.FC<{
         />
       ),
     },
-    { key: "priority", label: "Priority", value: task.priority },
+    {
+      key: "priority",
+      label: "Priority",
+      value: <PriorityBadge priority={task.priority} />,
+    },
     {
       key: "effort_estimate",
       label: "Effort estimate",
@@ -350,7 +355,7 @@ const SubtaskBlock: React.FC<{
     {
       key: "status",
       label: "Status",
-      value: subtask.status,
+      value: <StatusBadge status={subtask.status} />,
       editAffordance: (
         <FieldPencil
           fieldPath={subPath("status")}

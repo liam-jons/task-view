@@ -28,6 +28,7 @@ import {
   MarkdownBody,
 } from "./markdown-renderer";
 import { recordRouteHref } from "./anchors";
+import { PriorityBadge, StatusBadge } from "./status-badge";
 import type { LedgerContext, NavStripData } from "./types";
 
 export const BacklogItemView: React.FC<{
@@ -52,7 +53,7 @@ export const BacklogItemView: React.FC<{
     {
       key: "status",
       label: "Status",
-      value: item.status,
+      value: <StatusBadge status={item.status} />,
       editAffordance: (
         <FieldPencil
           fieldPath={["items", item.id, "status"]}
@@ -74,7 +75,11 @@ export const BacklogItemView: React.FC<{
         />
       ),
     },
-    { key: "priority", label: "Priority", value: item.priority },
+    {
+      key: "priority",
+      label: "Priority",
+      value: <PriorityBadge priority={item.priority} />,
+    },
     { key: "track", label: "Track", value: item.track },
     {
       key: "dependencies",

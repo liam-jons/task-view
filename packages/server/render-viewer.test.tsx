@@ -1,11 +1,12 @@
 /**
- * render-viewer.test.tsx — ID-20.24 script-injection contract for the
+ * render-viewer.test.tsx — ID-20.24 script-reference contract for the
  * SSR viewer (pure; no Bun.build).
  *
- * renderViewer optionally inlines a client-bundle <script>; when omitted
- * the page is read-only SSR (fully usable without JS). Verifies the
- * script lands at the end of <body> and that </script> sequences are
- * neutralised so a bundle string can never break out of the element.
+ * renderViewer optionally references the client bundle via a
+ * `<script type="module" src=…>`; when omitted the page is read-only SSR
+ * (fully usable without JS). Verifies the script tag lands at the end of
+ * <body> after the markup. The bundle itself is served by the patch-server
+ * at GET /client.js (see client-bundle.test.ts), not inlined.
  */
 import { describe, expect, test } from "bun:test";
 import { renderViewer } from "./render-viewer";
@@ -32,8 +33,8 @@ const BACKLOG_DETECTED: KnownDetected = {
   },
 } as unknown as KnownDetected;
 
-describe("renderViewer — client-script injection (ID-20.24)", () => {
-  test("no clientScript → no <script> emitted (read-only SSR)", () => {
+describe("renderViewer — client-script reference (ID-20.24)", () => {
+  test("no clientScriptSrc → no <script> emitted (read-only SSR)", () => {
     const { html } = renderViewer({
       detected: BACKLOG_DETECTED,
       search: new URLSearchParams(),
@@ -43,13 +44,14 @@ describe("renderViewer — client-script injection (ID-20.24)", () => {
     expect(html).not.toContain("<script");
   });
 
-  test("clientScript present → inline module <script> at end of body", () => {
+  test("clientScriptSrc present → module <script src> at end of body", () => {
     const { html } = renderViewer({
       detected: BACKLOG_DETECTED,
       search: new URLSearchParams(),
-      clientScript: "console.log('hydrate');",
+      clientScriptSrc: "/client.js",
     });
-    expect(html).toContain('<script type="module">console.log');
+    // Referenced, not inlined — the bundle is served from its own route.
+    expect(html).toContain('<script type="module" src="/client.js"></script>');
     const scriptIdx = html.indexOf("<script");
     const bodyCloseIdx = html.indexOf("</body>");
     const markupIdx = html.indexOf('data-record-kind="backlog-index"');
@@ -58,24 +60,174 @@ describe("renderViewer — client-script injection (ID-20.24)", () => {
     expect(scriptIdx).toBeLessThan(bodyCloseIdx);
   });
 
-  test("</script> inside the bundle is neutralised (no breakout)", () => {
+  test("empty clientScriptSrc string → treated as absent (no script tag)", () => {
     const { html } = renderViewer({
       detected: BACKLOG_DETECTED,
       search: new URLSearchParams(),
-      clientScript: 'const x = "</script>";',
-    });
-    // The literal closing tag from the bundle is escaped; the only real
-    // </script> is the one wrapHtml emits.
-    expect(html).toContain("<\\/script>");
-    expect(html.match(/<\/script>/g)?.length).toBe(1);
-  });
-
-  test("empty clientScript string → treated as absent (no script tag)", () => {
-    const { html } = renderViewer({
-      detected: BACKLOG_DETECTED,
-      search: new URLSearchParams(),
-      clientScript: "",
+      clientScriptSrc: "",
     });
     expect(html).not.toContain("<script");
+  });
+});
+
+// ── record-view-styling: <style> + <html> class (SV-50, SV-51) ──────────────
+
+const TASK_LIST_DETECTED: KnownDetected = {
+  kind: "task-list",
+  data: {
+    document_name: "Task List",
+    document_purpose: "fixture",
+    related_documents: [],
+    tasks: [],
+  },
+} as unknown as KnownDetected;
+
+const ROADMAP_DETECTED: KnownDetected = {
+  kind: "roadmap",
+  data: {
+    document_name: "Product Roadmap",
+    document_purpose: "fixture",
+    related_documents: [],
+    forward_looking_only: true,
+    themes: [],
+  },
+} as unknown as KnownDetected;
+
+describe("renderViewer — inline <style> presence + placement (SV-50)", () => {
+  test("exactly one <style> in <head>, before the body markup", () => {
+    const { html } = renderViewer({
+      detected: BACKLOG_DETECTED,
+      search: new URLSearchParams(),
+    });
+    expect(html.match(/<style>/g)?.length).toBe(1);
+    const styleIdx = html.indexOf("<style>");
+    const headCloseIdx = html.indexOf("</head>");
+    const markupIdx = html.indexOf('data-record-kind="backlog-index"');
+    expect(styleIdx).toBeGreaterThan(-1);
+    expect(styleIdx).toBeLessThan(headCloseIdx); // inside <head>
+    expect(styleIdx).toBeLessThan(markupIdx); // before body markup
+  });
+
+  test("the fallback stylesheet carries each layer's sentinel", () => {
+    // The pure-SSR path (no `styles` threaded) emits the hermetic fallback,
+    // which still carries a token rule, a base rule, and a record-view rule.
+    const { html } = renderViewer({
+      detected: BACKLOG_DETECTED,
+      search: new URLSearchParams(),
+    });
+    expect(html).toContain("--background"); // token layer
+    expect(html).toContain(":focus-visible"); // base layer
+    expect(html).toContain(".record-view-frontmatter-card"); // record-view layer
+  });
+
+  test("a real assembled stylesheet inlines verbatim with sentinels", () => {
+    const css =
+      ".theme-task-view{--background:#000}\n" +
+      ":focus-visible{outline:2px solid var(--ring)}\n" +
+      ".record-view-frontmatter-card{border-collapse:collapse}";
+    const { html } = renderViewer({
+      detected: BACKLOG_DETECTED,
+      search: new URLSearchParams(),
+      styles: { css, htmlClass: "theme-task-view" },
+    });
+    expect(html).toContain("<style>" + css.split("\n")[0]);
+    expect(html).toContain(":focus-visible");
+    expect(html).toContain(".record-view-frontmatter-card");
+  });
+
+  test("</style> inside the CSS is neutralised (no breakout)", () => {
+    const { html } = renderViewer({
+      detected: BACKLOG_DETECTED,
+      search: new URLSearchParams(),
+      styles: {
+        css: 'a::before{content:"</style>"}',
+        htmlClass: "theme-task-view",
+      },
+    });
+    expect(html).toContain("<\\/style>");
+    // The only real </style> is the wrapper's own.
+    expect(html.match(/<\/style>/g)?.length).toBe(1);
+  });
+
+  test("every page root selector is present in the assembled stylesheet", () => {
+    // Render with the full hermetic fallback replaced by a sheet containing
+    // each root selector — proves the contract the real assembler satisfies.
+    // (The real coverage guard over record-view.css lives in
+    // record-view-css.test.ts / SV-54.)
+    const roots = [
+      ".record-view-task-list-index",
+      ".record-view-roadmap-index",
+      ".record-view-backlog-index",
+      ".record-view-task-page",
+      ".record-view-backlog-item",
+      ".record-view-roadmap-theme",
+      ".record-view-not-found",
+    ];
+    const css = roots.map((r) => `${r}{display:block}`).join("\n");
+    const { html } = renderViewer({
+      detected: BACKLOG_DETECTED,
+      search: new URLSearchParams(),
+      styles: { css, htmlClass: "theme-task-view" },
+    });
+    for (const r of roots) expect(html).toContain(r);
+  });
+});
+
+describe("renderViewer — <html> theme class (SV-51)", () => {
+  test("default (no styles) → <html lang=\"en\" class=\"theme-task-view\">", () => {
+    for (const detected of [
+      BACKLOG_DETECTED,
+      TASK_LIST_DETECTED,
+      ROADMAP_DETECTED,
+    ]) {
+      const { html } = renderViewer({
+        detected,
+        search: new URLSearchParams(),
+      });
+      expect(html).toContain('<html lang="en" class="theme-task-view">');
+    }
+  });
+
+  test("explicit github+light styles → class=\"theme-github light\"", () => {
+    const { html } = renderViewer({
+      detected: BACKLOG_DETECTED,
+      search: new URLSearchParams(),
+      styles: { css: ".theme-github{}", htmlClass: "theme-github light" },
+    });
+    expect(html).toContain('<html lang="en" class="theme-github light">');
+  });
+
+  test("404 not-found route is also themed + styled", () => {
+    const { status, html } = renderViewer({
+      detected: BACKLOG_DETECTED,
+      search: new URLSearchParams("record=does-not-exist"),
+    });
+    expect(status).toBe(404);
+    expect(html).toContain('class="theme-task-view"');
+    expect(html).toContain("<style>");
+    expect(html).toContain('data-record-kind="not-found"');
+  });
+});
+
+describe("renderViewer — in-page theme picker (OQ-3)", () => {
+  test("renders a server-side <select data-theme-picker> pre-selected to the active theme", () => {
+    const { html } = renderViewer({
+      detected: BACKLOG_DETECTED,
+      search: new URLSearchParams(),
+      styles: { css: ".theme-github{}", htmlClass: "theme-github light" },
+    });
+    expect(html).toContain("data-record-view-toolbar");
+    expect(html).toContain("data-theme-picker");
+    // defaultValue → React renders `selected` on the matching <option>.
+    expect(html).toContain('value="github" selected');
+  });
+
+  test("picker is present on every surface incl. the default (no-styles) page", () => {
+    const { html } = renderViewer({
+      detected: TASK_LIST_DETECTED,
+      search: new URLSearchParams(),
+    });
+    expect(html).toContain("data-theme-picker");
+    expect(html).toContain('value="task-view" selected');
   });
 });

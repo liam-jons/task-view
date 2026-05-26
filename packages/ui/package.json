@@ -15,6 +15,8 @@
     "./record-view/anchors": "./record-view/anchors.ts",
     "./record-view/types": "./record-view/types.ts",
     "./record-view/url-state": "./record-view/url-state.ts",
+    "./record-view/theme-preference": "./record-view/theme-preference.ts",
+    "./record-view/theme-client": "./record-view/theme-client.ts",
     "./utils/*": "./utils/*.ts",
     "./hooks/*": "./hooks/*.ts",
     "./shortcuts": "./shortcuts/index.ts",

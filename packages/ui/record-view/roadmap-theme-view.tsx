@@ -30,6 +30,7 @@ import {
 } from "./record-frontmatter-card";
 import { MarkdownBody } from "./markdown-renderer";
 import { recordRouteHref } from "./anchors";
+import { StatusBadge } from "./status-badge";
 import type { LedgerContext, NavStripData } from "./types";
 
 // Theme status enum literals sourced from the canonical Zod enum at
@@ -48,7 +49,7 @@ export const RoadmapThemeView: React.FC<{
     {
       key: "status",
       label: "Status",
-      value: theme.status,
+      value: <StatusBadge status={theme.status} />,
       editAffordance: (
         <FieldPencil
           fieldPath={["themes", theme.id, "status"]}

@@ -32,12 +32,49 @@ import { fileURLToPath } from "node:url";
  * `apps/server/web/index.tsx` relative to the repo root (two dirs up).
  */
 function resolveClientEntry(): string {
-  const here =
-    typeof import.meta.dir === "string"
-      ? import.meta.dir
-      : dirname(fileURLToPath(import.meta.url));
   // packages/server → repo root → apps/server/web/index.tsx
-  return join(here, "..", "..", "apps", "server", "web", "index.tsx");
+  return join(thisDir(), "..", "..", "apps", "server", "web", "index.tsx");
+}
+
+/** Directory of THIS module (packages/server). */
+function thisDir(): string {
+  return typeof import.meta.dir === "string"
+    ? import.meta.dir
+    : dirname(fileURLToPath(import.meta.url));
+}
+
+/**
+ * Resolve the packages/ui directory — the one location where the
+ * `highlight.js` symlink is guaranteed reachable (Bun's isolated install
+ * layout puts it under packages/ui/node_modules; there is no root hoist).
+ */
+function uiDir(): string {
+  return join(thisDir(), "..", "ui");
+}
+
+/**
+ * A Bun.build plugin that redirects bare `highlight.js` (+ subpath) imports
+ * to their absolute on-disk path, resolved FROM packages/ui.
+ *
+ * Why: `Bun.build` resolves a bare specifier relative to the importing file,
+ * and from the client entry's location (apps/server/web) `highlight.js` does
+ * not resolve. The package is only reachable under packages/ui/node_modules.
+ * Importing via a packages/ui re-export shim works when bundling from the
+ * repo root, but `bun test packages/server` seeds resolution differently and
+ * the shim's own bare import then fails too. Anchoring resolution explicitly
+ * at packages/ui via `Bun.resolveSync` makes the build context-independent
+ * (and version-agnostic — resolveSync picks the installed version). OQ-1.
+ */
+function hljsResolverPlugin(): import("bun").BunPlugin {
+  const ui = uiDir();
+  return {
+    name: "task-view-hljs-resolver",
+    setup(build) {
+      build.onResolve({ filter: /^highlight\.js(\/.*)?$/ }, (args) => {
+        return { path: Bun.resolveSync(args.path, ui) };
+      });
+    },
+  };
 }
 
 /** In-process cache — built once per server process. */
@@ -86,6 +123,10 @@ async function buildClientBundle(): Promise<string> {
     minify: true,
     // No splitting — a single inline string is what we inject.
     splitting: false,
+    // Resolve `highlight.js` from packages/ui regardless of the runner's
+    // resolution base, so the client-side syntax-highlight pass (OQ-1) bundles
+    // deterministically under `bun apps/server/index.ts` AND `bun test`.
+    plugins: [hljsResolverPlugin()],
   });
   if (!result.success) {
     const logs = result.logs.map((l) => String(l.message ?? l)).join("; ");

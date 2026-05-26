@@ -29,8 +29,12 @@ task-view/
 ├── packages/
 │   ├── schemas/                  # Vendored Knowledge Hub Zod schemas (ID-20.6 vendor commit)
 │   ├── server/                   # Bun server primitives (browser launch, repo info, port retry)
+│   │                             #   + viewer-styles.ts: boot-assembled inline <style> for GET /
 │   ├── shared/                   # Cross-cut helpers (draft, config, code-nav, code-file)
 │   └── ui/                       # Markdown renderer + diagram primitives
+│                                 #   theme.css → @imports theme.base.css (browser-valid base, OQ-2 split);
+│                                 #   record-view/record-view.css = themed record-view stylesheet
+│                                 #   (inlined at GET / by viewer-styles.ts; <html> = theme-{id}[ light])
 └── tests/
     └── test-fixtures/            # Markdown test fixtures inherited from upstream
 ```

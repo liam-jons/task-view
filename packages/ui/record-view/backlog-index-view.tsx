@@ -41,6 +41,7 @@ import {
   type BacklogFilterState,
 } from "./url-state";
 import { sortBacklogItemsForIndex } from "./backlog-sort";
+import { PriorityBadge, StatusBadge } from "./status-badge";
 
 export interface BacklogIndexViewProps {
   items: readonly BacklogItem[];
@@ -222,8 +223,12 @@ const BacklogItemRow: React.FC<{ item: BacklogItem }> = ({ item }) => {
       </td>
       <td>{item.description}</td>
       <td>{item.type}</td>
-      <td>{item.status}</td>
-      <td>{item.priority}</td>
+      <td>
+        <StatusBadge status={item.status} />
+      </td>
+      <td>
+        <PriorityBadge priority={item.priority} />
+      </td>
       <td
         className="record-view-rank-cell"
         data-rank-value={rankValue === null ? "" : String(rankValue)}

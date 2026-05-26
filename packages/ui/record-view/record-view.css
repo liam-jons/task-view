@@ -1,0 +1,894 @@
+/* record-view.css — themed styling for the SSR record-view surface.
+ *
+ * record-view-styling SPEC SV-3 … SV-44 / TASKS T5-T11. Authored as plain,
+ * token-driven CSS (SV-1): every colour / radius / font is a CSS custom
+ * property the theme files define (themes/*.css), or a color-mix()/oklch()
+ * derivation of one — NO hardcoded themable literals. Works for light AND
+ * dark automatically because each token is defined for both modes.
+ *
+ * This file is inlined into the GET / response <head> by the boot assembler
+ * (packages/server/viewer-styles.ts) after the token layer + theme.base.css,
+ * so the base :focus-visible ring, transitions, ::selection and .sr-only are
+ * already present and inherited here (SV-40).
+ *
+ * Selector source of truth: SPEC §3 (80 record-view-* tokens). The
+ * record-view-css.test.ts coverage guard asserts every enumerated class has
+ * at least one rule here (SV-54).
+ */
+
+/* ================================================================== */
+/* SV-11/12/13 — page shell, container, typography scale              */
+/* ================================================================== */
+
+.record-view-task-list-index,
+.record-view-roadmap-index,
+.record-view-backlog-index,
+.record-view-task-page,
+.record-view-backlog-item,
+.record-view-roadmap-theme,
+.record-view-not-found {
+  display: block;
+  max-width: 64rem;
+  margin-inline: auto;
+  padding: clamp(1rem, 4vw, 1.5rem);
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  line-height: 1.6;
+}
+
+/* Headings (SV-12). Scoped to the page roots so we never touch markdown-body
+   headings (those get their own floor under SV-30). */
+.record-view-task-list-index > header h1,
+.record-view-roadmap-index > header h1,
+.record-view-backlog-index > header h1,
+.record-view-task-page > header h1,
+.record-view-backlog-item > header h1,
+.record-view-roadmap-theme > header h1,
+.record-view-not-found h1 {
+  font-size: clamp(1.75rem, 4vw, 2rem);
+  font-weight: 600;
+  line-height: 1.2;
+  margin: 0 0 0.75rem;
+  color: var(--foreground);
+}
+
+.record-view-task-page > section > h2,
+.record-view-backlog-item > section > h2,
+.record-view-roadmap-theme > section > h2,
+.record-view-task-subtasks > h2 {
+  font-size: 1.35rem;
+  font-weight: 600;
+  margin: 1.5rem 0 0.75rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--foreground);
+}
+
+.record-view-subtask-block > h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+  color: var(--foreground);
+}
+
+/* ID-prefix muting (SV-12): the literal "ID-20: " / "20: " text node before
+   the editable .record-view-field-value reads muted, so the title span is the
+   emphasis. We can't select the bare text node, so mute the heading and
+   restore full foreground on the value span. */
+.record-view-task-page > header h1,
+.record-view-backlog-item > header h1,
+.record-view-roadmap-theme > header h1,
+.record-view-subtask-block > h3 {
+  color: var(--muted-foreground);
+}
+.record-view-task-page > header h1 .record-view-field-value,
+.record-view-backlog-item > header h1 .record-view-field-value,
+.record-view-roadmap-theme > header h1 .record-view-field-value,
+.record-view-subtask-block > h3 .record-view-field-value {
+  color: var(--foreground);
+}
+
+/* SV-13 — mono for code + ids + rank values + commit refs. */
+.record-view-task-page code,
+.record-view-backlog-item code,
+.record-view-roadmap-theme code,
+.record-view-not-found code,
+.record-view-task-list-table a[data-task-link],
+.record-view-roadmap-index-table a[data-theme-link],
+.record-view-backlog-table a[data-item-link],
+.record-view-rank-value {
+  font-family: var(--font-mono);
+}
+
+/* Count / caption text (SV-12). */
+.record-view-task-list-index-count,
+.record-view-roadmap-index-count,
+.record-view-backlog-index-count {
+  font-size: 0.8rem;
+  color: var(--muted-foreground);
+  margin: 0 0 1rem;
+}
+
+/* ================================================================== */
+/* SV-17 — frontmatter card                                           */
+/* ================================================================== */
+
+.record-view-frontmatter-card {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0 1.5rem;
+  background: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: 0 1px 3px color-mix(in oklab, var(--border) 60%, transparent);
+}
+
+.record-view-frontmatter-row + .record-view-frontmatter-row .record-view-frontmatter-label,
+.record-view-frontmatter-row + .record-view-frontmatter-row .record-view-frontmatter-value {
+  border-top: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+}
+
+.record-view-frontmatter-label {
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+  width: 1%;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  padding: 0.5rem 0.75rem;
+}
+
+.record-view-frontmatter-value {
+  vertical-align: top;
+  padding: 0.5rem 0.75rem;
+  color: var(--card-foreground);
+}
+
+.record-view-frontmatter-value [data-unset],
+.record-view-field-value [data-unset] {
+  color: var(--muted-foreground);
+}
+
+/* ================================================================== */
+/* SV-14/15/16 — index tables                                         */
+/* ================================================================== */
+
+.record-view-task-list-table,
+.record-view-roadmap-index-table,
+.record-view-backlog-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5rem 0 1.5rem;
+  font-size: 0.95rem;
+}
+
+.record-view-task-list-table th,
+.record-view-roadmap-index-table th,
+.record-view-backlog-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  padding: 0.5rem 0.75rem;
+  border-bottom: 2px solid var(--border);
+  /* SV-16 sticky header — opaque bg so rows never bleed through. The token
+     layer guarantees --background/--muted are opaque colours. */
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--background);
+}
+
+.record-view-task-list-table td,
+.record-view-roadmap-index-table td,
+.record-view-backlog-table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 50%, transparent);
+  vertical-align: top;
+}
+
+/* SV-15 zebra + hover — background-only tints (text stays a fg token, SV-42). */
+.record-view-task-list-table tbody tr:nth-child(even),
+.record-view-roadmap-index-table tbody tr:nth-child(even),
+.record-view-backlog-table tbody tr:nth-child(even) {
+  background: color-mix(in oklab, var(--muted) 18%, transparent);
+}
+.record-view-task-list-table tbody tr:hover,
+.record-view-roadmap-index-table tbody tr:hover,
+.record-view-backlog-table tbody tr:hover {
+  background: color-mix(in oklab, var(--muted) 35%, transparent);
+}
+
+/* ================================================================== */
+/* SV-18 — nav strip                                                  */
+/* ================================================================== */
+
+.record-view-nav-strip {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin: 0 0 1.5rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+.record-view-nav-prev,
+.record-view-nav-index,
+.record-view-nav-next {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.record-view-nav-index {
+  text-align: center;
+}
+.record-view-nav-next {
+  text-align: right;
+}
+.record-view-nav-strip [data-nav-prev-disabled],
+.record-view-nav-strip [data-nav-next-disabled] {
+  color: var(--muted-foreground);
+  cursor: default;
+}
+
+/* ================================================================== */
+/* SV-19/20 — links + broken-target                                   */
+/* ================================================================== */
+
+.record-view-record-link,
+.record-view-doc-link,
+.record-view-task-list-table a,
+.record-view-roadmap-index-table a,
+.record-view-backlog-table a,
+.record-view-nav-strip a,
+.record-view-not-found a {
+  color: var(--primary);
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+.record-view-record-link:hover,
+.record-view-record-link:focus-visible,
+.record-view-doc-link:hover,
+.record-view-doc-link:focus-visible,
+.record-view-task-list-table a:hover,
+.record-view-task-list-table a:focus-visible,
+.record-view-roadmap-index-table a:hover,
+.record-view-roadmap-index-table a:focus-visible,
+.record-view-backlog-table a:hover,
+.record-view-backlog-table a:focus-visible,
+.record-view-nav-strip a:hover,
+.record-view-nav-strip a:focus-visible,
+.record-view-not-found a:hover,
+.record-view-not-found a:focus-visible {
+  text-decoration: underline;
+}
+
+/* SV-20 — broken link. Keep the inline strikethrough/opacity (it wins
+   regardless); add destructive colour + muted suffix. Also selectable via
+   the data-broken-target hook per broken-target.tsx. */
+.record-view-broken-link,
+[data-broken-target] {
+  color: var(--destructive);
+}
+.record-view-broken-suffix {
+  color: var(--muted-foreground);
+  font-size: 0.85em;
+}
+
+/* ================================================================== */
+/* SV-21/22 — warning + blocked banners                               */
+/* ================================================================== */
+
+.record-view-page-top-warning {
+  background: color-mix(in oklab, var(--warning) 15%, transparent);
+  border-left: 3px solid var(--warning);
+  color: var(--foreground);
+  padding: 0.6rem 0.9rem;
+  border-radius: calc(var(--radius) - 4px);
+  margin: 0 0 1rem;
+}
+.record-view-blocked-banner {
+  background: color-mix(in oklab, var(--destructive) 15%, transparent);
+  border-left: 3px solid var(--destructive);
+  color: var(--foreground);
+  padding: 0.6rem 0.9rem;
+  border-radius: calc(var(--radius) - 4px);
+  margin: 0 0 1rem;
+}
+
+/* ================================================================== */
+/* SV-23/24 — promotion badge + status / priority badges (OQ-4)       */
+/* ================================================================== */
+
+.record-view-promotion-badge {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--success) 20%, transparent);
+  color: var(--foreground);
+}
+
+/* OQ-4 — status/priority badges. The components now emit data-status /
+   data-priority hooks (lower-snake-cased value). Render every status/priority
+   value as a themed pill; per-value attribute selectors add a semantic tint
+   (background-only; text stays --foreground for AA, SV-42/44 — the value text
+   itself carries the meaning so colour is never the only signal). */
+.record-view-status-badge,
+.record-view-priority-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  white-space: nowrap;
+  background: color-mix(in oklab, var(--muted) 50%, transparent);
+  color: var(--foreground);
+  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+}
+
+/* Status value tints (done/in_progress/pending/blocked/ready/deferred). */
+[data-status="done"] {
+  background: color-mix(in oklab, var(--success) 22%, transparent);
+  border-color: color-mix(in oklab, var(--success) 45%, transparent);
+}
+[data-status="in_progress"] {
+  background: color-mix(in oklab, var(--warning) 22%, transparent);
+  border-color: color-mix(in oklab, var(--warning) 45%, transparent);
+}
+[data-status="ready"] {
+  background: color-mix(in oklab, var(--primary) 18%, transparent);
+  border-color: color-mix(in oklab, var(--primary) 40%, transparent);
+}
+[data-status="blocked"] {
+  background: color-mix(in oklab, var(--destructive) 20%, transparent);
+  border-color: color-mix(in oklab, var(--destructive) 45%, transparent);
+}
+[data-status="deferred"] {
+  background: color-mix(in oklab, var(--muted) 55%, transparent);
+  border-color: color-mix(in oklab, var(--border) 70%, transparent);
+  color: var(--muted-foreground);
+}
+[data-status="pending"] {
+  background: color-mix(in oklab, var(--muted) 45%, transparent);
+}
+
+/* Priority tier tints (critical/high/medium/low). */
+[data-priority="critical"] {
+  background: color-mix(in oklab, var(--destructive) 22%, transparent);
+  border-color: color-mix(in oklab, var(--destructive) 45%, transparent);
+}
+[data-priority="high"] {
+  background: color-mix(in oklab, var(--warning) 22%, transparent);
+  border-color: color-mix(in oklab, var(--warning) 45%, transparent);
+}
+[data-priority="medium"] {
+  background: color-mix(in oklab, var(--accent) 18%, transparent);
+  border-color: color-mix(in oklab, var(--accent) 40%, transparent);
+}
+[data-priority="low"] {
+  background: color-mix(in oklab, var(--muted) 45%, transparent);
+  color: var(--muted-foreground);
+}
+
+/* ================================================================== */
+/* SV-25/26 — drag gutter + rank cell                                 */
+/* ================================================================== */
+
+.record-view-drag-cell {
+  width: 2.25rem;
+  text-align: center;
+  color: var(--muted-foreground);
+}
+.record-view-drag-cell [data-drag-handle] {
+  cursor: grab;
+  display: inline-block;
+  padding: 0.1rem 0.3rem;
+  border-radius: calc(var(--radius) - 6px);
+  color: var(--muted-foreground);
+}
+.record-view-drag-cell [data-drag-handle]:hover {
+  color: var(--foreground);
+}
+.record-view-rank-cell {
+  white-space: nowrap;
+}
+.record-view-rank-value {
+  margin-right: 0.25rem;
+}
+
+/* ================================================================== */
+/* SV-28/29 — empty + not-found states                                */
+/* ================================================================== */
+
+.record-view-empty-ledger,
+.record-view-empty-filtered,
+.record-view-empty-subtasks {
+  text-align: center;
+  color: var(--muted-foreground);
+  font-style: italic;
+  padding: 2.5rem 1rem;
+  margin: 0;
+}
+.record-view-not-found {
+  text-align: center;
+  padding-top: 3rem;
+}
+.record-view-not-found h1 {
+  font-weight: 500;
+}
+
+/* Priority / status note paragraphs on the Task page. */
+.record-view-priority-note,
+.record-view-status-note {
+  margin: 0.5rem 0;
+  color: var(--foreground);
+}
+
+/* ================================================================== */
+/* SV-27 — pencil button (edit affordance)                            */
+/* ================================================================== */
+
+.record-view-pencil-button {
+  background: transparent;
+  border: 0;
+  padding: 0 0.25rem;
+  margin-left: 0.25rem;
+  cursor: pointer;
+  color: var(--muted-foreground);
+  line-height: 1;
+  font-size: 0.9em;
+  /* Subtle by default; rises to full on container hover / keyboard focus. */
+  opacity: 0.5;
+  transition: opacity 150ms, color 150ms;
+}
+.record-view-pencil-button:hover,
+.record-view-pencil-button:focus-visible {
+  color: var(--primary);
+  opacity: 1;
+}
+/* SV-41 — reveal on hover AND focus-within so keyboard/AT users always reach
+   it; never a hover-only affordance. */
+td:hover > .record-view-pencil-button,
+td:focus-within > .record-view-pencil-button,
+[data-edit-container]:hover .record-view-pencil-button,
+[data-edit-container]:focus-within .record-view-pencil-button,
+.record-view-frontmatter-value:hover .record-view-pencil-button,
+.record-view-frontmatter-value:focus-within .record-view-pencil-button {
+  opacity: 1;
+}
+
+/* ================================================================== */
+/* SV-33/34/35/36 — edit form, inputs, save/cancel, doc-link editor   */
+/* ================================================================== */
+
+.record-view-edit-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: flex-start;
+  margin: 0.25rem 0;
+}
+
+.record-view-text-input,
+.record-view-textarea,
+.record-view-enum-dropdown,
+.record-view-array-comma-input,
+.record-view-backlog-filters select,
+.record-view-doclink-path,
+.record-view-doclink-anchor,
+.record-view-doclink-raw {
+  background: var(--input);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+}
+.record-view-textarea {
+  width: 100%;
+  min-height: 4lh;
+  resize: vertical;
+}
+
+.record-view-save-button {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0.35rem 0.75rem;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.record-view-save-button:hover,
+.record-view-save-button:focus-visible {
+  background: color-mix(in oklab, var(--primary) 85%, var(--foreground));
+}
+.record-view-cancel-button {
+  background: transparent;
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0.35rem 0.75rem;
+  font: inherit;
+  cursor: pointer;
+}
+.record-view-cancel-button:hover,
+.record-view-cancel-button:focus-visible {
+  background: color-mix(in oklab, var(--muted) 40%, transparent);
+}
+.record-view-save-cancel-controls {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+/* SV-35 — inline error drops to its own line in --destructive. */
+.record-view-inline-error {
+  color: var(--destructive);
+  font-size: 0.85rem;
+  margin-top: 0.35rem;
+  flex-basis: 100%;
+}
+
+/* SV-36 — doc-link editor table. */
+.record-view-doclink-table {
+  width: 100%;
+  border-collapse: collapse;
+  flex-basis: 100%;
+  font-size: 0.9rem;
+}
+.record-view-doclink-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  padding: 0.25rem 0.4rem;
+  font-size: 0.8rem;
+}
+.record-view-doclink-row td {
+  padding: 0.2rem 0.4rem;
+}
+.record-view-doclink-path,
+.record-view-doclink-anchor,
+.record-view-doclink-raw {
+  width: 100%;
+}
+.record-view-doclink-add {
+  background: transparent;
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0.25rem 0.6rem;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  margin-top: 0.35rem;
+}
+.record-view-doclink-add:hover,
+.record-view-doclink-add:focus-visible {
+  background: color-mix(in oklab, var(--muted) 40%, transparent);
+}
+.record-view-doclink-delete {
+  background: transparent;
+  color: var(--destructive);
+  border: 0;
+  padding: 0.2rem 0.4rem;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.record-view-doclink-delete:hover,
+.record-view-doclink-delete:focus-visible {
+  text-decoration: underline;
+}
+/* The form wrapper variant used by the doc-link editor (reserved token). */
+.record-view-doclink-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex-basis: 100%;
+}
+
+/* ================================================================== */
+/* SV-37 — backlog filter controls                                    */
+/* ================================================================== */
+
+.record-view-backlog-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: end;
+  margin-block: 1rem;
+}
+.record-view-filter-select {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.record-view-filter-label {
+  font-size: 0.8rem;
+  color: var(--muted-foreground);
+}
+.record-view-backlog-filters noscript button {
+  background: transparent;
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0.35rem 0.75rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+/* ================================================================== */
+/* SV-30/31/32 — markdown body, journal blocks, code (resolves §2.5)  */
+/* ================================================================== */
+/*
+ * The markdown children are Tailwind-classed (mb-4, leading-relaxed,
+ * border-collapse, text-[15px] …) which produce nothing without a Tailwind
+ * build. These element-level rules, scoped under the body containers, give
+ * the prose a correct typographic floor. Mirrors the .html-block idiom now
+ * in theme.base.css.
+ */
+.record-view-markdown-body,
+.record-view-details,
+.record-view-details-prose,
+.record-view-details-journal-body {
+  color: var(--foreground);
+}
+
+.record-view-markdown-body p,
+.record-view-details p,
+.record-view-details-prose p,
+.record-view-details-journal-body p {
+  margin: 0.75rem 0;
+  line-height: 1.6;
+}
+.record-view-markdown-body ul,
+.record-view-markdown-body ol,
+.record-view-details ul,
+.record-view-details ol,
+.record-view-details-prose ul,
+.record-view-details-prose ol,
+.record-view-details-journal-body ul,
+.record-view-details-journal-body ol {
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+}
+.record-view-markdown-body ul,
+.record-view-details ul,
+.record-view-details-prose ul,
+.record-view-details-journal-body ul {
+  list-style: disc;
+}
+.record-view-markdown-body ol,
+.record-view-details ol,
+.record-view-details-prose ol,
+.record-view-details-journal-body ol {
+  list-style: decimal;
+}
+.record-view-markdown-body li,
+.record-view-details li,
+.record-view-details-prose li {
+  margin: 0.2rem 0;
+}
+.record-view-markdown-body h1,
+.record-view-markdown-body h2,
+.record-view-markdown-body h3,
+.record-view-markdown-body h4,
+.record-view-details h1,
+.record-view-details h2,
+.record-view-details h3,
+.record-view-details h4,
+.record-view-details-prose h1,
+.record-view-details-prose h2,
+.record-view-details-prose h3,
+.record-view-details-prose h4 {
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1rem 0 0.5rem;
+  color: var(--foreground);
+}
+.record-view-markdown-body h1,
+.record-view-details h1,
+.record-view-details-prose h1 { font-size: 1.4rem; }
+.record-view-markdown-body h2,
+.record-view-details h2,
+.record-view-details-prose h2 { font-size: 1.2rem; }
+.record-view-markdown-body h3,
+.record-view-details h3,
+.record-view-details-prose h3 { font-size: 1.05rem; }
+.record-view-markdown-body h4,
+.record-view-details h4,
+.record-view-details-prose h4 { font-size: 0.95rem; }
+
+.record-view-markdown-body blockquote,
+.record-view-details blockquote,
+.record-view-details-prose blockquote {
+  border-left: 2px solid color-mix(in oklab, var(--primary) 50%, transparent);
+  padding-left: 1rem;
+  margin: 0.75rem 0;
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+.record-view-markdown-body a,
+.record-view-details a,
+.record-view-details-prose a,
+.record-view-details-journal-body a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.record-view-markdown-body table,
+.record-view-details table,
+.record-view-details-prose table {
+  border-collapse: collapse;
+  width: auto;
+  margin: 0.75rem 0;
+  font-size: 0.9rem;
+}
+.record-view-markdown-body th,
+.record-view-markdown-body td,
+.record-view-details th,
+.record-view-details td,
+.record-view-details-prose th,
+.record-view-details-prose td {
+  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  padding: 0.35rem 0.6rem;
+  text-align: left;
+}
+.record-view-markdown-body th,
+.record-view-details th,
+.record-view-details-prose th {
+  background: color-mix(in oklab, var(--muted) 30%, transparent);
+  font-weight: 600;
+}
+
+/* Inline code (SV-32). */
+.record-view-markdown-body code,
+.record-view-details code,
+.record-view-details-prose code,
+.record-view-details-journal-body code {
+  font-family: var(--font-mono);
+  background: var(--code-bg, color-mix(in oklab, var(--muted) 50%, transparent));
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+/* Code blocks (SV-32): legible from tokens alone (mono on --code-bg + wrap),
+   regardless of whether client-side highlight.js (OQ-1 Option B) has run.
+   The SSR <pre> carries Tailwind box classes that don't resolve, so set the
+   box model here. hljs colour (added client-side) layers on top. */
+.record-view-markdown-body pre,
+.record-view-details pre,
+.record-view-details-prose pre,
+.record-view-details-journal-body pre {
+  font-family: var(--font-mono);
+  background: var(--code-bg, color-mix(in oklab, var(--muted) 50%, transparent));
+  border: 1px solid color-mix(in oklab, var(--border) 40%, transparent);
+  border-radius: 6px;
+  padding: 0.75rem;
+  margin: 0.75rem 0;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.record-view-markdown-body pre code,
+.record-view-details pre code,
+.record-view-details-prose pre code,
+.record-view-details-journal-body pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+}
+
+/* SV-31 — journal blocks: subtly indented + visually distinct. */
+.record-view-details-journal {
+  border-left: 2px solid color-mix(in oklab, var(--primary) 50%, transparent);
+  background: color-mix(in oklab, var(--muted) 30%, transparent);
+  padding: 0.5rem 0.9rem;
+  margin: 0.75rem 0 0.75rem 1rem;
+  border-radius: calc(var(--radius) - 4px);
+}
+.record-view-details-journal-label {
+  font-weight: 600;
+  color: var(--foreground);
+}
+.record-view-details-journal-ts {
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+  font-family: var(--font-mono);
+}
+
+/* Generic field-value span (used widely; keep it inheriting, no chrome). */
+.record-view-field-value {
+  /* intentionally minimal — inherits surrounding type. */
+}
+
+/* Subtask detail wrappers (structural; keep readable spacing). */
+.record-view-subtask-block {
+  margin: 1.25rem 0;
+  padding-top: 1rem;
+  border-top: 1px solid color-mix(in oklab, var(--border) 50%, transparent);
+}
+.record-view-subtask-description {
+  margin: 0.5rem 0;
+}
+.record-view-subtask-details-label {
+  font-weight: 600;
+  margin: 0.5rem 0 0.25rem;
+}
+.record-view-subtask-details {
+  margin: 0.25rem 0 0.5rem;
+}
+.record-view-test-strategy {
+  margin: 0.5rem 0;
+}
+.record-view-task-description {
+  margin: 0.5rem 0 1rem;
+}
+
+/* Roadmap-theme link-list sections + cross-doc / notes wrappers. */
+.record-view-roadmap-theme-description,
+.record-view-roadmap-theme-cross-doc-links,
+.record-view-roadmap-theme-notes,
+.record-view-roadmap-theme-linked-tasks,
+.record-view-roadmap-theme-linked-backlog,
+.record-view-backlog-notes,
+.record-view-backlog-details,
+.record-view-backlog-test-strategy,
+.record-view-backlog-header {
+  margin: 0.75rem 0;
+}
+.record-view-roadmap-theme-linked-tasks ul,
+.record-view-roadmap-theme-linked-backlog ul,
+.record-view-roadmap-theme-cross-doc-links ul {
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+  list-style: disc;
+}
+
+/* ================================================================== */
+/* OQ-3 — in-page theme picker toolbar                                */
+/* ================================================================== */
+
+.record-view-toolbar {
+  max-width: 64rem;
+  margin-inline: auto;
+  padding: 0.5rem clamp(1rem, 4vw, 1.5rem) 0;
+  display: flex;
+  justify-content: flex-end;
+}
+.record-view-theme-picker select {
+  background: var(--input);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0.25rem 0.5rem;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+/* ================================================================== */
+/* SV-43 — reduced motion: zero the transitions this file introduces. */
+/* ================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  .record-view-pencil-button {
+    transition-duration: 0s;
+  }
+}
