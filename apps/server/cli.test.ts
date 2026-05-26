@@ -5,6 +5,10 @@ import {
   isTopLevelHelpInvocation,
   isVersionInvocation,
 } from "./cli";
+// The canonical tool version lives in the ROOT package.json (`0.2.0` at
+// time of writing). Import it so the assertion tracks future version
+// bumps instead of rotting on a hardcoded literal.
+import rootPkg from "../../package.json";
 
 describe("CLI top-level help", () => {
   test("recognizes top-level --help", () => {
@@ -31,8 +35,11 @@ describe("CLI --version", () => {
     expect(isVersionInvocation(["review"])).toBe(false);
   });
 
-  test("formats version string", () => {
+  test("formats version string from the canonical root package.json", () => {
     const output = formatVersion();
-    expect(output).toStartWith("task-view ");
+    // Shape: `task-view <semver>` — never the rotting `dev`/`0.1.0` literals.
+    expect(output).toMatch(/^task-view \d+\.\d+\.\d+/);
+    // And it must equal the REAL tool version from the root package.json.
+    expect(output).toBe(`task-view ${rootPkg.version}`);
   });
 });

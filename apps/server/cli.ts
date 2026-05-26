@@ -9,6 +9,15 @@
  * own flag set.
  */
 
+// The canonical tool version is the ROOT package.json `version` field
+// (`0.2.0`). The bin shim (`bin/task-view.js`) runs `bun apps/server/
+// index.ts` directly from source with NO bundler step, so there is no
+// `define` to bake a `__CLI_VERSION__` constant — Bun's native JSON
+// import is the reliable source. `../../package.json` from this file
+// (`apps/server/cli.ts`) resolves to the repo-root package.json, not a
+// per-package one.
+import rootPkg from "../../package.json";
+
 export function isTopLevelHelpInvocation(args: string[]): boolean {
   return args[0] === "--help";
 }
@@ -17,10 +26,8 @@ export function isVersionInvocation(args: string[]): boolean {
   return args[0] === "--version" || args[0] === "-v";
 }
 
-declare const __CLI_VERSION__: string;
-
 export function formatVersion(): string {
-  return `task-view ${typeof __CLI_VERSION__ !== "undefined" ? __CLI_VERSION__ : "dev"}`;
+  return `task-view ${rootPkg.version}`;
 }
 
 export function formatTopLevelHelp(): string {

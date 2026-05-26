@@ -34,6 +34,7 @@ import {
 } from "@task-view/server/path-resolution";
 import { openBrowser } from "@task-view/server/browser";
 import { startTaskViewServer } from "@task-view/server/ledger";
+import { formatVersion } from "./cli";
 
 // ── Runtime gate ─────────────────────────────────────────────────────────────
 
@@ -346,10 +347,12 @@ async function main(): Promise<number> {
     return 0;
   }
   if (parsed.version) {
-    // No package.json import to keep this tree-shakeable; the
-    // bin/task-view.js shim can echo a separately-baked version
-    // string via env later if needed.
-    console.log("task-view 0.1.0");
+    // Print the real tool version, sourced from the ROOT package.json
+    // via `formatVersion()` (cli.ts). The bin/task-view.js shim runs
+    // this file directly under Bun with no bundler `define`, so the
+    // version comes from Bun's native JSON import — not a hardcoded
+    // literal (the old `0.1.0` rotted behind the root bump to 0.2.0).
+    console.log(formatVersion());
     return 0;
   }
 
