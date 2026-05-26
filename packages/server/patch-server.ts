@@ -99,17 +99,6 @@ export interface PatchServerOptions {
   port?: number;
   /** Optional hostname override — must be a loopback variant (§5.8). */
   hostname?: string;
-  /**
-   * Optional per-request callback fired BEFORE the patch-server's
-   * dispatcher runs. The caller (e.g. `startTaskViewServer` in ledger.ts)
-   * uses this to track `last_request_at` for browser-close detection
-   * (TECH §6.5 / PRODUCT inv 50). Errors thrown from this callback are
-   * swallowed so a buggy tracker can never break the HTTP layer.
-   *
-   * NOT exposed via the bare HTTP API surface — purely a lifecycle
-   * hook for the wrapping `startTaskViewServer` factory.
-   */
-  onRequest?: (request: Request) => void;
 }
 
 export interface PatchServerHandle {
@@ -1140,26 +1129,11 @@ export function startPatchServer(opts: PatchServerOptions): PatchServerHandle {
 
   const ctx: RequestContext = { ledgerPath: opts.ledgerPath };
   const fetchHandler = buildFetchHandler(ctx);
-  const onRequest = opts.onRequest;
-
-  // Wrap the dispatcher to fire `onRequest` BEFORE the body handler.
-  // Errors from `onRequest` are swallowed so a buggy tracker cannot
-  // break the HTTP layer (per the onRequest doc-comment).
-  const wrappedFetch: typeof fetchHandler = async (request) => {
-    if (onRequest) {
-      try {
-        onRequest(request);
-      } catch {
-        // Intentional: tracker errors must not surface to HTTP clients.
-      }
-    }
-    return fetchHandler(request);
-  };
 
   const server = Bun.serve({
     port,
     hostname,
-    fetch: wrappedFetch,
+    fetch: fetchHandler,
   });
 
   // Bun.serve types server.port as number | undefined to cover the

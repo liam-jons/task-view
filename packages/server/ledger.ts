@@ -5,7 +5,7 @@
  * CLI binary (§6.1 `bin/task-view.js`) and the plugin manifest
  * (§6.2 — plugin invokes the CLI binary, which calls this).
  *
- * Composes the ID-20.8 `startPatchServer` HTTP factory with three
+ * Composes the ID-20.8 `startPatchServer` HTTP factory with two
  * lifecycle policies the bare patch-server does NOT carry:
  *
  *   1. **Port retry (§6.6 / PRODUCT inv 49):** on `EADDRINUSE`, retry
@@ -14,38 +14,22 @@
  *      (OS-assigned random free port). After exhaustion, throw
  *      "could not bind".
  *
- *   2. **Browser-close detection (§6.5 / PRODUCT inv 50):** the server
- *      tracks `last_request_at` (timestamp) and `request_count`. A poll
- *      timer checks every `_tickMs` whether
- *      `now - last_request_at > BROWSER_CLOSE_IDLE_MS` (30s) AND
- *      `request_count >= 1`. The at-least-one-request gate prevents
- *      premature exit while a slow browser is still launching. On
- *      match, the server stops and `waitForExit()` resolves.
- *
- *   3. **`waitForExit()` promise:** lets the CLI binary block on
+ *   2. **`waitForExit()` promise:** lets the CLI binary block on
  *      `await handle.waitForExit()` rather than juggling signal
- *      handlers. The promise resolves on explicit `handle.stop()` or
- *      browser-close idle detection.
+ *      handlers. The promise resolves on explicit `handle.stop()` —
+ *      the CLI routes Ctrl-C / SIGTERM through it.
  *
- * The module-level constants are NOT user-configurable per inv 49 + 50.
- * The `_testIdleMs` / `_testTickMs` options exist solely for the
- * test suite so assertions don't require 30-second waits.
+ * The 30-second browser-close idle-shutdown (formerly §6.5 / PRODUCT
+ * inv 50) was REMOVED for task-view. Static SSR pages issue no keepalive
+ * request, so an idle timer tore the server down ~30s after *any* load,
+ * not just on tab-close, making the viewer unusable. The server now runs
+ * until explicitly stopped — a permanent-fork divergence (PRODUCT inv 1).
  */
 import { startPatchServer, type PatchServerHandle } from "./patch-server";
 import { detectSchema } from "./detect-schema";
 import { generateMirrors } from "./mirror-generator";
 
 // ── Public constants ─────────────────────────────────────────────────────────
-
-/**
- * Browser-close idle threshold (TECH §6.5 / PRODUCT inv 50).
- * 30 seconds — long enough for a slow browser tab reload, short enough
- * to release the port within a sensible developer feedback window.
- *
- * NOT user-configurable per inv 50: "Threshold is a constant in
- * packages/server/ledger.ts, not user-configurable".
- */
-export const BROWSER_CLOSE_IDLE_MS = 30_000 as const;
 
 /**
  * Maximum port-bind retry attempts (TECH §6.6 / PRODUCT inv 49).
@@ -67,12 +51,6 @@ export interface TaskViewServerOptions {
   port?: number | string;
   /** Optional loopback hostname override (validated by patch-server). */
   hostname?: string;
-  /**
-   * Test-only overrides — let the suite assert behaviour without
-   * 30-second sleeps. NOT exposed via the public CLI surface.
-   */
-  _testIdleMs?: number;
-  _testTickMs?: number;
 }
 
 export interface TaskViewServerHandle {
@@ -118,7 +96,6 @@ function bindWithRetry(
     ledgerPath: string;
     requestedPort: number | undefined;
     hostname: string | undefined;
-    onRequest: (request: Request) => void;
   },
 ): PatchServerHandle {
   let lastError: unknown;
@@ -129,7 +106,6 @@ function bindWithRetry(
         ledgerPath: options.ledgerPath,
         port: portForAttempt,
         hostname: options.hostname,
-        onRequest: options.onRequest,
       });
     } catch (err) {
       lastError = err;
@@ -207,19 +183,15 @@ export async function startTaskViewServer(
   opts: TaskViewServerOptions,
 ): Promise<TaskViewServerHandle> {
   const port = parsePortOption(opts.port);
-  const idleMs = opts._testIdleMs ?? BROWSER_CLOSE_IDLE_MS;
-  const tickMs = opts._testTickMs ?? 1_000;
 
   // ── Boot-time mirror regen (Subtask 20.22) ────────────────────────────────
   // Bring the on-disk mirror in line with the current ledger BEFORE binding
   // the port + serving the first render.
   await regenerateMirrorsOnBoot(opts.ledgerPath);
 
-  // ── Tracker state for browser-close detection (§6.5) ──────────────────────
-  let lastRequestAt = Date.now();
-  let requestCount = 0;
-
   // ── Exit-promise plumbing ────────────────────────────────────────────────
+  // Resolves only on explicit stop() — the CLI wires SIGINT/SIGTERM to it.
+  // There is no idle / browser-close auto-shutdown (removed; see file header).
   let resolveExit: () => void = () => {};
   let exitResolved = false;
   const exitPromise = new Promise<void>((resolve) => {
@@ -230,38 +202,12 @@ export async function startTaskViewServer(
     };
   });
 
-  const onRequest = (_request: Request): void => {
-    requestCount += 1;
-    lastRequestAt = Date.now();
-  };
-
   // ── Bind (with retry) ────────────────────────────────────────────────────
   const patchHandle = bindWithRetry({
     ledgerPath: opts.ledgerPath,
     requestedPort: port,
     hostname: opts.hostname,
-    onRequest,
   });
-
-  // ── Idle poll timer (§6.5) ───────────────────────────────────────────────
-  // Refs to be cleared on stop().
-  let idleTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
-    if (exitResolved) {
-      if (idleTimer) clearInterval(idleTimer);
-      idleTimer = null;
-      return;
-    }
-    if (requestCount < 1) return; // at-least-one-request gate
-    const idleFor = Date.now() - lastRequestAt;
-    if (idleFor > idleMs) {
-      if (idleTimer) clearInterval(idleTimer);
-      idleTimer = null;
-      // Stop the HTTP server, then resolve the exit promise. We do not
-      // wait synchronously here — fire-and-forget so the timer callback
-      // is non-blocking.
-      void patchHandle.stop(true).then(() => resolveExit());
-    }
-  }, tickMs);
 
   // ── Public handle ────────────────────────────────────────────────────────
   return {
@@ -270,10 +216,6 @@ export async function startTaskViewServer(
     hostname: patchHandle.hostname,
     stop: async (force = true) => {
       if (exitResolved) return;
-      if (idleTimer) {
-        clearInterval(idleTimer);
-        idleTimer = null;
-      }
       try {
         await patchHandle.stop(force);
       } finally {

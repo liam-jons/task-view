@@ -7,11 +7,11 @@
  *
  *   - Port-retry policy: MAX_RETRIES = 5, fresh random port per attempt,
  *     exit with "could not bind" after exhaustion (TECH §6.6 / inv 49).
- *   - Browser-close detection: track `last_request_at`; if
- *     `now - last_request_at > BROWSER_CLOSE_IDLE_MS` (30s) AND
- *     `request_count >= 1`, signal exit (TECH §6.5 / inv 50).
  *   - `waitForExit()` — promise resolving when the server is asked to
- *     stop (by exit signal or browser-close detection).
+ *     stop (explicit stop(); the CLI wires Ctrl-C / SIGTERM to it).
+ *
+ * Note: the 30s browser-close idle-shutdown (formerly TECH §6.5 / inv
+ * 50) was removed — the server runs until explicitly stopped.
  *
  * These tests cover the behaviour at the module level — the
  * integration tests under `tests/integration/*` cover the end-to-end
@@ -25,7 +25,6 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  BROWSER_CLOSE_IDLE_MS,
   MAX_PORT_RETRIES,
   startTaskViewServer,
   type TaskViewServerHandle,
@@ -63,10 +62,6 @@ async function writeLedger(): Promise<string> {
 }
 
 describe("startTaskViewServer — constants", () => {
-  test("BROWSER_CLOSE_IDLE_MS = 30_000 (30s per TECH §6.5 / inv 50)", () => {
-    expect(BROWSER_CLOSE_IDLE_MS).toBe(30_000);
-  });
-
   test("MAX_PORT_RETRIES = 5 (per TECH §6.6 / inv 49)", () => {
     expect(MAX_PORT_RETRIES).toBe(5);
   });
@@ -195,68 +190,20 @@ describe("startTaskViewServer — port retry (TECH §6.6 / inv 49)", () => {
   });
 });
 
-describe("startTaskViewServer — browser-close detection (TECH §6.5 / inv 50)", () => {
-  test("does NOT exit before any request has been served (pre-first-request guard)", async () => {
+describe("startTaskViewServer — no idle auto-shutdown (fork divergence from inv 50)", () => {
+  test("does NOT exit on its own after serving a request then going idle", async () => {
     const ledgerPath = await writeLedger();
-    // Use a short threshold for the test — the function under test
-    // accepts a `_testIdleMs` override.
-    handle = await startTaskViewServer({
-      ledgerPath,
-      _testIdleMs: 100,
-      _testTickMs: 25,
-    });
-    // No request issued; wait 250ms (>> idle threshold). Should NOT
-    // resolve waitForExit, because request_count is 0.
-    const exitPromise = handle.waitForExit();
+    handle = await startTaskViewServer({ ledgerPath });
     let exited = false;
-    exitPromise.then(() => {
+    handle.waitForExit().then(() => {
       exited = true;
     });
-    await new Promise((r) => setTimeout(r, 250));
-    expect(exited).toBe(false);
-  });
-
-  test("exits when idle threshold passes AFTER at least one request", async () => {
-    const ledgerPath = await writeLedger();
-    handle = await startTaskViewServer({
-      ledgerPath,
-      _testIdleMs: 100,
-      _testTickMs: 25,
-    });
-    const exitPromise = handle.waitForExit();
-    // Issue one request to flip the gate.
+    // Serve a request, then sit idle. The pre-fork build tore the server
+    // down ~30s after the last request; task-view removed that timer, so
+    // only an explicit stop() resolves waitForExit.
     const resp = await fetch(`${handle.url}/api/ledger`);
     expect(resp.status).toBe(200);
-    // Now wait longer than idle threshold — server should exit.
-    await Promise.race([
-      exitPromise,
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("timeout: server did not exit")), 1000),
-      ),
-    ]);
-    // Mark handle null so afterEach doesn't double-stop a closed server.
-    handle = null;
-  });
-
-  test("does NOT exit while requests continue to refresh last_request_at", async () => {
-    const ledgerPath = await writeLedger();
-    handle = await startTaskViewServer({
-      ledgerPath,
-      _testIdleMs: 150,
-      _testTickMs: 25,
-    });
-    const exitPromise = handle.waitForExit();
-    let exited = false;
-    exitPromise.then(() => {
-      exited = true;
-    });
-    // Fire requests every 50ms (well below idle threshold) for 300ms
-    for (let i = 0; i < 6; i++) {
-      const resp = await fetch(`${handle.url}/api/ledger`);
-      expect(resp.status).toBe(200);
-      await new Promise((r) => setTimeout(r, 50));
-    }
-    // Server should still be alive — last_request_at keeps refreshing.
+    await new Promise((r) => setTimeout(r, 300));
     expect(exited).toBe(false);
   });
 });

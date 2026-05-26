@@ -12,9 +12,9 @@
  *   - When `--check` is set, we run a one-shot mirror-regen sanity
  *     pass (`runRegenCheck`) and exit (PRODUCT inv 42).
  *   - Otherwise we start the full task-view server via
- *     `startTaskViewServer` (TECH §6.1 + §6.5 + §6.6), open the
- *     browser unless `--no-browser`, and block on `waitForExit()`
- *     until the server stops (browser-close detection or signal).
+ *     `startTaskViewServer` (TECH §6.1 + §6.6), open the browser
+ *     unless `--no-browser`, and block on `waitForExit()` until the
+ *     user stops the server (Ctrl-C / SIGTERM).
  *
  * SIGTERM / SIGINT route to a graceful stop() — the user's Ctrl-C
  * releases the port + resolves waitForExit cleanly.
@@ -413,7 +413,7 @@ async function main(): Promise<number> {
 
   // Print readiness BEFORE opening browser, so the browser's network
   // request can race ahead of stdout (CLI watchers see the URL first).
-  console.log(`Server ready at ${launchUrl} — close the tab to exit`);
+  console.log(`Server ready at ${launchUrl} — press Ctrl-C to exit`);
 
   // Open browser unless --no-browser.
   if (!parsed.noBrowser && process.env.TASK_VIEW_NO_BROWSER !== "1") {
@@ -432,8 +432,8 @@ async function main(): Promise<number> {
   process.on("SIGINT", () => onSignal("SIGINT"));
   process.on("SIGTERM", () => onSignal("SIGTERM"));
 
-  // Block on the exit promise (browser-close idle detection OR signal
-  // handler stop).
+  // Block on the exit promise (resolved by the SIGINT / SIGTERM handler
+  // calling handle.stop()).
   await handle.waitForExit();
   return 0;
 }
