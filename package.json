@@ -1,6 +1,6 @@
 {
   "name": "task-view",
-  "version": "0.1.0-task-view-prep",
+  "version": "0.2.0",
   "private": true,
   "description": "Read + edit per-record .md mirrors of Knowledge Hub workflow ledgers (task-list / roadmap / backlog). Forked from backnotprop/plannotator v0.19.18.",
   "author": "Knowledge Hub team",
