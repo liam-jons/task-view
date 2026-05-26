@@ -50,6 +50,7 @@ import {
   parseFieldPathAttr,
   recordPatchPath,
   type DispatchKind,
+  type DocLinkRowInput,
 } from "../../../packages/ui/record-view/edit-dispatch";
 import { classifySaveResult } from "../../../packages/ui/record-view/edit-state";
 
@@ -124,6 +125,22 @@ interface ActiveEdit {
    * type without branching every consumer.
    */
   input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+  /**
+   * ID-20.28: re-edit hook stash. Captured at openEditor time so
+   * commitDisplay can write them back onto the rebuilt pencil after a
+   * successful save — otherwise a same-session re-edit loses its editor
+   * state (enum options empty; textarea/array-comma falls back to rendered
+   * display text instead of raw source).
+   *
+   * - `options`: the raw `data-edit-options` string for enum / enum-nullable
+   *   kinds (comma-separated literals). Absent for all other kinds.
+   * - `rawValue`: the raw `data-edit-raw-value` string for textarea /
+   *   array-comma / doc-links kinds (raw Markdown source, comma-joined ids,
+   *   or JSON-serialised DocLink[]). Absent for kinds that don't emit it
+   *   (text / integer / rank).
+   */
+  options: string | null;
+  rawValue: string | null;
 }
 
 const activeEdits = new Map<HTMLElement, ActiveEdit>();
@@ -167,12 +184,12 @@ function openEditor(openButton: HTMLElement): void {
   // here so buildEditForm receives the structured array. Falls back to []
   // when the JSON is absent or malformed (defensive; the SSR always emits
   // valid JSON from JSON.stringify).
-  let parsedDocLinks: Array<{ path: string; anchor: string | null; raw: string }> = [];
+  let parsedDocLinks: DocLinkRowInput[] = [];
   if (kind === "doc-links" && rawValueAttr !== null) {
     try {
       const parsed = JSON.parse(rawValueAttr) as unknown;
       if (Array.isArray(parsed)) {
-        parsedDocLinks = parsed as typeof parsedDocLinks;
+        parsedDocLinks = parsed as DocLinkRowInput[];
       }
     } catch {
       // malformed JSON → start with empty array
@@ -191,6 +208,8 @@ function openEditor(openButton: HTMLElement): void {
   input.focus();
   if ("select" in input && typeof input.select === "function") input.select();
 
+  // ID-20.28: stash re-edit hooks so commitDisplay can write them back onto
+  // the rebuilt pencil after a successful save (same-session re-edit support).
   activeEdits.set(container, {
     container,
     fieldPath,
@@ -198,6 +217,8 @@ function openEditor(openButton: HTMLElement): void {
     recordId,
     originalNodes,
     input,
+    options: optionsAttr,
+    rawValue: rawValueAttr,
   });
 }
 
@@ -240,7 +261,7 @@ function buildEditForm(
   fieldAttr: string,
   currentValue: string,
   optionsAttr?: string | null,
-  parsedDocLinks?: Array<{ path: string; anchor: string | null; raw: string }>,
+  parsedDocLinks?: DocLinkRowInput[],
 ): {
   wrapper: HTMLFormElement;
   input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
@@ -435,7 +456,7 @@ function renumberDocLinkRows(tbody: HTMLElement): void {
  */
 function collectDocLinks(
   form: HTMLElement,
-): Array<{ path: string; anchor: string | null; raw: string }> {
+): DocLinkRowInput[] {
   const tbody = form.querySelector<HTMLElement>("[data-doclink-rows]");
   if (!tbody) return [];
 
@@ -533,7 +554,7 @@ async function saveEditor(container: HTMLElement): Promise<void> {
 
   // ID-20.27: doc-links kind collects structured rows instead of reading
   // a single input.value — full-array replacement per TECH §5.1 + inv 34-35.
-  let rawValue: string | readonly { path: string; anchor: string | null; raw: string }[];
+  let rawValue: string | readonly DocLinkRowInput[];
   if (active.kind === "doc-links") {
     const form = container.querySelector<HTMLElement>("form.record-view-edit-form");
     rawValue = form ? collectDocLinks(form) : [];
@@ -604,11 +625,20 @@ async function saveEditor(container: HTMLElement): Promise<void> {
  * display shows the `raw` labels joined by ", " (the same text the SSR
  * originally rendered); the pencil's `data-edit-raw-value` is updated to
  * the serialised JSON of the new array so a re-open pre-fills correctly.
+ *
+ * ID-20.28: for all other kinds, the rebuilt pencil re-emits the re-edit
+ * hooks that the original SSR FieldPencil carried:
+ *   - enum / enum-nullable → `data-edit-options` (the options string stashed
+ *     on ActiveEdit at openEditor time) so a second open builds the <select>
+ *     with all options, not an empty one.
+ *   - textarea / array-comma → `data-edit-raw-value` = the just-saved raw
+ *     string so a re-open pre-fills with the raw source (incl. Markdown /
+ *     journal blocks), not the rendered display text.
  */
 function commitDisplay(
   container: HTMLElement,
   active: ActiveEdit,
-  rawSaved: string | readonly { path: string; anchor: string | null; raw: string }[],
+  rawSaved: string | readonly DocLinkRowInput[],
 ): void {
   const fieldAttr = active.fieldPath.join(">");
   clearChildren(container);
@@ -618,9 +648,7 @@ function commitDisplay(
 
   if (active.kind === "doc-links") {
     // Build the post-save display for doc-links.
-    const links = Array.isArray(rawSaved)
-      ? (rawSaved as readonly { path: string; anchor: string | null; raw: string }[])
-      : [];
+    const links = Array.isArray(rawSaved) ? (rawSaved as readonly DocLinkRowInput[]) : [];
     const displayText =
       links.length === 0 ? "—" : links.map((l) => l.raw).join(", ");
     valueSpan.className = "record-view-field-value";
@@ -644,8 +672,12 @@ function commitDisplay(
       container.closest<HTMLElement>("[data-rank-value]") ?? container;
     if (rankHost.hasAttribute("data-rank-value")) {
       rankHost.setAttribute("data-rank-value", trimmed);
+      // rank cells use the legacy class; all other editable fields use the
+      // neutral record-view-field-value class (ID-20.28 nit).
+      valueSpan.className = "record-view-rank-value";
+    } else {
+      valueSpan.className = "record-view-field-value";
     }
-    valueSpan.className = "record-view-rank-value";
     valueSpan.textContent = display;
 
     pencil.type = "button";
@@ -654,6 +686,27 @@ function commitDisplay(
     pencil.setAttribute("data-edit-field", fieldAttr);
     pencil.setAttribute("data-edit-kind", active.kind);
     pencil.setAttribute("aria-label", "Edit");
+
+    // ID-20.28: re-emit re-edit hooks so a same-session second edit works
+    // correctly (enum options not lost; textarea/array-comma raw source
+    // preserved instead of falling back to rendered display text).
+    if (active.options !== null) {
+      pencil.setAttribute("data-edit-options", active.options);
+    }
+    // For textarea / array-comma: use the just-saved raw string as the new
+    // raw-value (it IS the canonical source after the PATCH succeeded).
+    // For doc-links: handled in the if-branch above.
+    // For text / integer / rank: rawValue is null → no hook emitted (correct).
+    if (
+      active.kind === "textarea" ||
+      active.kind === "array-comma" ||
+      active.kind === "array-comma-number"
+    ) {
+      pencil.setAttribute("data-edit-raw-value", rawStr);
+    } else if (active.rawValue !== null) {
+      // Preserve any other stashed rawValue (defensive; no current consumer).
+      pencil.setAttribute("data-edit-raw-value", active.rawValue);
+    }
   }
 
   const glyph = document.createElement("span");

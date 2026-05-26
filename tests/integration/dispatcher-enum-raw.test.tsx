@@ -1001,3 +1001,288 @@ describe("ID-20.27 — doc-links editor 409 / 422 / Esc", () => {
     expect(container.textContent).toContain("PRODUCT.md §3.2 inv 4");
   });
 });
+
+// ── ID-20.28: re-edit hooks restored after a successful save ─────────────────
+//
+// After a successful save, `commitDisplay` rebuilds the pencil button. The
+// bug: the else-branch (non-doc-links kinds) dropped `data-edit-options` and
+// `data-edit-raw-value` from the rebuilt pencil, so a second same-session
+// edit opened an enum <select> with zero options and a textarea pre-filled
+// with the rendered text instead of the raw Markdown source.
+//
+// Fix: stash `options` and `rawValue` on `ActiveEdit` at openEditor time and
+// write them back onto the rebuilt pencil in commitDisplay for ALL kinds.
+
+describe("ID-20.28 — enum re-edit: rebuilt pencil retains data-edit-options", () => {
+  test("after saving an enum field, re-opening the pencil builds a <select> with ALL options (not empty)", async () => {
+    // First edit
+    const pencil = mountField({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>status",
+      kind: "enum",
+      displayed: "in_progress",
+      options: "done,pending,in_progress,blocked,deferred,cancelled",
+    });
+    queuePatchResponse(200, { ok: true, newMtime: "2026-05-26T00:01:00.000Z" });
+
+    const container = clickOpen(pencil);
+    const select1 = container.querySelector("select") as HTMLSelectElement;
+    select1.value = "done";
+    select1.dispatchEvent(new Event("change", { bubbles: true }));
+    (container.querySelector('[data-edit-action="save"]') as HTMLButtonElement)
+      .dispatchEvent(new Event("click", { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+
+    // Confirm first save landed + form is gone
+    expect(container.querySelector("select")).toBeNull();
+    expect(container.querySelector("form")).toBeNull();
+
+    // Second edit — click the REBUILT pencil
+    const rebuiltPencil = container.querySelector<HTMLButtonElement>(
+      '[data-edit-action="open"]',
+    );
+    expect(rebuiltPencil).not.toBeNull();
+
+    rebuiltPencil!.dispatchEvent(new Event("click", { bubbles: true }));
+
+    // The <select> must have all 6 options, NOT zero options
+    const select2 = container.querySelector("select");
+    expect(select2).not.toBeNull();
+    const optionValues = Array.from(
+      select2!.querySelectorAll("option"),
+    ).map((o) => o.value);
+    expect(optionValues).toEqual([
+      "done",
+      "pending",
+      "in_progress",
+      "blocked",
+      "deferred",
+      "cancelled",
+    ]);
+    // The saved value must be pre-selected
+    expect((select2 as HTMLSelectElement).value).toBe("done");
+  });
+
+  test("after saving an enum-nullable field, re-opening retains the (unset) sentinel + all options", async () => {
+    const pencil = mountField({
+      recordId: "3",
+      recordKind: "roadmap-theme",
+      fieldPath: "themes>3>category",
+      kind: "enum-nullable",
+      displayed: "alpha",
+      options: "alpha,beta,gamma",
+    });
+    queuePatchResponse(200, { ok: true, newMtime: "2026-05-26T00:01:01.000Z" });
+
+    const container = clickOpen(pencil);
+    const select1 = container.querySelector("select") as HTMLSelectElement;
+    // Pick a value and save
+    select1.value = "beta";
+    select1.dispatchEvent(new Event("change", { bubbles: true }));
+    (container.querySelector('[data-edit-action="save"]') as HTMLButtonElement)
+      .dispatchEvent(new Event("click", { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+
+    expect(container.querySelector("form")).toBeNull();
+
+    // Re-open
+    container
+      .querySelector<HTMLButtonElement>('[data-edit-action="open"]')!
+      .dispatchEvent(new Event("click", { bubbles: true }));
+
+    const select2 = container.querySelector("select") as HTMLSelectElement;
+    expect(select2).not.toBeNull();
+    const opts = Array.from(select2.querySelectorAll("option")).map((o) => o.value);
+    // Nullable sentinel ("") + the 3 options
+    expect(opts).toEqual(["", "alpha", "beta", "gamma"]);
+    expect(select2.value).toBe("beta");
+  });
+});
+
+describe("ID-20.28 — textarea re-edit: rebuilt pencil retains data-edit-raw-value", () => {
+  test("after saving a textarea, the rebuilt pencil carries data-edit-raw-value set to the saved string", async () => {
+    // The key invariant: the rebuilt pencil MUST have data-edit-raw-value so that
+    // a real browser (where the display span shows *rendered* HTML, not raw source)
+    // can pre-fill the editor from the hook rather than from the rendered text.
+    // In this DOM test the span holds the raw string too, so we assert on the
+    // hook attribute directly — the presence of data-edit-raw-value on the rebuilt
+    // pencil is the spec-level invariant (inv 27-28).
+    const rawSource =
+      "## Title\n\nBody text.\n\n<info added on 2026-05-26>\njournal block\n</info added on 2026-05-26>";
+    const pencil = mountField({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>subtasks>4>details",
+      kind: "textarea",
+      displayed: "Title Body text. journal block",
+      rawValue: rawSource,
+    });
+    queuePatchResponse(200, { ok: true, newMtime: "2026-05-26T00:01:02.000Z" });
+
+    const container = clickOpen(pencil);
+    const ta1 = container.querySelector("textarea") as HTMLTextAreaElement;
+    const editedRaw =
+      "## Title\n\nEdited body.\n\n<info added on 2026-05-26>\njournal block\n</info added on 2026-05-26>";
+    ta1.value = editedRaw;
+    (container.querySelector('[data-edit-action="save"]') as HTMLButtonElement)
+      .dispatchEvent(new Event("click", { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+
+    expect(container.querySelector("form")).toBeNull();
+
+    // The rebuilt pencil MUST carry data-edit-raw-value = the saved raw string.
+    const rebuiltPencil = container.querySelector<HTMLButtonElement>(
+      '[data-edit-action="open"]',
+    );
+    expect(rebuiltPencil).not.toBeNull();
+    expect(rebuiltPencil!.getAttribute("data-edit-raw-value")).toBe(editedRaw);
+    // Specifically: the journal block is preserved in the hook value.
+    expect(rebuiltPencil!.getAttribute("data-edit-raw-value")).toContain(
+      "<info added on 2026-05-26>",
+    );
+  });
+
+  test("after saving a textarea (no pre-existing rawValue), re-open pre-fills with the raw saved string including Markdown that differs from rendered text", async () => {
+    // No rawValue on the initial pencil — first open falls back to textContent.
+    // After save, commitDisplay must stash the submitted value on the rebuilt
+    // pencil's data-edit-raw-value so re-open reads the raw source, not the
+    // now-rendered displayed text (which omits Markdown syntax + journal blocks).
+    const pencil = mountField({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>description",
+      kind: "textarea",
+      displayed: "Original description",
+      // no rawValue — first open uses textContent
+    });
+    queuePatchResponse(200, { ok: true, newMtime: "2026-05-26T00:01:03.000Z" });
+
+    const container = clickOpen(pencil);
+    const ta1 = container.querySelector("textarea") as HTMLTextAreaElement;
+    // The user types raw Markdown including a journal block — the *saved* value
+    // will be this raw string, but the commitDisplay span will show trimmed text
+    // (the displayed value loses Markdown and the journal block delimiters)
+    const savedRaw =
+      "## New heading\n\nSome **bold** text.\n\n<info added on 2026-05-26>\nappended note\n</info added on 2026-05-26>";
+    ta1.value = savedRaw;
+    (container.querySelector('[data-edit-action="save"]') as HTMLButtonElement)
+      .dispatchEvent(new Event("click", { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+
+    expect(container.querySelector("form")).toBeNull();
+
+    // Re-open: the textarea MUST pre-fill with savedRaw (the raw string submitted),
+    // NOT with the displayed span text (which is just the trimmed version
+    // "## New heading\n\nSome **bold** text.\n\n<info added on 2026-05-26>…"
+    // because commitDisplay puts rawStr.trim() into valueSpan.textContent).
+    // The raw source contains Markdown syntax + the journal block — the
+    // data-edit-raw-value hook on the rebuilt pencil is the ONLY source for it.
+    container
+      .querySelector<HTMLButtonElement>('[data-edit-action="open"]')!
+      .dispatchEvent(new Event("click", { bubbles: true }));
+
+    const ta2 = container.querySelector("textarea") as HTMLTextAreaElement;
+    expect(ta2.value).toBe(savedRaw);
+    expect(ta2.value).toContain("<info added on 2026-05-26>");
+  });
+});
+
+describe("ID-20.28 — array-comma re-edit: rebuilt pencil retains data-edit-raw-value", () => {
+  test("after saving an array-comma field, the rebuilt pencil carries data-edit-raw-value = the saved comma-string", async () => {
+    // The rendered display shows link labels ("ID-19, ID-18"), but the raw value
+    // is the canonical comma-joined ids ("19,18"). The rebuilt pencil MUST carry
+    // data-edit-raw-value = the saved string so a re-open pre-fills with the raw
+    // ids, not the rendered label text (which would round-trip wrong values).
+    const pencil = mountField({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>subtasks>5>dependencies",
+      kind: "array-comma",
+      displayed: "ID-19, ID-18",
+      rawValue: "19,18",
+    });
+    queuePatchResponse(200, { ok: true, newMtime: "2026-05-26T00:01:04.000Z" });
+
+    const container = clickOpen(pencil);
+    const input1 = container.querySelector("input") as HTMLInputElement;
+    expect(input1.value).toBe("19,18"); // raw pre-fill on first open
+
+    // Change and save
+    input1.value = "19,18,21";
+    (container.querySelector('[data-edit-action="save"]') as HTMLButtonElement)
+      .dispatchEvent(new Event("click", { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+
+    expect(container.querySelector("form")).toBeNull();
+
+    // The rebuilt pencil MUST carry data-edit-raw-value = the saved comma string.
+    const rebuiltPencil = container.querySelector<HTMLButtonElement>(
+      '[data-edit-action="open"]',
+    );
+    expect(rebuiltPencil).not.toBeNull();
+    expect(rebuiltPencil!.getAttribute("data-edit-raw-value")).toBe("19,18,21");
+  });
+});
+
+describe("ID-20.28 — first-edit and doc-links unregressed", () => {
+  test("first edit of an enum field still works after the fix", () => {
+    const pencil = mountField({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>status",
+      kind: "enum",
+      displayed: "in_progress",
+      options: "done,pending,in_progress,blocked,deferred,cancelled",
+    });
+    const container = clickOpen(pencil);
+    const select = container.querySelector("select") as HTMLSelectElement;
+    expect(select).not.toBeNull();
+    const opts = Array.from(select.querySelectorAll("option")).map((o) => o.value);
+    expect(opts).toEqual([
+      "done",
+      "pending",
+      "in_progress",
+      "blocked",
+      "deferred",
+      "cancelled",
+    ]);
+    expect(select.value).toBe("in_progress");
+  });
+
+  test("doc-links re-edit still works (existing coverage, no regression)", async () => {
+    const { pencil } = mountDocLinksPencil({
+      recordId: "20",
+      recordKind: "task",
+      fieldPath: "tasks>20>cross_doc_links",
+    });
+    queuePatchResponse(200, { ok: true, newMtime: "2026-05-26T00:01:05.000Z" });
+
+    const container = clickOpen(pencil);
+    (container.querySelector('[data-edit-action="save"]') as HTMLButtonElement)
+      .dispatchEvent(new Event("click", { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+
+    expect(container.querySelector("form")).toBeNull();
+
+    // Re-open the doc-links editor — must still pre-fill with the saved links
+    container
+      .querySelector<HTMLButtonElement>('[data-edit-action="open"]')!
+      .dispatchEvent(new Event("click", { bubbles: true }));
+
+    const rows = docLinkRows(container);
+    expect(rows).toHaveLength(2);
+    expect(rowFieldValue(rows[0], "path")).toBe(
+      "docs/specs/per-task-mirror/PRODUCT.md",
+    );
+    expect(rowFieldValue(rows[1], "path")).toBe(
+      "docs/runbooks/staging-refresh.md",
+    );
+  });
+});
