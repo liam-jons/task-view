@@ -10,7 +10,7 @@
  */
 import React from "react";
 import type { Roadmap } from "@task-view/schemas/roadmap";
-import { roadmapThemeHref } from "./anchors";
+import { recordRouteHref } from "./anchors";
 
 export const RoadmapIndexView: React.FC<{
   roadmap: Roadmap;
@@ -60,7 +60,7 @@ export const RoadmapIndexView: React.FC<{
               >
                 <td>
                   <a
-                    href={roadmapThemeHref(theme.id)}
+                    href={recordRouteHref(theme.id)}
                     data-theme-link={theme.id}
                   >
                     {theme.id}

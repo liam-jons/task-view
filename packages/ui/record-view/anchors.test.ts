@@ -4,13 +4,11 @@
  */
 import { describe, expect, test } from "bun:test";
 import {
-  backlogItemHref,
-  roadmapThemeHref,
+  recordRouteHref,
   subtaskAnchorId,
   subtaskDepLabel,
   subtaskHref,
   taskDepLabel,
-  taskMirrorHref,
 } from "./anchors";
 
 describe("Sibling-Subtask anchors (PRODUCT inv 13, TECH §4.4)", () => {
@@ -30,20 +28,19 @@ describe("Sibling-Subtask anchors (PRODUCT inv 13, TECH §4.4)", () => {
 });
 
 describe("Cross-record hrefs (PRODUCT inv 12, 22)", () => {
-  test("taskMirrorHref returns `ID-{id}.md`", () => {
-    expect(taskMirrorHref("20")).toBe("ID-20.md");
-  });
-
   test("taskDepLabel returns `ID-{id}`", () => {
     expect(taskDepLabel("20")).toBe("ID-20");
   });
 
-  test("roadmapThemeHref returns `{id}.md` (ID-20.19 themes)", () => {
-    expect(roadmapThemeHref("3")).toBe("3.md");
-    expect(roadmapThemeHref("42")).toBe("42.md");
+  test("recordRouteHref returns the live `/?record=<id>` server route", () => {
+    // One builder serves all three record kinds — the server routes on
+    // the bare id, not a per-kind `.md` filename.
+    expect(recordRouteHref("20")).toBe("/?record=20");
+    expect(recordRouteHref("42")).toBe("/?record=42");
+    expect(recordRouteHref("45")).toBe("/?record=45");
   });
 
-  test("backlogItemHref returns `{id}.md`", () => {
-    expect(backlogItemHref("45")).toBe("45.md");
+  test("recordRouteHref URL-encodes the record id", () => {
+    expect(recordRouteHref("a b")).toBe("/?record=a%20b");
   });
 });

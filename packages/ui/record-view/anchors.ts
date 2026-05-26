@@ -10,12 +10,11 @@
  * id is already a bare integer); the slugify helper from the upstream
  * parser is reserved for heading-derived anchors per its own contract.
  *
- * Repo-relative href builders for cross-record links also live here so
- * the per-mode renderers don't duplicate path logic.
+ * The live-server cross-record href builder (`recordRouteHref`) also
+ * lives here so the per-mode renderers don't duplicate route logic.
  */
 
 const TASK_MIRROR_PREFIX = "ID-";
-const TASK_MIRROR_EXT = ".md";
 
 /**
  * In-page anchor id for a sibling Subtask (`subtask-3`). Used as the
@@ -34,11 +33,20 @@ export function subtaskHref(subtaskId: number): string {
 }
 
 /**
- * Href to another Task's mirror file from any Task page.
- * Form: `ID-{taskId}.md` (sibling-directory relative).
+ * Href to another record's page on the live loopback server, from any
+ * record or index page.
+ *
+ * The server routes every record kind (Task / Roadmap theme / Backlog
+ * item) purely on the `?record=<id>` query param — see
+ * `packages/server/render-viewer.tsx`. The record id is unique within a
+ * ledger and the server already knows the ledger kind, so one builder
+ * serves all three kinds. There is no per-kind `.md` route on the live
+ * surface: the `ID-{id}.md` / `{id}.md` filenames exist only as on-disk
+ * mirrors, emitted independently by `mirror-generator.ts` /
+ * `index-generator.ts`.
  */
-export function taskMirrorHref(taskId: string): string {
-  return `${TASK_MIRROR_PREFIX}${taskId}${TASK_MIRROR_EXT}`;
+export function recordRouteHref(recordId: string): string {
+  return `/?record=${encodeURIComponent(recordId)}`;
 }
 
 /**
@@ -57,23 +65,4 @@ export function subtaskDepLabel(
  */
 export function taskDepLabel(taskId: string): string {
   return `${TASK_MIRROR_PREFIX}${taskId}`;
-}
-
-/**
- * Href to a Roadmap theme page (cross-record link).
- *
- * Phase-B themes[] roadmap (ID-20.19): a theme mirror is `roadmap/{id}.md`,
- * so the href is the raw bare-digit id with the `.md` extension. The old
- * `section-` prefix (used to disambiguate sections from items) is gone —
- * themes are the only roadmap record kind.
- */
-export function roadmapThemeHref(themeId: string): string {
-  return `${themeId}.md`;
-}
-
-/**
- * Href to a Backlog item page.
- */
-export function backlogItemHref(itemId: string): string {
-  return `${itemId}.md`;
 }

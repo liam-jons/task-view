@@ -74,7 +74,7 @@ describe("TaskListIndexView (TECH §4.3)", () => {
     expect(html).toContain('data-task-row="20"');
     expect(html).toContain('data-task-row="21"');
     expect(html).toContain('data-task-link="20"');
-    expect(html).toContain('href="ID-20.md"');
+    expect(html).toContain('href="/?record=20"');
     expect(html).toContain("Twenty-one");
   });
 
@@ -139,8 +139,8 @@ describe("RoadmapIndexView (themes[] — ID-20.19)", () => {
     expect(html).toContain('<th scope="col">Linked tasks</th>');
     expect(html).toContain('data-theme-row="1"');
     expect(html).toContain('data-theme-row="42"');
-    expect(html).toContain('href="1.md"');
-    expect(html).toContain('href="42.md"');
+    expect(html).toContain('href="/?record=1"');
+    expect(html).toContain('href="/?record=42"');
     expect(html).toContain(">now<");
     expect(html).toContain(">later<");
     // theme count reported

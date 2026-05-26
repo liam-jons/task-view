@@ -126,8 +126,8 @@ describe("RoadmapThemeView — core surfaces", () => {
       <RoadmapThemeView theme={theme} ledger={ledger} nav={NAV} />,
     );
     expect(html).toContain('data-section="linked_tasks"');
-    expect(html).toContain('href="ID-20.md"');
-    expect(html).toContain('href="ID-21.md"');
+    expect(html).toContain('href="/?record=20"');
+    expect(html).toContain('href="/?record=21"');
     expect(html).not.toContain("(missing)");
   });
 
@@ -154,7 +154,7 @@ describe("RoadmapThemeView — core surfaces", () => {
       <RoadmapThemeView theme={theme} ledger={ledger} nav={NAV} />,
     );
     expect(html).toContain('data-section="linked_backlog"');
-    expect(html).toContain('href="45.md"');
+    expect(html).toContain('href="/?record=45"');
   });
 
   test("omits linked_tasks / linked_backlog sections when empty", () => {

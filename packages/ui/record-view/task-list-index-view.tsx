@@ -10,7 +10,7 @@
  */
 import React from "react";
 import type { Task } from "@task-view/schemas/task-list";
-import { taskMirrorHref } from "./anchors";
+import { recordRouteHref } from "./anchors";
 
 export const TaskListIndexView: React.FC<{
   tasks: readonly Task[];
@@ -58,7 +58,7 @@ export const TaskListIndexView: React.FC<{
               <tr key={task.id} data-task-row={task.id}>
                 <td>
                   <a
-                    href={taskMirrorHref(task.id)}
+                    href={recordRouteHref(task.id)}
                     data-task-link={task.id}
                   >
                     ID-{task.id}

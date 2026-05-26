@@ -72,7 +72,7 @@ describe("PRODUCT inv 20 (Backlog index columns) + roadmap-backlog-consolidation
     const html = renderToStaticMarkup(
       <BacklogIndexView items={items} filters={NO_FILTERS} />,
     );
-    expect(html).toContain('href="45.md"');
+    expect(html).toContain('href="/?record=45"');
     expect(html).toContain('data-item-link="45"');
   });
 });

@@ -348,14 +348,14 @@ describe("PRODUCT inv 9 (empty Subtasks → italic 'No subtasks.')", () => {
 // ── PRODUCT inv 12 ────────────────────────────────────────────────────────────
 
 describe("PRODUCT inv 12 (Task dependency links + missing-target + page-top warning)", () => {
-  test("live deps render as links to ID-{depId}.md", () => {
+  test("live deps render as links to the record route", () => {
     const a = mkTask({ id: "20", dependencies: ["19"] });
     const b = mkTask({ id: "19" });
     const ledger = buildLedgerContext({ tasks: [a, b] });
     const html = renderToStaticMarkup(
       <TaskListView task={a} ledger={ledger} nav={NAV} />,
     );
-    expect(html).toContain('href="ID-19.md"');
+    expect(html).toContain('href="/?record=19"');
     expect(html).toContain(">ID-19<");
     // No page-top warning when all deps are live
     expect(html).not.toContain("data-page-top-warning");
@@ -369,7 +369,7 @@ describe("PRODUCT inv 12 (Task dependency links + missing-target + page-top warn
       <TaskListView task={a} ledger={ledger} nav={NAV} />,
     );
     // Live dep is a link
-    expect(html).toContain('href="ID-19.md"');
+    expect(html).toContain('href="/?record=19"');
     // Missing dep has strikethrough + "(missing)" suffix
     expect(html).toContain("(missing)");
     expect(html).toContain("line-through");

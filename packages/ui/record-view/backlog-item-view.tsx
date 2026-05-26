@@ -27,7 +27,7 @@ import {
   DetailsBodyWithJournal,
   MarkdownBody,
 } from "./markdown-renderer";
-import { backlogItemHref } from "./anchors";
+import { recordRouteHref } from "./anchors";
 import type { LedgerContext, NavStripData } from "./types";
 
 export const BacklogItemView: React.FC<{
@@ -86,7 +86,7 @@ export const BacklogItemView: React.FC<{
               item.dependencies.map((depId) => (
                 <MaybeRecordLink
                   key={depId}
-                  href={backlogItemHref(depId)}
+                  href={recordRouteHref(depId)}
                   label={depId}
                   exists={ledger.backlogItemIds.has(depId)}
                 />

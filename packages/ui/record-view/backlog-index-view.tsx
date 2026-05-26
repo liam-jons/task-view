@@ -34,7 +34,7 @@ import React from "react";
 import type { BacklogItem } from "@task-view/schemas/backlog";
 import { BacklogStatus } from "@task-view/schemas/backlog";
 import { Priority } from "@task-view/schemas/work-status";
-import { backlogItemHref } from "./anchors";
+import { recordRouteHref } from "./anchors";
 import {
   applyBacklogFilters,
   FILTER_ALL,
@@ -214,7 +214,7 @@ const BacklogItemRow: React.FC<{ item: BacklogItem }> = ({ item }) => {
       </td>
       <td>
         <a
-          href={backlogItemHref(item.id)}
+          href={recordRouteHref(item.id)}
           data-item-link={item.id}
         >
           {item.id}

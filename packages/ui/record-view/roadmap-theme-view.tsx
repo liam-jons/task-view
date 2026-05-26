@@ -29,7 +29,7 @@ import {
   type FrontmatterRow,
 } from "./record-frontmatter-card";
 import { MarkdownBody } from "./markdown-renderer";
-import { taskMirrorHref, backlogItemHref } from "./anchors";
+import { recordRouteHref } from "./anchors";
 import type { LedgerContext, NavStripData } from "./types";
 
 // Theme status enum literals sourced from the canonical Zod enum at
@@ -119,7 +119,7 @@ export const RoadmapThemeView: React.FC<{
         title="Linked tasks"
         sectionKey="linked_tasks"
         ids={theme.linked_tasks}
-        hrefFor={taskMirrorHref}
+        hrefFor={recordRouteHref}
         labelFor={(id) => `ID-${id}`}
         existsFor={(id) => ledger.taskIds.has(id)}
       />
@@ -128,7 +128,7 @@ export const RoadmapThemeView: React.FC<{
         title="Linked backlog"
         sectionKey="linked_backlog"
         ids={theme.linked_backlog}
-        hrefFor={backlogItemHref}
+        hrefFor={recordRouteHref}
         labelFor={(id) => `#${id}`}
         existsFor={(id) => ledger.backlogItemIds.has(id)}
       />

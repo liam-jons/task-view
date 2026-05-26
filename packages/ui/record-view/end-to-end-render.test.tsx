@@ -280,13 +280,13 @@ describe("Roadmap end-to-end render (themes[] happy path — ID-20.19)", () => {
     // time_horizon + status frontmatter rows
     expect(html).toContain('data-frontmatter-row="time_horizon"');
     expect(html).toContain('data-frontmatter-row="status"');
-    // linked_tasks resolves to the Task mirror href (live, not missing)
+    // linked_tasks resolves to the live record route (live, not missing)
     expect(html).toContain('data-section="linked_tasks"');
-    expect(html).toContain('href="ID-20.md"');
+    expect(html).toContain('href="/?record=20"');
     expect(html).not.toContain("(missing)");
-    // linked_backlog resolves to the Backlog mirror href
+    // linked_backlog resolves to the live record route
     expect(html).toContain('data-section="linked_backlog"');
-    expect(html).toContain('href="45.md"');
+    expect(html).toContain('href="/?record=45"');
     // cross_doc_links render
     expect(html).toContain('href="docs/specs/per-task-mirror/TECH.md#section-3-1"');
     // notes section

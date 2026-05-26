@@ -34,11 +34,11 @@ import {
   MarkdownBody,
 } from "./markdown-renderer";
 import {
+  recordRouteHref,
   subtaskAnchorId,
   subtaskDepLabel,
   subtaskHref,
   taskDepLabel,
-  taskMirrorHref,
 } from "./anchors";
 import type { LedgerContext, NavStripData } from "./types";
 
@@ -170,7 +170,7 @@ export const TaskListView: React.FC<{
               task.dependencies.map((depId) => (
                 <MaybeRecordLink
                   key={depId}
-                  href={taskMirrorHref(depId)}
+                  href={recordRouteHref(depId)}
                   label={taskDepLabel(depId)}
                   exists={ledger.taskIds.has(depId)}
                 />

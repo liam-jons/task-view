@@ -12,6 +12,7 @@
       "ts": "./record-view/*.ts",
       "default": "./record-view/*.tsx"
     },
+    "./record-view/anchors": "./record-view/anchors.ts",
     "./record-view/types": "./record-view/types.ts",
     "./record-view/url-state": "./record-view/url-state.ts",
     "./utils/*": "./utils/*.ts",

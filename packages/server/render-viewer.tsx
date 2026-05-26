@@ -40,6 +40,7 @@ import {
   type NavStripData,
 } from "@task-view/ui/record-view/types";
 import { decodeBacklogFilters } from "@task-view/ui/record-view/url-state";
+import { recordRouteHref } from "@task-view/ui/record-view/anchors";
 import type { DetectSchemaResult } from "./detect-schema";
 import type {
   Task,
@@ -165,9 +166,9 @@ function computeTaskNav(tasks: readonly Task[], current: Task): NavStripData {
   const prev = idx > 0 ? tasks[idx - 1] : null;
   const next = idx >= 0 && idx < tasks.length - 1 ? tasks[idx + 1] : null;
   return {
-    prevHref: prev ? recordHref(prev.id) : null,
+    prevHref: prev ? recordRouteHref(prev.id) : null,
     prevLabel: prev ? `ID-${prev.id}: ${prev.title}` : null,
-    nextHref: next ? recordHref(next.id) : null,
+    nextHref: next ? recordRouteHref(next.id) : null,
     nextLabel: next ? `ID-${next.id}: ${next.title}` : null,
     indexHref: "/",
     indexLabel: "Back to ledger index",
@@ -182,9 +183,9 @@ function computeBacklogNav(
   const prev = idx > 0 ? items[idx - 1] : null;
   const next = idx >= 0 && idx < items.length - 1 ? items[idx + 1] : null;
   return {
-    prevHref: prev ? recordHref(prev.id) : null,
+    prevHref: prev ? recordRouteHref(prev.id) : null,
     prevLabel: prev ? `#${prev.id}: ${prev.description}` : null,
-    nextHref: next ? recordHref(next.id) : null,
+    nextHref: next ? recordRouteHref(next.id) : null,
     nextLabel: next ? `#${next.id}: ${next.description}` : null,
     indexHref: "/",
     indexLabel: "Back to backlog index",
@@ -199,17 +200,13 @@ function computeThemeNav(
   const prev = idx > 0 ? themes[idx - 1] : null;
   const next = idx >= 0 && idx < themes.length - 1 ? themes[idx + 1] : null;
   return {
-    prevHref: prev ? recordHref(prev.id) : null,
+    prevHref: prev ? recordRouteHref(prev.id) : null,
     prevLabel: prev ? `${prev.id}: ${prev.title}` : null,
-    nextHref: next ? recordHref(next.id) : null,
+    nextHref: next ? recordRouteHref(next.id) : null,
     nextLabel: next ? `${next.id}: ${next.title}` : null,
     indexHref: "/",
     indexLabel: "Back to roadmap index",
   };
-}
-
-function recordHref(recordId: string): string {
-  return `/?record=${encodeURIComponent(recordId)}`;
 }
 
 function wrapHtml(body: string, clientScript?: string): string {

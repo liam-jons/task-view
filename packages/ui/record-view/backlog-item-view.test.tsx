@@ -152,14 +152,14 @@ describe("PRODUCT inv 21 (Backlog per-item: frontmatter + description + notes + 
 // ── PRODUCT inv 22 ────────────────────────────────────────────────────────────
 
 describe("PRODUCT inv 22 (Backlog dependencies → inline links + missing-target marker)", () => {
-  test("live deps render as links to {depId}.md", () => {
+  test("live deps render as links to the record route", () => {
     const a = mkItem({ id: "45", dependencies: ["46"] });
     const b = mkItem({ id: "46" });
     const ledger = buildLedgerContext({ backlogItems: [a, b] });
     const html = renderToStaticMarkup(
       <BacklogItemView item={a} ledger={ledger} nav={NAV} />,
     );
-    expect(html).toContain('href="46.md"');
+    expect(html).toContain('href="/?record=46"');
     expect(html).toContain(">46<");
     expect(html).not.toContain("data-page-top-warning");
   });
