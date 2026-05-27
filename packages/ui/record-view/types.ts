@@ -43,6 +43,12 @@ export type ExistingPathsSet = ReadonlySet<string> | null;
  *   Backlog dependency link is live or missing.
  * - `roadmapThemesById` enables Roadmap theme lookups (e.g. resolving a
  *   linked-task back-reference's parent theme).
+ * - `themesByLinkedTask` / `themesByLinkedBacklog` are the {20.30} REVERSE
+ *   cross-ledger index — a record id → the ids of the roadmap themes that
+ *   reference it via `linked_tasks` / `linked_backlog`. Computed at
+ *   render-load from the roadmap's forward edges (OQ-P1 option (a): a
+ *   fork-only, server-computed inverse index — NO ledger-contract change).
+ *   Empty when no roadmap is threaded in.
  * - `existingPaths` enables cross-doc-link existence checks (inv 11). May
  *   be `null` for environments where filesystem existence cannot be
  *   verified (e.g. the SPA running offline against a remote mirror).
@@ -53,6 +59,19 @@ export interface LedgerContext {
   backlogItemIds: ReadonlySet<string>;
   /** Roadmap theme lookup table by theme id. */
   roadmapThemesById: ReadonlyMap<string, RoadmapTheme>;
+  /**
+   * {20.30}: task id → ids of roadmap themes whose `linked_tasks` include it
+   * (the reverse of the forward Roadmap → Task edge). Theme ids preserve
+   * roadmap declaration order and are deduped per task.
+   */
+  themesByLinkedTask: ReadonlyMap<string, readonly string[]>;
+  /**
+   * {20.30}: backlog id → ids of roadmap themes whose `linked_backlog`
+   * include it (the reverse of the forward Roadmap → Backlog edge). This is
+   * the ONLY backlog → roadmap nav path — backlog records carry no roadmap
+   * pointer field.
+   */
+  themesByLinkedBacklog: ReadonlyMap<string, readonly string[]>;
   /** Verified-existing repo-relative paths for cross-doc-link checks. */
   existingPaths: ExistingPathsSet;
 }
@@ -75,10 +94,18 @@ export function buildLedgerContext(input: {
   const taskIds = new Set<string>(input.tasks?.map((t) => t.id) ?? []);
   const roadmapThemeIds = new Set<string>();
   const roadmapThemesById = new Map<string, RoadmapTheme>();
+  // {20.30}: reverse cross-ledger index, built at render-load from the
+  // roadmap's forward edges. A theme is appended to a record's list at most
+  // once (dedupe guards a record id repeated inside one theme's array); the
+  // outer theme loop preserves roadmap declaration order across themes.
+  const themesByLinkedTask = new Map<string, string[]>();
+  const themesByLinkedBacklog = new Map<string, string[]>();
   if (input.roadmap) {
     for (const theme of input.roadmap.themes) {
       roadmapThemeIds.add(theme.id);
       roadmapThemesById.set(theme.id, theme);
+      addReverseEdges(themesByLinkedTask, theme.id, theme.linked_tasks);
+      addReverseEdges(themesByLinkedBacklog, theme.id, theme.linked_backlog);
     }
   }
   const backlogItemIds = new Set<string>(
@@ -89,8 +116,30 @@ export function buildLedgerContext(input: {
     roadmapThemeIds,
     backlogItemIds,
     roadmapThemesById,
+    themesByLinkedTask,
+    themesByLinkedBacklog,
     existingPaths: input.existingPaths ?? null,
   };
+}
+
+/**
+ * Append `themeId` to every referenced record's reverse-edge list ({20.30}),
+ * skipping ids already present for this theme so a record repeated inside one
+ * theme's link array yields a single backlink.
+ */
+function addReverseEdges(
+  index: Map<string, string[]>,
+  themeId: string,
+  referencedIds: readonly string[],
+): void {
+  for (const recordId of referencedIds) {
+    const themes = index.get(recordId);
+    if (themes === undefined) {
+      index.set(recordId, [themeId]);
+    } else if (!themes.includes(themeId)) {
+      themes.push(themeId);
+    }
+  }
 }
 
 /**

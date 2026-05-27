@@ -354,6 +354,80 @@ describe("renderViewer — read-only sibling render ({20.29} SPEC §5 slice 6)",
   });
 });
 
+// ── {20.30} reverse cross-ledger backlinks through renderViewer ─────────────
+
+const BACKLOG_WITH_ITEM: KnownDetected = {
+  kind: "backlog",
+  data: {
+    document_name: "Product Backlog",
+    document_purpose: "fixture",
+    related_documents: [],
+    items: [
+      {
+        id: "45",
+        description: "A backlog item linked from theme 10.",
+        type: "feature",
+        status: "ready",
+        effort_estimate: null,
+        priority: "high",
+        track: "procurement",
+        dependencies: [],
+        session_refs: [],
+        commit_refs: [],
+        cross_doc_links: [],
+        notes: null,
+      },
+    ],
+  },
+} as unknown as KnownDetected;
+
+describe("renderViewer — reverse appears-in-themes backlinks ({20.30})", () => {
+  test("a backlog item resolves its appears-in-themes backlink from the roadmap sibling", () => {
+    // Roadmap theme 10 links backlog 45 (forward). The backlog page has no
+    // pointer field of its own — the reverse index threaded via the roadmap
+    // sibling is what produces the backlink.
+    const { status, html } = renderViewer({
+      detected: BACKLOG_WITH_ITEM,
+      search: new URLSearchParams("record=45"),
+      readOnly: true,
+      launchedSlug: "roadmap",
+      siblings: {
+        roadmap: (ROADMAP_WITH_THEME as { data: unknown }).data as never,
+      },
+    });
+    expect(status).toBe(200);
+    expect(html).toContain('data-record-kind="backlog-item"');
+    expect(html).toContain('data-frontmatter-row="appears_in_themes"');
+    expect(html).toContain('href="/?ledger=roadmap&amp;record=10"');
+    expect(html).toContain('data-cross-ledger="roadmap"');
+    expect(html).toContain("theme 10: Procurement intelligence");
+    // Read-only sibling render preserved (no edit affordances, banner shown).
+    expect(html).not.toContain("data-edit-action");
+    expect(html).toContain("data-ledger-banner");
+  });
+
+  test("a backlog page WITHOUT a roadmap sibling shows no backlink row", () => {
+    const { html } = renderViewer({
+      detected: BACKLOG_WITH_ITEM,
+      search: new URLSearchParams("record=45"),
+    });
+    expect(html).not.toContain('data-frontmatter-row="appears_in_themes"');
+  });
+
+  test("a task resolves its appears-in-themes backlink from the roadmap sibling", () => {
+    // Theme 10's linked_tasks include task 6 → reverse backlink on task 6.
+    const { html } = renderViewer({
+      detected: TASK_LIST_WITH_TASK,
+      search: new URLSearchParams("record=6"),
+      siblings: {
+        roadmap: (ROADMAP_WITH_THEME as { data: unknown }).data as never,
+      },
+    });
+    expect(html).toContain('data-frontmatter-row="appears_in_themes"');
+    expect(html).toContain('href="/?ledger=roadmap&amp;record=10"');
+  });
+});
+
 describe("renderViewer — in-page theme picker (OQ-3)", () => {
   test("renders a server-side <select data-theme-picker> pre-selected to the active theme", () => {
     const { html } = renderViewer({

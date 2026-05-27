@@ -240,7 +240,14 @@ function renderBody({
     }
     const item = items.find((i) => i.id === recordParam);
     if (!item) return renderNotFound("backlog-item", recordParam);
-    const ledger = buildLedgerContext({ backlogItems: items });
+    // {20.30}: thread the sibling roadmap so the backlog item's reverse
+    // "Appears in themes" backlinks resolve (the inverse index is built from
+    // the roadmap's linked_backlog forward edges). Backlog carries no roadmap
+    // pointer field, so without this sibling the page has no path to roadmap.
+    const ledger = buildLedgerContext({
+      backlogItems: items,
+      roadmap: siblings?.roadmap,
+    });
     const nav = computeBacklogNav(items, item);
     return {
       status: 200,

@@ -1384,3 +1384,71 @@ describe("GET / — cross-ledger nav ({20.29} SPEC §5 slice 6)", () => {
     expect(res.status).toBe(404);
   });
 });
+
+// ── {20.30} GET / reverse cross-ledger backlinks (server-computed index) ─────
+
+describe("GET / — reverse appears-in-themes backlinks ({20.30})", () => {
+  test("launched on backlog, /?record=101 renders an appears-in-themes backlink to its theme", async () => {
+    // Roadmap theme 10 lists backlog 101 in linked_backlog (forward). The
+    // launched backlog page has no roadmap pointer field — the server reads
+    // the roadmap sibling and computes the reverse index to produce the link.
+    await writeFixtureBacklog(join(testDir, "product-backlog.json"));
+    await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
+    handle = startPatchServer({
+      ledgerPath: join(testDir, "product-backlog.json"),
+    });
+
+    const res = await fetch(`${handle.url}/?record=101`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('data-record-kind="backlog-item"');
+    expect(html).toContain('data-frontmatter-row="appears_in_themes"');
+    expect(html).toContain('href="/?ledger=roadmap&amp;record=10"');
+    expect(html).toContain('data-cross-ledger="roadmap"');
+    expect(html).toContain("theme 10: Procurement intelligence");
+  });
+
+  test("following that backlink (/?ledger=roadmap&record=10) lands on the theme, read-only", async () => {
+    await writeFixtureBacklog(join(testDir, "product-backlog.json"));
+    await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
+    handle = startPatchServer({
+      ledgerPath: join(testDir, "product-backlog.json"),
+    });
+
+    const res = await fetch(`${handle.url}/?ledger=roadmap&record=10`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('data-record-kind="roadmap-theme"');
+    expect(html).toContain('data-record-id="10"');
+    expect(html).toContain("Procurement intelligence");
+    // Sibling roadmap is read-only; launched ledger is the backlog.
+    expect(html).toContain("data-ledger-banner");
+    expect(html).not.toContain("data-edit-action");
+  });
+
+  test("launched on backlog WITHOUT a roadmap sibling → no backlink row", async () => {
+    await writeFixtureBacklog(join(testDir, "product-backlog.json"));
+    handle = startPatchServer({
+      ledgerPath: join(testDir, "product-backlog.json"),
+    });
+
+    const res = await fetch(`${handle.url}/?record=101`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('data-record-kind="backlog-item"');
+    expect(html).not.toContain('data-frontmatter-row="appears_in_themes"');
+  });
+
+  test("launched on task-list, /?record=20 renders the task's appears-in-themes backlink", async () => {
+    // Theme 10's linked_tasks include task 20 → reverse backlink on task 20.
+    await writeFixtureTaskList(join(testDir, "task-list.json"));
+    await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
+    handle = startPatchServer({ ledgerPath: join(testDir, "task-list.json") });
+
+    const res = await fetch(`${handle.url}/?record=20`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('data-frontmatter-row="appears_in_themes"');
+    expect(html).toContain('href="/?ledger=roadmap&amp;record=10"');
+  });
+});

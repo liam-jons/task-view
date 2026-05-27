@@ -29,6 +29,7 @@ import {
 } from "./markdown-renderer";
 import { recordRouteHref } from "./anchors";
 import { PriorityBadge, StatusBadge } from "./status-badge";
+import { renderAppearsInThemes } from "./task-list-view";
 import type { LedgerContext, NavStripData } from "./types";
 
 export const BacklogItemView: React.FC<{
@@ -81,6 +82,22 @@ export const BacklogItemView: React.FC<{
       value: <PriorityBadge priority={item.priority} />,
     },
     { key: "track", label: "Track", value: item.track },
+    // {20.30}: reverse cross-ledger backlinks — the roadmap themes whose
+    // `linked_backlog` reference this item (computed at load from the sibling
+    // roadmap's forward edges). Backlog items carry NO roadmap pointer field,
+    // so this is the ONLY backlog → roadmap nav path. Rendered only when at
+    // least one theme references the item.
+    ...((): FrontmatterRow[] => {
+      const themeIds = ledger.themesByLinkedBacklog.get(item.id) ?? [];
+      if (themeIds.length === 0) return [];
+      return [
+        {
+          key: "appears_in_themes",
+          label: "Appears in themes",
+          value: renderAppearsInThemes(themeIds, ledger),
+        },
+      ];
+    })(),
     {
       key: "dependencies",
       label: "Dependencies",

@@ -57,6 +57,38 @@ function capabilityThemeChipLabel(
 }
 
 /**
+ * Render the {20.30} reverse cross-ledger backlinks — the roadmap themes
+ * whose `linked_tasks` / `linked_backlog` reference THIS record. Each chip is
+ * a cross-ledger link to `?ledger=roadmap&record=<themeId>`, with the title
+ * resolved from the sibling roadmap when available (bare id otherwise). The
+ * caller renders the surrounding frontmatter row only when `themeIds` is
+ * non-empty, so this never produces an empty list. Shared by the Task and
+ * Backlog item pages (the two reverse-edge targets).
+ */
+export function renderAppearsInThemes(
+  themeIds: readonly string[],
+  ledger: Pick<LedgerContext, "roadmapThemesById" | "roadmapThemeIds">,
+): React.ReactNode {
+  return interleave(
+    themeIds.map((themeId) => (
+      <MaybeRecordLink
+        key={themeId}
+        href={crossLedgerRecordHref("roadmap", themeId)}
+        label={capabilityThemeChipLabel(
+          themeId,
+          ledger.roadmapThemesById.get(themeId)?.title ?? null,
+        )}
+        // The id came FROM a theme in this roadmap, so it resolves; fall back
+        // to the presence set defensively (a sibling-less render has neither).
+        exists={ledger.roadmapThemeIds.has(themeId)}
+        crossLedger="roadmap"
+      />
+    )),
+    ", ",
+  );
+}
+
+/**
  * URL helper for a commit ref. Form `<base>/commit/<sha>`; when the
  * repo URL is not known, the sha renders as plain text.
  */
@@ -190,6 +222,23 @@ export const TaskListView: React.FC<{
           } satisfies FrontmatterRow,
         ]
       : []),
+    // {20.30}: reverse cross-ledger backlinks — the roadmap themes whose
+    // `linked_tasks` reference this Task (computed at load from the sibling
+    // roadmap's forward edges). Distinct from `capability_theme`: a Task can
+    // be listed by a theme without that theme being its capability_theme, and
+    // a Task with no capability_theme can still appear in a theme. Rendered
+    // only when at least one theme references it.
+    ...((): FrontmatterRow[] => {
+      const themeIds = ledger.themesByLinkedTask.get(task.id) ?? [];
+      if (themeIds.length === 0) return [];
+      return [
+        {
+          key: "appears_in_themes",
+          label: "Appears in themes",
+          value: renderAppearsInThemes(themeIds, ledger),
+        },
+      ];
+    })(),
     {
       key: "session_refs",
       label: "Session refs",

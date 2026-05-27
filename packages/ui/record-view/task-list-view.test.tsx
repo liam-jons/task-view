@@ -530,3 +530,82 @@ describe("{20.29} capability_theme chip (SPEC §5 slice 5, §6)", () => {
     expect(html).not.toContain('data-frontmatter-row="capability_theme"');
   });
 });
+
+// ── {20.30} reverse cross-ledger backlinks ───────────────────────────────────
+
+describe("{20.30} appears-in-themes backlinks (reverse of theme.linked_tasks)", () => {
+  const mkRoadmapWith = (
+    themes: { id: string; title: string; linked_tasks: string[] }[],
+  ) =>
+    ({
+      document_name: "Knowledge Hub Roadmap",
+      document_purpose: "p",
+      date: "2026-05-27",
+      status: "Active",
+      forward_looking_only: true,
+      related_documents: [],
+      last_updated: "fixture",
+      themes: themes.map((t) => ({
+        id: t.id,
+        title: t.title,
+        description: "d",
+        time_horizon: "now" as const,
+        status: "in_progress" as const,
+        linked_tasks: t.linked_tasks,
+        linked_backlog: [],
+        session_refs: [],
+        commit_refs: [],
+        cross_doc_links: [],
+        notes: null,
+      })),
+    }) as never;
+
+  test("renders an Appears-in-themes row with a cross-ledger link per theme", () => {
+    // Task 15 appears in theme 1 AND theme 10, yet carries NO capability_theme
+    // — the reverse index is the only path from this task to the roadmap.
+    const task = mkTask({ id: "15", capability_theme: null });
+    const ledger = buildLedgerContext({
+      tasks: [task],
+      roadmap: mkRoadmapWith([
+        { id: "1", title: "Foundations", linked_tasks: ["15", "29"] },
+        { id: "10", title: "Procurement", linked_tasks: ["15"] },
+      ]),
+    });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain('data-frontmatter-row="appears_in_themes"');
+    // Cross-ledger hrefs to the roadmap sibling, one per referencing theme.
+    expect(html).toContain('href="/?ledger=roadmap&amp;record=1"');
+    expect(html).toContain('href="/?ledger=roadmap&amp;record=10"');
+    expect(html).toContain('data-cross-ledger="roadmap"');
+    // Titles resolved from the sibling roadmap.
+    expect(html).toContain("theme 1: Foundations");
+    expect(html).toContain("theme 10: Procurement");
+    // Reverse nav reaches the roadmap even with no forward capability_theme.
+    expect(html).not.toContain('data-frontmatter-row="capability_theme"');
+  });
+
+  test("omits the Appears-in-themes row when no theme references the task", () => {
+    const task = mkTask({ id: "99" });
+    const ledger = buildLedgerContext({
+      tasks: [task],
+      roadmap: mkRoadmapWith([
+        { id: "1", title: "Foundations", linked_tasks: ["15"] },
+      ]),
+    });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).not.toContain('data-frontmatter-row="appears_in_themes"');
+  });
+
+  test("omits the row when no roadmap sibling is threaded in", () => {
+    const task = mkTask({ id: "15" });
+    const ledger = buildLedgerContext({ tasks: [task] });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).not.toContain('data-frontmatter-row="appears_in_themes"');
+  });
+});

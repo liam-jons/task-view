@@ -307,12 +307,16 @@ async function readSiblingLedgers(
   // A roadmap page links out to task-list + backlog; a task page links out
   // to the roadmap (capability_theme chip). We read whatever is useful for
   // the current kind's outbound edges.
+  // {20.30}: a backlog page now also reads the roadmap sibling so its REVERSE
+  // "Appears in themes" backlinks resolve (the inverse index is built from the
+  // roadmap's linked_backlog). Backlog has no FORWARD cross-ledger edge, but
+  // the roadmap is what carries the reverse pointer to it.
   const wanted: KnownDocumentName[] =
     currentKind === "roadmap"
       ? ["Knowledge Hub Task List", "Product Backlog"]
       : currentKind === "task-list"
         ? ["Knowledge Hub Roadmap"]
-        : []; // backlog has no outbound cross-ledger edges (SPEC §4)
+        : ["Knowledge Hub Roadmap"]; // backlog → roadmap (reverse index, {20.30})
   for (const name of wanted) {
     const path = await resolveLedgerPathByName(ledgerPath, name);
     if (path === null) continue;
