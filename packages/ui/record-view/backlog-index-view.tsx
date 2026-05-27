@@ -35,6 +35,7 @@ import type { BacklogItem } from "@task-view/schemas/backlog";
 import { BacklogStatus } from "@task-view/schemas/backlog";
 import { Priority } from "@task-view/schemas/work-status";
 import { recordRouteHref } from "./anchors";
+import { useReadOnly } from "./read-only-context";
 import {
   applyBacklogFilters,
   FILTER_ALL,
@@ -194,6 +195,8 @@ export const BacklogIndexView: React.FC<BacklogIndexViewProps> = ({
 const BacklogItemRow: React.FC<{ item: BacklogItem }> = ({ item }) => {
   const rankValue = item.rank ?? null;
   const fieldKey = `items>${item.id}>rank`;
+  // {20.29}: suppress the inline rank editor on a read-only sibling page.
+  const readOnly = useReadOnly();
   return (
     <tr
       data-backlog-row={item.id}
@@ -236,19 +239,21 @@ const BacklogItemRow: React.FC<{ item: BacklogItem }> = ({ item }) => {
         <span className="record-view-rank-value">
           {rankValue === null ? "—" : rankValue}
         </span>
-        <button
-          type="button"
-          className="record-view-pencil-button"
-          data-edit-action="open"
-          data-edit-field={fieldKey}
-          // ID-20.24: rank is `z.number().int().nullable()` — the PE
-          // dispatcher reads this kind to build an integer input that
-          // clears to null on empty input (the "(unset)" path).
-          data-edit-kind="integer-nullable"
-          aria-label={`Edit rank for backlog item ${item.id}`}
-        >
-          <span aria-hidden="true">{"✎"}</span>
-        </button>
+        {readOnly ? null : (
+          <button
+            type="button"
+            className="record-view-pencil-button"
+            data-edit-action="open"
+            data-edit-field={fieldKey}
+            // ID-20.24: rank is `z.number().int().nullable()` — the PE
+            // dispatcher reads this kind to build an integer input that
+            // clears to null on empty input (the "(unset)" path).
+            data-edit-kind="integer-nullable"
+            aria-label={`Edit rank for backlog item ${item.id}`}
+          >
+            <span aria-hidden="true">{"✎"}</span>
+          </button>
+        )}
       </td>
       <td>{item.track}</td>
       <td>{item.effort_estimate ?? "—"}</td>

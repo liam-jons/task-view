@@ -209,6 +209,129 @@ describe("renderViewer — <html> theme class (SV-51)", () => {
   });
 });
 
+// ── {20.29} cross-ledger read-only render (SPEC §5 slice 6) ─────────────────
+
+const ROADMAP_WITH_THEME: KnownDetected = {
+  kind: "roadmap",
+  data: {
+    document_name: "Knowledge Hub Roadmap",
+    document_purpose: "fixture",
+    date: "2026-05-21",
+    status: "Active",
+    forward_looking_only: true,
+    related_documents: [],
+    last_updated: "fixture",
+    themes: [
+      {
+        id: "10",
+        title: "Procurement intelligence",
+        description: "Theme 10 description.",
+        time_horizon: "now",
+        status: "in_progress",
+        linked_tasks: ["6"],
+        linked_backlog: ["45"],
+        session_refs: [],
+        commit_refs: [],
+        cross_doc_links: [],
+        notes: null,
+      },
+    ],
+  },
+} as unknown as KnownDetected;
+
+const TASK_LIST_WITH_TASK: KnownDetected = {
+  kind: "task-list",
+  data: {
+    document_name: "Knowledge Hub Task List",
+    document_purpose: "fixture",
+    related_documents: [],
+    tasks: [
+      {
+        id: "6",
+        title: "Procurement task",
+        description: "Task 6 description.",
+        status: "in_progress",
+        priority: "must",
+        dependencies: [],
+        subtasks: [],
+        updatedAt: "2026-05-21T15:30:00.000Z",
+        effort_estimate: null,
+        owner: null,
+        priority_note: null,
+        status_note: null,
+        cross_doc_links: [],
+        session_refs: [],
+        commit_refs: [],
+        capability_theme: "10",
+      },
+    ],
+  },
+} as unknown as KnownDetected;
+
+describe("renderViewer — read-only sibling render ({20.29} SPEC §5 slice 6)", () => {
+  test("readOnly suppresses ALL edit affordances (no data-edit-*, no pencils)", () => {
+    const { status, html } = renderViewer({
+      detected: TASK_LIST_WITH_TASK,
+      search: new URLSearchParams("record=6"),
+      readOnly: true,
+    });
+    expect(status).toBe(200);
+    expect(html).toContain('data-record-kind="task"');
+    expect(html).toContain('data-record-id="6"');
+    expect(html).toContain("Procurement task");
+    // Edit affordances fully suppressed.
+    expect(html).not.toContain("data-edit-action");
+    expect(html).not.toContain("data-edit-field");
+    expect(html).not.toContain("data-edit-kind");
+    expect(html).not.toContain("record-view-pencil-button");
+  });
+
+  test("editable (default) render still emits edit affordances", () => {
+    // Regression guard: the launched-ledger path is unchanged.
+    const { html } = renderViewer({
+      detected: TASK_LIST_WITH_TASK,
+      search: new URLSearchParams("record=6"),
+    });
+    expect(html).toContain("data-edit-action");
+    expect(html).toContain("data-edit-field");
+  });
+
+  test("a roadmap theme rendered read-only resolves linked_tasks against sibling ids", () => {
+    // Sibling task-list (id 6) + backlog (id 45) threaded → live cross-ledger
+    // links, NOT (missing).
+    const { status, html } = renderViewer({
+      detected: ROADMAP_WITH_THEME,
+      search: new URLSearchParams("record=10"),
+      readOnly: true,
+      siblings: {
+        tasks: (TASK_LIST_WITH_TASK as { data: { tasks: unknown[] } }).data
+          .tasks as never,
+        backlogItems: [
+          { id: "45" } as never,
+        ],
+      },
+    });
+    expect(status).toBe(200);
+    expect(html).toContain('data-record-kind="roadmap-theme"');
+    expect(html).toContain('href="/?ledger=task-list&amp;record=6"');
+    expect(html).toContain('data-cross-ledger="task-list"');
+    expect(html).toContain('href="/?ledger=backlog&amp;record=45"');
+    expect(html).not.toContain("(missing)");
+    // Read-only → no pencils on the theme either.
+    expect(html).not.toContain("data-edit-action");
+  });
+
+  test("missing record id in a read-only sibling → 404 not-found body", () => {
+    const { status, html } = renderViewer({
+      detected: ROADMAP_WITH_THEME,
+      search: new URLSearchParams("record=999"),
+      readOnly: true,
+    });
+    expect(status).toBe(404);
+    expect(html).toContain('data-record-kind="not-found"');
+  });
+});
+
 describe("renderViewer — in-page theme picker (OQ-3)", () => {
   test("renders a server-side <select data-theme-picker> pre-selected to the active theme", () => {
     const { html } = renderViewer({

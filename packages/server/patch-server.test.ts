@@ -171,6 +171,41 @@ async function writeFixtureBacklog(path: string): Promise<string> {
   return content;
 }
 
+function makeRoadmapLedgerObject() {
+  return {
+    document_name: "Knowledge Hub Roadmap",
+    document_purpose: "Forward-looking capability roadmap.",
+    date: "2026-05-25",
+    status: "Active",
+    forward_looking_only: true,
+    related_documents: [],
+    last_updated: "fixture",
+    themes: [
+      {
+        id: "10",
+        title: "Procurement intelligence",
+        description: "Theme 10 description.",
+        time_horizon: "now",
+        status: "in_progress",
+        // Links to a Task that exists in the task-list fixture (id 20) and
+        // a backlog item that exists in the backlog fixture (id 101).
+        linked_tasks: ["20"],
+        linked_backlog: ["101"],
+        session_refs: [],
+        commit_refs: [],
+        cross_doc_links: [],
+        notes: null,
+      },
+    ],
+  };
+}
+
+async function writeFixtureRoadmap(path: string): Promise<string> {
+  const content = JSON.stringify(makeRoadmapLedgerObject(), null, 2);
+  await writeFile(path, content, "utf8");
+  return content;
+}
+
 /** A schema-valid new Task body for CREATE / Promote tests. */
 function makeNewTaskRecord(id: string) {
   return {
@@ -1227,5 +1262,121 @@ describe("PATCH end-to-end — atomic write integrity (PRODUCT inv 36)", () => {
     const dirEntries = await readdir(testDir);
     const leftovers = dirEntries.filter((e) => e.includes(".tmp."));
     expect(leftovers).toEqual([]);
+  });
+});
+
+// ── {20.29} GET / cross-ledger nav (SPEC §5 slice 6) ─────────────────────────
+
+describe("GET / — cross-ledger nav ({20.29} SPEC §5 slice 6)", () => {
+  test("launched on roadmap, /?ledger=task-list&record=20 → 200 read-only task", async () => {
+    // All three siblings co-located in the launch dir (the real KH layout).
+    await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
+    await writeFixtureTaskList(join(testDir, "task-list.json"));
+    await writeFixtureBacklog(join(testDir, "product-backlog.json"));
+    handle = startPatchServer({
+      ledgerPath: join(testDir, "product-roadmap.json"),
+    });
+
+    const res = await fetch(`${handle.url}/?ledger=task-list&record=20`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    const html = await res.text();
+    expect(html).toContain('data-record-kind="task"');
+    expect(html).toContain('data-record-id="20"');
+    expect(html).toContain("Per-Task mirror"); // real Task 20 title
+    // Read-only: no edit affordances on the sibling. (The bare class name
+    // appears in the inlined stylesheet, so assert on the actual button
+    // markup / the dispatcher hooks instead.)
+    expect(html).not.toContain("data-edit-action");
+    expect(html).not.toContain("data-edit-field");
+    expect(html).not.toContain('class="record-view-pencil-button"');
+  });
+
+  test("launched on task-list, /?ledger=roadmap&record=10 → 200 theme content", async () => {
+    await writeFixtureTaskList(join(testDir, "task-list.json"));
+    await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
+    await writeFixtureBacklog(join(testDir, "product-backlog.json"));
+    handle = startPatchServer({ ledgerPath: join(testDir, "task-list.json") });
+
+    const res = await fetch(`${handle.url}/?ledger=roadmap&record=10`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('data-record-kind="roadmap-theme"');
+    expect(html).toContain('data-record-id="10"');
+    expect(html).toContain("Procurement intelligence");
+    // Theme 10 links to Task 20 (exists in sibling task-list) + backlog 101
+    // → live cross-ledger links, NOT (missing).
+    expect(html).toContain('href="/?ledger=task-list&amp;record=20"');
+    expect(html).toContain('data-cross-ledger="task-list"');
+    expect(html).toContain('href="/?ledger=backlog&amp;record=101"');
+    expect(html).not.toContain("(missing)");
+  });
+
+  test("absent sibling ledger in dir → 404 HTML, not 500", async () => {
+    // Only the roadmap is present; no task-list sibling to resolve.
+    await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
+    handle = startPatchServer({
+      ledgerPath: join(testDir, "product-roadmap.json"),
+    });
+
+    const res = await fetch(`${handle.url}/?ledger=task-list&record=20`);
+    expect(res.status).toBe(404);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    const html = await res.text();
+    expect(html.toLowerCase()).toContain("not available");
+    expect(html).toContain('href="/"'); // back to launched ledger
+  });
+
+  test("sibling present but record id absent → 404 not-found", async () => {
+    await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
+    await writeFixtureTaskList(join(testDir, "task-list.json"));
+    handle = startPatchServer({
+      ledgerPath: join(testDir, "product-roadmap.json"),
+    });
+
+    const res = await fetch(`${handle.url}/?ledger=task-list&record=999`);
+    expect(res.status).toBe(404);
+    const html = await res.text();
+    expect(html).toContain('data-record-kind="not-found"');
+  });
+
+  test("bare /?record=N (no ledger param) is unchanged — launched ledger, editable", async () => {
+    await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
+    await writeFixtureTaskList(join(testDir, "task-list.json"));
+    handle = startPatchServer({
+      ledgerPath: join(testDir, "product-roadmap.json"),
+    });
+
+    const res = await fetch(`${handle.url}/?record=10`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('data-record-kind="roadmap-theme"');
+    expect(html).toContain('data-record-id="10"');
+    // Launched ledger is editable → pencils present.
+    expect(html).toContain("data-edit-action");
+  });
+
+  test("?ledger=roadmap on a roadmap launch is identical to bare ?record (self)", async () => {
+    await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
+    await writeFixtureTaskList(join(testDir, "task-list.json"));
+    handle = startPatchServer({
+      ledgerPath: join(testDir, "product-roadmap.json"),
+    });
+
+    const res = await fetch(`${handle.url}/?ledger=roadmap&record=10`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('data-record-kind="roadmap-theme"');
+    // Self-target → launched ledger → editable.
+    expect(html).toContain("data-edit-action");
+  });
+
+  test("?ledger=roadmap&record=999 → 404 (missing record in launched-self)", async () => {
+    await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
+    handle = startPatchServer({
+      ledgerPath: join(testDir, "product-roadmap.json"),
+    });
+    const res = await fetch(`${handle.url}/?ledger=roadmap&record=999`);
+    expect(res.status).toBe(404);
   });
 });

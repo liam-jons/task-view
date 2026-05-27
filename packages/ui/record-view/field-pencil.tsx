@@ -30,6 +30,7 @@
  */
 import React from "react";
 import type { FieldPath } from "./edit-state";
+import { useReadOnly } from "./read-only-context";
 
 /**
  * The set of `data-edit-kind` values the views emit. A subset of the
@@ -76,6 +77,11 @@ export const FieldPencil: React.FC<{
    */
   rawValue?: string;
 }> = ({ fieldPath, kind, ariaLabel, options, rawValue }) => {
+  // {20.29}: on a read-only sibling page, emit NOTHING — no pencil, no
+  // data-edit-* hook for the PE dispatcher to bind. The launched ledger
+  // stays the single mutation target (SPEC §3).
+  const readOnly = useReadOnly();
+  if (readOnly) return null;
   const dataOptions =
     (kind === "enum" || kind === "enum-nullable") && options !== undefined
       ? options.join(",")

@@ -42,7 +42,9 @@ import {
 import { decodeBacklogFilters } from "@task-view/ui/record-view/url-state";
 import { recordRouteHref } from "@task-view/ui/record-view/anchors";
 import { ThemePicker } from "@task-view/ui/record-view/theme-picker";
+import { ReadOnlyProvider } from "@task-view/ui/record-view/read-only-context";
 import type { DetectSchemaResult } from "./detect-schema";
+import type { Roadmap } from "@task-view/schemas/roadmap";
 import type {
   Task,
   RoadmapTheme,
@@ -77,6 +79,30 @@ export interface RenderViewerInput {
    * are emitted so EVERY route is still styled (SV-3) without a disk read.
    */
   styles?: ViewerStylesInput;
+  /**
+   * {20.29}: render the page READ-ONLY. Set when serving a SIBLING ledger
+   * (a cross-ledger nav target) — suppresses ALL edit affordances (no
+   * `FieldPencil`, no `data-edit-*`) so the launched ledger stays the single
+   * mutation target (SPEC §3). Defaults to false (editable launched ledger).
+   */
+  readOnly?: boolean;
+  /**
+   * {20.29}: parsed SIBLING ledger records threaded in so outbound
+   * cross-ledger links on the CURRENT page can compute `exists` against the
+   * sibling id sets (SPEC §4 approach A). For a roadmap theme page these
+   * carry the task-list + backlog siblings; for a Task page the roadmap
+   * sibling (so the capability_theme chip resolves a title). Omitted on the
+   * launched-ledger path → empty sibling sets → cross-ledger links render as
+   * broken-target until the sibling resolves.
+   */
+  siblings?: SiblingLedgers;
+}
+
+/** Parsed sibling-ledger records for cross-ledger `exists` resolution. */
+export interface SiblingLedgers {
+  tasks?: readonly Task[];
+  roadmap?: Roadmap;
+  backlogItems?: readonly BacklogItem[];
 }
 
 /** Shape of the resolved styling injected into `wrapHtml` (SV-2/SV-3). */
@@ -98,6 +124,21 @@ export function renderViewer(input: RenderViewerInput): RenderViewerResult {
     status: body.status,
     html: wrapHtml(body.markup, input.clientScriptSrc, input.styles),
   };
+}
+
+/**
+ * Wrap a record body in the read-only provider when `readOnly`, so every
+ * descendant `FieldPencil` / inline editor suppresses itself ({20.29}).
+ * On the editable launched-ledger path this is a no-op passthrough.
+ */
+function renderRecordMarkup(
+  node: React.ReactElement,
+  readOnly: boolean,
+): string {
+  if (!readOnly) return renderToStaticMarkup(node);
+  return renderToStaticMarkup(
+    <ReadOnlyProvider readOnly={true}>{node}</ReadOnlyProvider>,
+  );
 }
 
 /**
@@ -123,7 +164,12 @@ interface RenderedBody {
   markup: string;
 }
 
-function renderBody({ detected, search }: RenderViewerInput): RenderedBody {
+function renderBody({
+  detected,
+  search,
+  readOnly = false,
+  siblings,
+}: RenderViewerInput): RenderedBody {
   const recordParam = search.get("record");
 
   if (detected.kind === "task-list") {
@@ -131,17 +177,20 @@ function renderBody({ detected, search }: RenderViewerInput): RenderedBody {
     if (recordParam === null) {
       return {
         status: 200,
-        markup: renderToStaticMarkup(<TaskListIndexView tasks={tasks} />),
+        markup: renderRecordMarkup(<TaskListIndexView tasks={tasks} />, readOnly),
       };
     }
     const task = tasks.find((t) => t.id === recordParam);
     if (!task) return renderNotFound("task", recordParam);
-    const ledger = buildLedgerContext({ tasks });
+    // {20.29}: thread the sibling roadmap so the capability_theme chip
+    // resolves a title (SPEC §6).
+    const ledger = buildLedgerContext({ tasks, roadmap: siblings?.roadmap });
     const nav = computeTaskNav(tasks, task);
     return {
       status: 200,
-      markup: renderToStaticMarkup(
+      markup: renderRecordMarkup(
         <TaskListView task={task} ledger={ledger} nav={nav} />,
+        readOnly,
       ),
     };
   }
@@ -152,8 +201,9 @@ function renderBody({ detected, search }: RenderViewerInput): RenderedBody {
       const filters = decodeBacklogFilters(search);
       return {
         status: 200,
-        markup: renderToStaticMarkup(
+        markup: renderRecordMarkup(
           <BacklogIndexView items={items} filters={filters} />,
+          readOnly,
         ),
       };
     }
@@ -163,8 +213,9 @@ function renderBody({ detected, search }: RenderViewerInput): RenderedBody {
     const nav = computeBacklogNav(items, item);
     return {
       status: 200,
-      markup: renderToStaticMarkup(
+      markup: renderRecordMarkup(
         <BacklogItemView item={item} ledger={ledger} nav={nav} />,
+        readOnly,
       ),
     };
   }
@@ -173,10 +224,20 @@ function renderBody({ detected, search }: RenderViewerInput): RenderedBody {
   if (recordParam === null) {
     return {
       status: 200,
-      markup: renderToStaticMarkup(<RoadmapIndexView roadmap={detected.data} />),
+      markup: renderRecordMarkup(
+        <RoadmapIndexView roadmap={detected.data} />,
+        readOnly,
+      ),
     };
   }
-  const ledger = buildLedgerContext({ roadmap: detected.data });
+  // {20.29}: thread the sibling task-list + backlog id sets so the theme's
+  // outbound linked_tasks / linked_backlog cross-ledger links compute
+  // `exists` correctly (SPEC §4 approach A) instead of always (missing).
+  const ledger = buildLedgerContext({
+    roadmap: detected.data,
+    tasks: siblings?.tasks,
+    backlogItems: siblings?.backlogItems,
+  });
   const themes = detected.data.themes;
 
   const theme = themes.find((t) => t.id === recordParam);
@@ -184,10 +245,39 @@ function renderBody({ detected, search }: RenderViewerInput): RenderedBody {
   const nav = computeThemeNav(themes, theme);
   return {
     status: 200,
-    markup: renderToStaticMarkup(
+    markup: renderRecordMarkup(
       <RoadmapThemeView theme={theme} ledger={ledger} nav={nav} />,
+      readOnly,
     ),
   };
+}
+
+/**
+ * {20.29}: full-page 404 for an absent / broken sibling ledger (SPEC §5
+ * step 2/3). A linked ledger that is not present in the launch directory is
+ * a navigation dead-end — render a styled page (so it is themed like every
+ * other route) with a "back to launched ledger" link. The slug is a
+ * validated nav slug, safe to interpolate.
+ */
+export function renderSiblingNotAvailable(
+  slug: string,
+  styles?: ViewerStylesInput,
+): RenderViewerResult {
+  const markup = renderToStaticMarkup(
+    <article
+      className="record-view-not-found"
+      data-record-kind="ledger-not-available"
+      data-ledger-slug={slug}
+    >
+      <h1>Linked ledger not available</h1>
+      <p>
+        The <code>{slug}</code> ledger is not present alongside the launched
+        ledger, so this cross-ledger link cannot be followed.{" "}
+        <a href="/">Back to launched ledger</a>
+      </p>
+    </article>,
+  );
+  return { status: 404, html: wrapHtml(markup, undefined, styles) };
 }
 
 function renderNotFound(kind: string, requested: string): RenderedBody {

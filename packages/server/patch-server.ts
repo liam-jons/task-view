@@ -87,7 +87,18 @@ import { insertRecord, removeRecord } from "./record-mutate";
 import { promoteTransaction } from "./ledger-transaction";
 import { scanForLedgers } from "./path-resolution";
 import { LOOPBACK_HOSTNAME, resolveServerHostname } from "./loopback-bind";
-import { renderViewer } from "./render-viewer";
+import {
+  renderViewer,
+  renderSiblingNotAvailable,
+  type SiblingLedgers,
+} from "./render-viewer";
+import {
+  documentNameForSlug,
+  resolveLedgerPathByName,
+  slugForDocumentName,
+} from "./cross-ledger";
+import { decodeLedgerParam } from "@task-view/ui/record-view/url-state";
+import type { KnownDocumentName } from "./detect-schema";
 import { getClientBundle } from "./client-bundle";
 import { getViewerStyles } from "./viewer-styles";
 import { resolveThemePreference } from "@task-view/ui/record-view/theme-preference";
@@ -248,14 +259,137 @@ async function handleGetRoot(
   const pref = resolveThemePreference({ cookieHeader, query: search });
   const styles = await getViewerStyles(pref.themeId, pref.mode);
 
+  // {20.29} cross-ledger nav (SPEC §5 slice 6). Parse the `ledger` slug.
+  // Absent / equal-to-launched → render the LAUNCHED ledger editable
+  // (unchanged path). A sibling slug → resolve + read the sibling ledger
+  // and render it READ-ONLY.
+  const launchedSlug = slugForDocumentName(
+    canonical.detected.kind === "task-list"
+      ? "Knowledge Hub Task List"
+      : canonical.detected.kind === "roadmap"
+        ? "Knowledge Hub Roadmap"
+        : "Product Backlog",
+  );
+  const requestedSlug = decodeLedgerParam(search);
+
+  if (requestedSlug !== null && requestedSlug !== launchedSlug) {
+    return renderSiblingLedger(ctx, requestedSlug, search, styles);
+  }
+
+  // Launched ledger (or explicit self-slug): editable, with siblings threaded
+  // so the launched ledger's own outbound cross-ledger links resolve `exists`.
+  const siblings = await readSiblingLedgers(ctx.ledgerPath, canonical.detected.kind);
   const result = renderViewer({
     detected: canonical.detected,
     search,
     clientScriptSrc: CLIENT_BUNDLE_ROUTE,
     styles,
+    siblings,
   });
   return new Response(result.html, {
     status: result.status,
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
+}
+
+/**
+ * {20.29}: read the launched ledger's SIBLING ledgers (the ones it does NOT
+ * own) and return their parsed records so the CURRENT page's outbound
+ * cross-ledger links can compute `exists` (SPEC §4 approach A). A sibling
+ * that is absent or fails to read/parse is simply omitted — its links then
+ * render as broken-target, which is the correct dead-end signal.
+ */
+async function readSiblingLedgers(
+  ledgerPath: string,
+  currentKind: "task-list" | "roadmap" | "backlog",
+): Promise<SiblingLedgers> {
+  const siblings: SiblingLedgers = {};
+  // A roadmap page links out to task-list + backlog; a task page links out
+  // to the roadmap (capability_theme chip). We read whatever is useful for
+  // the current kind's outbound edges.
+  const wanted: KnownDocumentName[] =
+    currentKind === "roadmap"
+      ? ["Knowledge Hub Task List", "Product Backlog"]
+      : currentKind === "task-list"
+        ? ["Knowledge Hub Roadmap"]
+        : []; // backlog has no outbound cross-ledger edges (SPEC §4)
+  for (const name of wanted) {
+    const path = await resolveLedgerPathByName(ledgerPath, name);
+    if (path === null) continue;
+    let detected: DetectSchemaResult;
+    try {
+      detected = (await readCanonical(path)).detected;
+    } catch {
+      continue;
+    }
+    if (detected.kind === "task-list") siblings.tasks = detected.data.tasks;
+    else if (detected.kind === "roadmap") siblings.roadmap = detected.data;
+    else if (detected.kind === "backlog") siblings.backlogItems = detected.data.items;
+  }
+  return siblings;
+}
+
+/**
+ * {20.29}: render a SIBLING ledger read-only as a cross-ledger nav target
+ * (SPEC §5 slice 6). Resolves the sibling path by `document_name` in the
+ * launch dir; a missing sibling FILE or a read/parse failure is a navigation
+ * dead-end → 404 HTML (NOT 500 — the launched server is healthy). A missing
+ * RECORD id inside a resolved sibling falls through to renderViewer's
+ * existing renderNotFound (404).
+ */
+async function renderSiblingLedger(
+  ctx: RequestContext,
+  slug: ReturnType<typeof decodeLedgerParam> & string,
+  search: URLSearchParams,
+  styles: Awaited<ReturnType<typeof getViewerStyles>>,
+): Promise<Response> {
+  const documentName = documentNameForSlug(slug);
+  if (documentName === null) {
+    // Defensive: decodeLedgerParam already validated the slug, so this is
+    // unreachable in practice. Treat as a dead-end 404 to be safe.
+    return siblingNotAvailableResponse(slug, styles);
+  }
+  const siblingPath = await resolveLedgerPathByName(ctx.ledgerPath, documentName);
+  if (siblingPath === null) {
+    return siblingNotAvailableResponse(slug, styles);
+  }
+  let canonical;
+  try {
+    canonical = await readCanonical(siblingPath);
+  } catch {
+    return siblingNotAvailableResponse(slug, styles);
+  }
+  if (canonical.detected.kind === "unknown") {
+    return siblingNotAvailableResponse(slug, styles);
+  }
+  const siblings = await readSiblingLedgers(siblingPath, canonical.detected.kind);
+  const result = renderViewer({
+    detected: canonical.detected,
+    search,
+    clientScriptSrc: CLIENT_BUNDLE_ROUTE,
+    styles,
+    readOnly: true,
+    siblings,
+  });
+  return new Response(result.html, {
+    status: result.status,
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
+}
+
+/**
+ * 404 HTML for an absent / broken sibling ledger ({20.29}, SPEC §5 step 2/3).
+ * A linked ledger that is not present in the launch directory is a
+ * navigation dead-end, not a server fault — surface a styled 404 with a
+ * back-to-launched link rather than a 500.
+ */
+function siblingNotAvailableResponse(
+  slug: string,
+  styles: Awaited<ReturnType<typeof getViewerStyles>>,
+): Response {
+  const result = renderSiblingNotAvailable(slug, styles);
+  return new Response(result.html, {
+    status: 404,
     headers: { "content-type": "text/html; charset=utf-8" },
   });
 }
