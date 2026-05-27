@@ -21,9 +21,15 @@
  */
 import React from "react";
 import type { ExistingPathsSet } from "./types";
+import type { LedgerSlug } from "./anchors";
 
 const MISSING_SUFFIX = " (missing)";
 const MISSING_TARGET_SUFFIX = " (missing target)";
+/**
+ * Trailing glyph appended to a cross-ledger link ({20.29}, SPEC §6) so the
+ * reader can see at a glance that the link LEAVES the current ledger.
+ */
+const CROSS_LEDGER_GLYPH = " ↗";
 
 /**
  * Normalise OS-native path separators to forward slashes for use in URL
@@ -60,16 +66,41 @@ export const BrokenLink: React.FC<{
 
 /**
  * Render a link to another record (Task, Roadmap item, Roadmap section,
- * Backlog item) within the same ledger. If the target id is missing from
- * the ledger's presence set, render a `BrokenLink` instead.
+ * Backlog item). If the target id is missing from the relevant presence
+ * set, render a `BrokenLink` instead.
+ *
+ * `crossLedger` ({20.29}, SPEC §5 slice 3): when set to a sibling-ledger
+ * slug, the link is a CROSS-ledger jump (`/?ledger=<slug>&record=<id>`). It
+ * carries a `data-cross-ledger="<slug>"` hook (distinct from the
+ * intra-ledger `data-record-link`) and a trailing leaving-ledger glyph so
+ * the reader sees the link leaves the current ledger. Broken-target
+ * (`exists=false`) behaviour is identical for intra- and cross-ledger
+ * links — the missing target is computed against the SIBLING's id set the
+ * server resolves at render time (SPEC §4).
  */
 export const MaybeRecordLink: React.FC<{
   href: string;
   label: string;
   exists: boolean;
-}> = ({ href, label, exists }) => {
+  crossLedger?: LedgerSlug;
+}> = ({ href, label, exists, crossLedger }) => {
   if (!exists) {
     return <BrokenLink suffix="record">{label}</BrokenLink>;
+  }
+  if (crossLedger !== undefined) {
+    return (
+      <a
+        className="record-view-record-link record-view-cross-ledger-link"
+        href={toForwardSlashHref(href)}
+        data-record-link
+        data-cross-ledger={crossLedger}
+      >
+        {label}
+        <span className="record-view-cross-ledger-glyph" data-cross-ledger-glyph>
+          {CROSS_LEDGER_GLYPH}
+        </span>
+      </a>
+    );
   }
   return (
     <a

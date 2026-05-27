@@ -82,6 +82,51 @@ describe("MaybeRecordLink (PRODUCT inv 12, 13, 22)", () => {
   });
 });
 
+describe("MaybeRecordLink — cross-ledger ({20.29}, SPEC §5 slice 3)", () => {
+  test("a live cross-ledger link carries data-cross-ledger + a leaving glyph", () => {
+    const html = renderToStaticMarkup(
+      <MaybeRecordLink
+        href="/?ledger=task-list&record=6"
+        label="ID-6"
+        exists={true}
+        crossLedger="task-list"
+      />,
+    );
+    expect(html).toContain('href="/?ledger=task-list&amp;record=6"');
+    expect(html).toContain('data-cross-ledger="task-list"');
+    // A trailing leaving-ledger glyph signals the link leaves the ledger.
+    expect(html).toContain("↗");
+    expect(html).not.toContain("line-through");
+  });
+
+  test("a missing cross-ledger target still renders the broken-target marker", () => {
+    const html = renderToStaticMarkup(
+      <MaybeRecordLink
+        href="/?ledger=task-list&record=999"
+        label="ID-999"
+        exists={false}
+        crossLedger="task-list"
+      />,
+    );
+    expect(html).toContain("ID-999");
+    expect(html).toContain("(missing)");
+    expect(html).toContain("line-through");
+    expect(html).not.toContain("data-cross-ledger");
+    expect(html).not.toContain('href="/?ledger=task-list&amp;record=999"');
+  });
+
+  test("an intra-ledger link (no crossLedger prop) omits data-cross-ledger + glyph", () => {
+    // Regression guard: existing intra-ledger links are unchanged.
+    const html = renderToStaticMarkup(
+      <MaybeRecordLink href="/?record=6" label="ID-6" exists={true} />,
+    );
+    expect(html).toContain('href="/?record=6"');
+    expect(html).toContain("data-record-link");
+    expect(html).not.toContain("data-cross-ledger");
+    expect(html).not.toContain("↗");
+  });
+});
+
 describe("MaybeCrossDocLink (PRODUCT inv 11)", () => {
   test("renders live anchor when path is in existingPaths", () => {
     const html = renderToStaticMarkup(
