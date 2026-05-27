@@ -43,6 +43,8 @@ import { decodeBacklogFilters } from "@task-view/ui/record-view/url-state";
 import { recordRouteHref } from "@task-view/ui/record-view/anchors";
 import { ThemePicker } from "@task-view/ui/record-view/theme-picker";
 import { ReadOnlyProvider } from "@task-view/ui/record-view/read-only-context";
+import { LedgerBanner } from "@task-view/ui/record-view/ledger-banner";
+import type { LedgerSlug } from "@task-view/ui/record-view/anchors";
 import type { DetectSchemaResult } from "./detect-schema";
 import type { Roadmap } from "@task-view/schemas/roadmap";
 import type {
@@ -96,6 +98,13 @@ export interface RenderViewerInput {
    * broken-target until the sibling resolves.
    */
   siblings?: SiblingLedgers;
+  /**
+   * {20.29}: the slug of the LAUNCHED ledger (the editable one). Threaded in
+   * when `readOnly` so the cross-ledger banner can name it and offer a
+   * "Back to launched ledger" link (SPEC §5 slice 7). Omitted on the
+   * launched-ledger path (no banner is rendered there).
+   */
+  launchedSlug?: LedgerSlug;
 }
 
 /** Parsed sibling-ledger records for cross-ledger `exists` resolution. */
@@ -120,10 +129,32 @@ export interface RenderViewerResult {
 
 export function renderViewer(input: RenderViewerInput): RenderViewerResult {
   const body = renderBody(input);
+  // {20.29}: on a read-only sibling page, prepend the cross-ledger banner
+  // (SPEC §5 slice 7) so the reader knows which ledger they are in and can
+  // return to the launched (editable) ledger. The sibling slug is the kind
+  // of the ledger being rendered; the launched slug is threaded in.
+  const bannerMarkup =
+    input.readOnly === true && input.launchedSlug !== undefined
+      ? renderToStaticMarkup(
+          <LedgerBanner
+            siblingSlug={kindToSlug(input.detected.kind)}
+            launchedSlug={input.launchedSlug}
+          />,
+        )
+      : "";
   return {
     status: body.status,
-    html: wrapHtml(body.markup, input.clientScriptSrc, input.styles),
+    html: wrapHtml(bannerMarkup + body.markup, input.clientScriptSrc, input.styles),
   };
+}
+
+/** Map a known ledger kind to its nav slug ({20.29}). */
+function kindToSlug(kind: KnownDetected["kind"]): LedgerSlug {
+  return kind === "task-list"
+    ? "task-list"
+    : kind === "roadmap"
+      ? "roadmap"
+      : "backlog";
 }
 
 /**

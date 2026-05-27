@@ -1290,6 +1290,10 @@ describe("GET / — cross-ledger nav ({20.29} SPEC §5 slice 6)", () => {
     expect(html).not.toContain("data-edit-action");
     expect(html).not.toContain("data-edit-field");
     expect(html).not.toContain('class="record-view-pencil-button"');
+    // Read-only banner naming the launched (roadmap) + sibling (task list).
+    expect(html).toContain("data-ledger-banner");
+    expect(html).toContain("Back to launched ledger");
+    expect(html).toContain("Roadmap"); // launched ledger named
   });
 
   test("launched on task-list, /?ledger=roadmap&record=10 → 200 theme content", async () => {

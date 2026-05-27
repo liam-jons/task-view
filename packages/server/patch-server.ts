@@ -273,7 +273,7 @@ async function handleGetRoot(
   const requestedSlug = decodeLedgerParam(search);
 
   if (requestedSlug !== null && requestedSlug !== launchedSlug) {
-    return renderSiblingLedger(ctx, requestedSlug, search, styles);
+    return renderSiblingLedger(ctx, requestedSlug, launchedSlug, search, styles);
   }
 
   // Launched ledger (or explicit self-slug): editable, with siblings threaded
@@ -339,7 +339,8 @@ async function readSiblingLedgers(
  */
 async function renderSiblingLedger(
   ctx: RequestContext,
-  slug: ReturnType<typeof decodeLedgerParam> & string,
+  slug: NonNullable<ReturnType<typeof decodeLedgerParam>>,
+  launchedSlug: ReturnType<typeof slugForDocumentName>,
   search: URLSearchParams,
   styles: Awaited<ReturnType<typeof getViewerStyles>>,
 ): Promise<Response> {
@@ -370,6 +371,7 @@ async function renderSiblingLedger(
     styles,
     readOnly: true,
     siblings,
+    launchedSlug: launchedSlug ?? undefined,
   });
   return new Response(result.html, {
     status: result.status,

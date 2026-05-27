@@ -330,6 +330,28 @@ describe("renderViewer — read-only sibling render ({20.29} SPEC §5 slice 6)",
     expect(status).toBe(404);
     expect(html).toContain('data-record-kind="not-found"');
   });
+
+  test("a read-only sibling page mounts the ledger banner (SPEC §5 slice 7)", () => {
+    const { html } = renderViewer({
+      detected: TASK_LIST_WITH_TASK,
+      search: new URLSearchParams("record=6"),
+      readOnly: true,
+      launchedSlug: "roadmap",
+    });
+    expect(html).toContain("data-ledger-banner");
+    // Sibling task-list is read-only; launched ledger is the roadmap.
+    expect(html).toContain("Task List");
+    expect(html).toContain("read-only");
+    expect(html).toContain("Back to launched ledger");
+  });
+
+  test("the editable launched-ledger page does NOT mount the banner", () => {
+    const { html } = renderViewer({
+      detected: TASK_LIST_WITH_TASK,
+      search: new URLSearchParams("record=6"),
+    });
+    expect(html).not.toContain("data-ledger-banner");
+  });
 });
 
 describe("renderViewer — in-page theme picker (OQ-3)", () => {
