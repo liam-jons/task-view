@@ -17,6 +17,15 @@
 const TASK_MIRROR_PREFIX = "ID-";
 
 /**
+ * The three cross-ledger nav slugs ({20.29}, SPEC §2). Declared in the UI
+ * layer (and mirrored server-side in `packages/server/cross-ledger.ts`)
+ * because `packages/ui` must not import from `packages/server` — the slug
+ * string set is a tiny, stable contract shared by both. Keep the two in
+ * sync (both derive from the same SPEC §2 table).
+ */
+export type LedgerSlug = "task-list" | "roadmap" | "backlog";
+
+/**
  * In-page anchor id for a sibling Subtask (`subtask-3`). Used as the
  * fragment in href (`#subtask-3`) AND as the `id` attribute of the
  * Subtask block heading.
@@ -47,6 +56,25 @@ export function subtaskHref(subtaskId: number): string {
  */
 export function recordRouteHref(recordId: string): string {
   return `/?record=${encodeURIComponent(recordId)}`;
+}
+
+/**
+ * Href to a record in a SIBLING ledger ({20.29}, SPEC §5 slice 2).
+ *
+ * Form: `/?ledger=<slug>&record=<id>`. The server (handleGetRoot) parses
+ * the `ledger` slug, resolves the sibling ledger's path in the launched
+ * ledger's directory, and renders that sibling's record READ-ONLY.
+ *
+ * The slug is a server-controlled literal (never user input here) so it is
+ * emitted verbatim; only the record id is URL-encoded. Distinct from
+ * `recordRouteHref`, which stays the intra-ledger (launched-ledger) form
+ * and must remain byte-for-byte back-compatible (`/?record=<id>`).
+ */
+export function crossLedgerRecordHref(
+  slug: LedgerSlug,
+  recordId: string,
+): string {
+  return `/?ledger=${slug}&record=${encodeURIComponent(recordId)}`;
 }
 
 /**

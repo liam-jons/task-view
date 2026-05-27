@@ -7,7 +7,39 @@
  * Pure helpers; no DOM dependencies. Consumers (Backlog index view,
  * SPA router) call these to round-trip filter state in and out of URL
  * query strings.
+ *
+ * {20.29} also adds `decodeLedgerParam` here — the read side of the
+ * cross-ledger `/?ledger=<slug>&record=<id>` scheme (SPEC §5 slice 2).
  */
+import type { LedgerSlug } from "./anchors";
+
+/**
+ * Valid cross-ledger nav slugs ({20.29}, SPEC §2). Mirrors the server-side
+ * `LEDGER_SLUGS` (packages/server/cross-ledger.ts); kept in the UI layer
+ * because `packages/ui` must not depend on `packages/server`.
+ */
+const LEDGER_SLUG_SET = new Set<LedgerSlug>([
+  "task-list",
+  "roadmap",
+  "backlog",
+]);
+
+/**
+ * Decode the cross-ledger `?ledger=<slug>` param ({20.29}, SPEC §5 slice 2).
+ *
+ * Returns the slug only when it is one of the three recognised nav slugs;
+ * an absent, empty, or unrecognised `ledger` param returns null — the
+ * caller then treats the request as targeting the LAUNCHED ledger, keeping
+ * bare `/?record=<id>` fully back-compatible.
+ */
+export function decodeLedgerParam(
+  qs: URLSearchParams | string,
+): LedgerSlug | null {
+  const params = typeof qs === "string" ? new URLSearchParams(qs) : qs;
+  const raw = params.get("ledger");
+  if (raw === null || raw === "") return null;
+  return LEDGER_SLUG_SET.has(raw as LedgerSlug) ? (raw as LedgerSlug) : null;
+}
 
 /**
  * Backlog index filter state. `null` (or `"all"` in the URL) means the

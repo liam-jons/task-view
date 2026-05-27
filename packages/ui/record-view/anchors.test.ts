@@ -4,6 +4,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import {
+  crossLedgerRecordHref,
   recordRouteHref,
   subtaskAnchorId,
   subtaskDepLabel,
@@ -42,5 +43,31 @@ describe("Cross-record hrefs (PRODUCT inv 12, 22)", () => {
 
   test("recordRouteHref URL-encodes the record id", () => {
     expect(recordRouteHref("a b")).toBe("/?record=a%20b");
+  });
+});
+
+describe("crossLedgerRecordHref ({20.29} cross-ledger nav, SPEC §5 slice 2)", () => {
+  test("builds /?ledger=<slug>&record=<id> for each sibling slug", () => {
+    expect(crossLedgerRecordHref("task-list", "6")).toBe(
+      "/?ledger=task-list&record=6",
+    );
+    expect(crossLedgerRecordHref("roadmap", "10")).toBe(
+      "/?ledger=roadmap&record=10",
+    );
+    expect(crossLedgerRecordHref("backlog", "45")).toBe(
+      "/?ledger=backlog&record=45",
+    );
+  });
+
+  test("URL-encodes the record id but keeps the slug literal", () => {
+    expect(crossLedgerRecordHref("task-list", "a b")).toBe(
+      "/?ledger=task-list&record=a%20b",
+    );
+  });
+
+  test("recordRouteHref stays the intra-ledger form (no ledger param)", () => {
+    // Regression guard: the cross-ledger builder must not change the
+    // bare intra-ledger href contract.
+    expect(recordRouteHref("6")).toBe("/?record=6");
   });
 });

@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import {
   applyBacklogFilters,
   decodeBacklogFilters,
+  decodeLedgerParam,
   encodeBacklogFilters,
 } from "./url-state";
 
@@ -113,5 +114,29 @@ describe("applyBacklogFilters (PRODUCT inv 23)", () => {
       priority: null,
     });
     expect(result).toEqual([]);
+  });
+});
+
+describe("decodeLedgerParam ({20.29} cross-ledger nav, SPEC §5 slice 2)", () => {
+  test("returns the slug for a valid ?ledger=<slug>", () => {
+    expect(decodeLedgerParam("ledger=task-list&record=6")).toBe("task-list");
+    expect(decodeLedgerParam("ledger=roadmap&record=10")).toBe("roadmap");
+    expect(decodeLedgerParam("ledger=backlog&record=45")).toBe("backlog");
+  });
+
+  test("returns null when the ledger param is absent (bare ?record=)", () => {
+    // Back-compat: bare /?record=N has no ledger → launched ledger.
+    expect(decodeLedgerParam("record=10")).toBeNull();
+    expect(decodeLedgerParam("")).toBeNull();
+  });
+
+  test("returns null for an unrecognised slug", () => {
+    expect(decodeLedgerParam("ledger=bogus&record=1")).toBeNull();
+    expect(decodeLedgerParam("ledger=&record=1")).toBeNull();
+  });
+
+  test("accepts a URLSearchParams as well as a string", () => {
+    const params = new URLSearchParams("ledger=roadmap&record=10");
+    expect(decodeLedgerParam(params)).toBe("roadmap");
   });
 });
