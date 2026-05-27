@@ -410,6 +410,35 @@
 }
 
 /* ================================================================== */
+/* backlog-drag-reorder SPEC §8.1 — drag/drop visual states           */
+/* (Slice A: drag mechanics + within-tier reorder + cross-tier        */
+/*  refusal). Semantic theme tokens only — no raw colours, inv 14.    */
+/* ================================================================== */
+
+/* The handle is grabbable by default and shows the grabbing cursor while a
+   row is being dragged. (The base `cursor: grab` is set above; this is the
+   active-drag complement.) */
+[data-drag-handle] {
+  cursor: grab;
+}
+.record-view-row-dragging [data-drag-handle],
+.record-view-row-dragging {
+  cursor: grabbing;
+}
+
+/* Dragged row — reduced opacity + subtle elevation for the drag duration. */
+.record-view-row-dragging {
+  opacity: 0.5;
+}
+
+/* Current in-tier drop target — a 2px primary-tinted top border marks the row
+   the drop would land near. Only in-tier rows ever receive this class (§3.2),
+   so cross-tier drops get no indicator (implicit "unavailable" feedback). */
+.record-view-drop-target > td {
+  box-shadow: inset 0 2px 0 0 var(--primary);
+}
+
+/* ================================================================== */
 /* SV-28/29 — empty + not-found states                                */
 /* ================================================================== */
 

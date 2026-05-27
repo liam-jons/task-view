@@ -62,6 +62,7 @@ import {
   type DocLinkRowInput,
 } from "../../../packages/ui/record-view/edit-dispatch";
 import { classifySaveResult } from "../../../packages/ui/record-view/edit-state";
+import { recomputeTierRanks } from "../../../packages/ui/record-view/backlog-reorder";
 import {
   applyThemeClassesToHtml,
   writeThemeCookie,
@@ -862,12 +863,223 @@ function wireThemePicker(): void {
   });
 }
 
+// ── Backlog drag-reorder (backlog-drag-reorder SPEC §3, §7, §8 — Slice A) ─────
+//
+// Slice A scope: drag mechanics + within-tier DOM reorder + cross-tier refusal.
+// NO persistence (no PATCH) yet — a valid drop only reorders the DOM and logs
+// the would-be changed rank set (Slice B wires the multi-patch PATCH).
+//
+// The SPA sets `draggable="true"` on each row at wire time — NOT the SSR
+// (SPEC §7.2): `draggable` only means something with JS listeners attached, so
+// coupling them is correct, and it keeps DR-6 trivial (read-only / no-wire ⇒
+// nothing draggable). Feature-detected off `[data-supports-drag-reorder="true"]`
+// with a banner-guard: a read-only sibling (`[data-ledger-banner]`) is NEVER
+// wired (SPEC §6.2, DR-6).
+
+/** CSS classes for the transient drag visual states (SPEC §8.1). */
+const ROW_DRAGGING_CLASS = "record-view-row-dragging";
+const ROW_DROP_TARGET_CLASS = "record-view-drop-target";
+
+/** Read a row's tier (the `data-priority-tier` enum value, SPEC §3.1). */
+function rowTier(row: HTMLElement): string {
+  return row.getAttribute("data-priority-tier") ?? "";
+}
+
+/** The ordered list of `[data-backlog-row]` `<tr>`s currently in the table. */
+function backlogRows(table: HTMLElement): HTMLElement[] {
+  return Array.from(table.querySelectorAll<HTMLElement>("[data-backlog-row]"));
+}
+
+/** The current top-to-bottom id sequence of a table's backlog rows. */
+function rowIdSequence(table: HTMLElement): string[] {
+  return backlogRows(table).map((r) => r.getAttribute("data-backlog-row") ?? "");
+}
+
+/**
+ * The contiguous run `[start, end]` of rows that share `tier`, expressed as
+ * indices into the live row list. The SSR sort keeps each tier contiguous
+ * (SPEC §3.2), so a tier owns one unbroken index range. Returns `null` if no
+ * row of that tier is present.
+ */
+function tierRunBounds(
+  rows: readonly HTMLElement[],
+  tier: string,
+): { start: number; end: number } | null {
+  let start = -1;
+  let end = -1;
+  for (let i = 0; i < rows.length; i += 1) {
+    if (rowTier(rows[i]!) === tier) {
+      if (start === -1) start = i;
+      end = i;
+    }
+  }
+  return start === -1 ? null : { start, end };
+}
+
+/**
+ * The reorder controller for one backlog table. Tracks the dragged row +
+ * highlighted drop target across the dragstart→dragover→drop→dragend lifecycle.
+ */
+function wireBacklogReorderTable(table: HTMLElement): void {
+  let dragged: HTMLElement | null = null;
+  let dropTarget: HTMLElement | null = null;
+
+  // SPEC §7.2: the CLIENT marks rows draggable (never the SSR).
+  for (const row of backlogRows(table)) {
+    row.setAttribute("draggable", "true");
+  }
+
+  function clearDropTarget(): void {
+    if (dropTarget) {
+      dropTarget.classList.remove(ROW_DROP_TARGET_CLASS);
+      dropTarget = null;
+    }
+  }
+
+  function endDrag(): void {
+    if (dragged) dragged.classList.remove(ROW_DRAGGING_CLASS);
+    clearDropTarget();
+    dragged = null;
+  }
+
+  table.addEventListener("dragstart", (event) => {
+    const target = event.target as Element | null;
+    const row = target?.closest<HTMLElement>("[data-backlog-row]") ?? null;
+    if (!row || !table.contains(row)) return;
+    dragged = row;
+    row.classList.add(ROW_DRAGGING_CLASS);
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "move";
+      // Some engines require data to be set for the drag to proceed.
+      event.dataTransfer.setData(
+        "text/plain",
+        row.getAttribute("data-backlog-row") ?? "",
+      );
+    }
+  });
+
+  // Highlight only an in-tier row as a candidate drop target (SPEC §3.2 — the
+  // implicit cross-tier-unavailable cue). dragover must preventDefault on a
+  // valid target so `drop` fires.
+  table.addEventListener("dragover", (event) => {
+    if (!dragged) return;
+    const target = event.target as Element | null;
+    const over = target?.closest<HTMLElement>("[data-backlog-row]") ?? null;
+    if (!over || over === dragged) {
+      clearDropTarget();
+      return;
+    }
+    if (rowTier(over) !== rowTier(dragged)) {
+      // Different tier → not a valid drop target; no preventDefault, no cue.
+      clearDropTarget();
+      return;
+    }
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    if (over !== dropTarget) {
+      clearDropTarget();
+      dropTarget = over;
+      over.classList.add(ROW_DROP_TARGET_CLASS);
+    }
+  });
+
+  table.addEventListener("drop", (event) => {
+    if (!dragged) return;
+    event.preventDefault();
+    const draggedRow = dragged;
+    const target = event.target as Element | null;
+    const over = target?.closest<HTMLElement>("[data-backlog-row]") ?? null;
+    // Refuse: no row under pointer, dropping on self, or cross-tier (DR-3).
+    if (!over || over === draggedRow || rowTier(over) !== rowTier(draggedRow)) {
+      endDrag();
+      return;
+    }
+
+    const tier = rowTier(draggedRow);
+    const rowsBefore = backlogRows(table);
+    const bounds = tierRunBounds(rowsBefore, tier);
+    if (!bounds) {
+      endDrag();
+      return;
+    }
+    const overIndex = rowsBefore.indexOf(over);
+    // The target row must be inside the dragged tier's contiguous run; the
+    // tier-equality check above already guarantees this, but clamp defensively.
+    if (overIndex < bounds.start || overIndex > bounds.end) {
+      endDrag();
+      return;
+    }
+
+    // Insert relative to the target row's vertical midpoint: above → before,
+    // below → after.
+    const rect = over.getBoundingClientRect();
+    const after = event.clientY > rect.top + rect.height / 2;
+    const tbody = over.parentNode;
+    if (!tbody) {
+      endDrag();
+      return;
+    }
+    if (after) {
+      tbody.insertBefore(draggedRow, over.nextSibling);
+    } else {
+      tbody.insertBefore(draggedRow, over);
+    }
+
+    // Slice A: no PATCH. Compute the would-be changed set for visibility only.
+    const rowsAfter = backlogRows(table);
+    const tierRows = rowsAfter
+      .filter((r) => rowTier(r) === tier)
+      .map((r) => ({
+        id: r.getAttribute("data-backlog-row") ?? "",
+        rank: rankOfRow(r),
+      }));
+    const { changed } = recomputeTierRanks(tierRows);
+    if (changed.length > 0) {
+      console.debug("[backlog-reorder] would PATCH (Slice B):", changed);
+    }
+
+    endDrag();
+  });
+
+  table.addEventListener("dragend", () => {
+    endDrag();
+  });
+}
+
+/**
+ * Read a row's current rank from its rank cell's `data-rank-value` hook
+ * (`""` ⇒ unset/null, else the integer). Mirrors how the dispatcher resolves
+ * the rank value without re-parsing rendered text (SPEC §7.1).
+ */
+function rankOfRow(row: HTMLElement): number | null {
+  const cell = row.querySelector<HTMLElement>("[data-rank-value]");
+  const raw = cell?.getAttribute("data-rank-value");
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n = Number(raw);
+  return Number.isNaN(n) ? null : n;
+}
+
+/**
+ * Wire backlog drag-reorder on the launched (editable) page. Feature-detects
+ * `[data-backlog-table][data-supports-drag-reorder="true"]` and refuses to wire
+ * anything on a read-only sibling (`[data-ledger-banner]` present) — DR-6.
+ */
+function wireBacklogReorder(): void {
+  // Banner-guard (SPEC §6.2, defence-in-depth): never wire on a read-only page.
+  if (document.querySelector("[data-ledger-banner]")) return;
+  const tables = document.querySelectorAll<HTMLElement>(
+    '[data-backlog-table][data-supports-drag-reorder="true"]',
+  );
+  tables.forEach((table) => wireBacklogReorderTable(table));
+}
+
 function init(): void {
   document.addEventListener("click", onClick);
   document.addEventListener("keydown", onKeydown);
   highlightCodeBlocks();
   wirePrintClassToggle();
   wireThemePicker();
+  wireBacklogReorder();
 }
 
 if (typeof document !== "undefined") {
