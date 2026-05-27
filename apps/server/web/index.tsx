@@ -867,15 +867,24 @@ function wireThemePicker(): void {
   });
 }
 
-// ── Backlog drag-reorder (backlog-drag-reorder SPEC §3, §4, §7, §8 — Slice B) ─
+// ── Backlog reorder (backlog-drag-reorder SPEC §2, §3, §4, §7, §8 — Slice C) ──
 //
 // Slice A wired the drag mechanics + within-tier DOM reorder + cross-tier
-// refusal. Slice B adds PERSISTENCE: a valid drop commits the new order via a
+// refusal. Slice B added PERSISTENCE: a valid drop commits the new order via a
 // single atomic multi-patch PATCH (SPEC §4.3, DR-8), adopts the returned mtime,
 // updates rank cells in place (SPEC §8.4), and fires the follow-up full mirror
 // regen (SPEC §0.7). On a 409 / schema / walk / network failure the DOM is
 // rolled back to the last-known-good order (captured at dragstart, SPEC §4.5)
 // and a brief inline message is surfaced near the table.
+//
+// Slice C adds KEYBOARD reorder (SPEC §2, DR-2) on the focused `[data-drag-handle]`
+// (already `role="button" tabIndex=0`): ArrowUp/ArrowDown move the focused row
+// one position WITHIN its tier in the DOM (LIVE, no PATCH) with a tier-boundary
+// hard stop (SPEC §3.3); Enter COMMITS via the SAME `commitReorder` atomic PATCH
+// path Slice B uses; Escape REVERTS un-committed live moves to the baseline. The
+// keyboard path shares the table's `lastGoodOrder` baseline with the mouse path
+// (focus captures a fresh baseline when no gesture is mid-flight; a commit
+// advances it) so the two modalities never clobber each other's snapshot.
 //
 // The SPA sets `draggable="true"` on each row at wire time — NOT the SSR
 // (SPEC §7.2): `draggable` only means something with JS listeners attached, so
@@ -887,6 +896,9 @@ function wireThemePicker(): void {
 /** CSS classes for the transient drag visual states (SPEC §8.1). */
 const ROW_DRAGGING_CLASS = "record-view-row-dragging";
 const ROW_DROP_TARGET_CLASS = "record-view-drop-target";
+/** Transient pulse on a row moved by the keyboard (SPEC §8.3). */
+const ROW_KEYBOARD_MOVED_CLASS = "record-view-row-keyboard-moved";
+const KEYBOARD_MOVED_PULSE_MS = 600;
 
 /** Read a row's tier (the `data-priority-tier` enum value, SPEC §3.1). */
 function rowTier(row: HTMLElement): string {
@@ -1142,16 +1154,89 @@ async function fireRegen(mtime: string | null): Promise<void> {
 }
 
 /**
+ * Briefly pulse a row to give a sighted keyboard user visual feedback of a
+ * keyboard move (SPEC §8.3). Removing then re-adding the class restarts the
+ * animation if the SAME row is moved again before the previous pulse ended.
+ */
+function pulseKeyboardMoved(row: HTMLElement): void {
+  row.classList.remove(ROW_KEYBOARD_MOVED_CLASS);
+  // Force a reflow so re-adding the class restarts the CSS animation.
+  void row.offsetWidth;
+  row.classList.add(ROW_KEYBOARD_MOVED_CLASS);
+  window.setTimeout(() => {
+    row.classList.remove(ROW_KEYBOARD_MOVED_CLASS);
+  }, KEYBOARD_MOVED_PULSE_MS);
+}
+
+/**
+ * Move the focused row ONE position within its tier (SPEC §2/§3.3 keyboard
+ * arrow move). `direction` is -1 (ArrowUp) or +1 (ArrowDown). Tier-boundary is
+ * a HARD STOP (SPEC §3.3): ArrowUp at the FIRST of its tier, or ArrowDown at the
+ * LAST, is a no-op (does NOT cross into the adjacent tier). On a real move the
+ * DOM reorders LIVE (no PATCH), focus is re-applied to the moved row's handle so
+ * repeated presses keep moving the SAME row (SPEC §2 focus management), a pulse
+ * plays, and the move is announced. Returns `true` iff a move happened.
+ */
+function moveRowWithinTier(
+  table: HTMLElement,
+  row: HTMLElement,
+  direction: -1 | 1,
+): boolean {
+  const tier = rowTier(row);
+  const rows = backlogRows(table);
+  // Index of `row` AMONG its same-tier siblings (in DOM order).
+  const tierRows = rows.filter((r) => rowTier(r) === tier);
+  const pos = tierRows.indexOf(row);
+  if (pos === -1) return false;
+  const targetPos = pos + direction;
+  // SPEC §3.3 HARD STOP: out of the tier's [0, K-1] range → no-op.
+  if (targetPos < 0 || targetPos >= tierRows.length) return false;
+
+  const neighbour = tierRows[targetPos]!;
+  const tbody = row.parentNode;
+  if (!tbody) return false;
+  if (direction < 0) {
+    // ArrowUp: place the row before its upper neighbour.
+    tbody.insertBefore(row, neighbour);
+  } else {
+    // ArrowDown: place the row after its lower neighbour.
+    tbody.insertBefore(row, neighbour.nextSibling);
+  }
+
+  // SPEC §2: re-focus the moved row's handle so repeated presses keep moving
+  // the SAME row (moving the <tr> in the DOM does not preserve focus by itself).
+  const handle = row.querySelector<HTMLElement>("[data-drag-handle]");
+  handle?.focus();
+
+  pulseKeyboardMoved(row);
+
+  // SPEC §8.3 announcement: "Item {id} moved to position {n} of {K} in {tier}."
+  const id = row.getAttribute("data-backlog-row") ?? "";
+  announceReorder(
+    table,
+    `Item ${id} moved to position ${targetPos + 1} of ${tierRows.length} in ${tier}.`,
+  );
+  return true;
+}
+
+/**
  * The reorder controller for one backlog table. Tracks the dragged row +
- * highlighted drop target across the dragstart→dragover→drop→dragend lifecycle.
+ * highlighted drop target across the dragstart→dragover→drop→dragend lifecycle,
+ * AND the keyboard reorder gesture on the focused drag handle (SPEC §2).
  */
 function wireBacklogReorderTable(table: HTMLElement): void {
   let dragged: HTMLElement | null = null;
   let dropTarget: HTMLElement | null = null;
   // SPEC §4.5: last-known-good order — the row id sequence captured at the
-  // start of the gesture (dragstart). Rollback restores to this on a failed
-  // commit; a successful commit advances it to the just-persisted order.
+  // start of a gesture (mouse: dragstart; keyboard: first focus/move after a
+  // commit). Rollback (mouse 409) or Escape (keyboard) restores to this; a
+  // successful commit advances it to the just-persisted order. SHARED between
+  // the mouse and keyboard paths so they never clobber each other's baseline.
   let lastGoodOrder: string[] = rowIdSequence(table);
+  // SPEC §2/§4.5: true once an un-committed keyboard arrow move has happened
+  // since the baseline was captured. Gates whether focusin re-snapshots the
+  // baseline (it must NOT mid-gesture) and whether Escape has anything to revert.
+  let keyboardDirty = false;
 
   // SPEC §7.2: the CLIENT marks rows draggable (never the SSR).
   for (const row of backlogRows(table)) {
@@ -1285,6 +1370,100 @@ function wireBacklogReorderTable(table: HTMLElement): void {
 
   table.addEventListener("dragend", () => {
     endDrag();
+  });
+
+  // SPEC §2 focus baseline: when a drag handle gains focus and no gesture is in
+  // progress (no live drag, no un-committed keyboard moves), capture a fresh
+  // last-known-good snapshot. This is the order Escape reverts to and the order
+  // a failed commit rolls back to. Guarded by `keyboardDirty` so re-focusing the
+  // handle that a move just re-focused does NOT clobber the pre-move baseline.
+  table.addEventListener("focusin", (event) => {
+    const target = event.target as Element | null;
+    const handle = target?.closest<HTMLElement>("[data-drag-handle]") ?? null;
+    if (!handle || !table.contains(handle)) return;
+    if (dragged || keyboardDirty) return;
+    lastGoodOrder = rowIdSequence(table);
+  });
+
+  // SPEC §2/§3.3/§8.3 — keyboard reorder on the focused handle. ArrowUp/Down
+  // move LIVE within tier (no PATCH); Enter commits via the SHARED commitReorder;
+  // Escape reverts un-committed moves to the baseline. preventDefault on each so
+  // the page does not scroll / the handle's role=button default does not fire.
+  table.addEventListener("keydown", (event) => {
+    const target = event.target as Element | null;
+    const handle = target?.closest<HTMLElement>("[data-drag-handle]") ?? null;
+    if (!handle || !table.contains(handle)) return;
+    const row = handle.closest<HTMLElement>("[data-backlog-row]");
+    if (!row) return;
+
+    if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+      event.preventDefault();
+      const wasDirty = keyboardDirty;
+      // Capture the baseline lazily on the first move of a fresh gesture so a
+      // subsequent Escape / failed commit reverts to the pre-move order. (focusin
+      // also captures it; this is belt-and-braces for engines/AT that move focus
+      // without a focusin we observed.)
+      if (!wasDirty) lastGoodOrder = rowIdSequence(table);
+      // Mark the gesture dirty BEFORE the move: moveRowWithinTier re-focuses the
+      // moved row's handle, which synchronously fires `focusin`; that listener
+      // must see `keyboardDirty === true` so it does NOT re-snapshot the baseline
+      // to the post-move order (which would defeat Escape / rollback).
+      keyboardDirty = true;
+      const moved = moveRowWithinTier(table, row, event.key === "ArrowUp" ? -1 : 1);
+      // Tier-boundary hard stop (SPEC §3.3): no move happened. If this was the
+      // first key of the gesture, the gesture is still clean — restore the flag
+      // so a later focus re-snapshots and Escape has nothing stale to revert.
+      if (!moved && !wasDirty) keyboardDirty = false;
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      // SPEC §2/§4.3: commit the focused row's tier's CURRENT visual order via
+      // the SAME atomic multi-patch PATCH the mouse drop uses.
+      const tier = rowTier(row);
+      const tierRows = backlogRows(table)
+        .filter((r) => rowTier(r) === tier)
+        .map((r) => ({
+          id: r.getAttribute("data-backlog-row") ?? "",
+          rank: rankOfRow(r),
+        }));
+      const { changed } = recomputeTierRanks(tierRows);
+      const draggedId = row.getAttribute("data-backlog-row") ?? "";
+      const goodOrder = lastGoodOrder;
+      // Net no-op (Escape-equivalent ordering / never moved) → no PATCH; just
+      // clear the dirty flag so a later focus re-snapshots.
+      if (changed.length === 0) {
+        keyboardDirty = false;
+        return;
+      }
+      void commitReorder(table, draggedId, changed, goodOrder, (idOrder) => {
+        // SPEC §2: after commit, advance the baseline and clear the gesture so a
+        // later focus/Escape works against the just-persisted order.
+        lastGoodOrder = idOrder;
+        keyboardDirty = false;
+        // Keep focus on the moved row's handle after a successful commit.
+        row.querySelector<HTMLElement>("[data-drag-handle]")?.focus();
+      });
+      // On a failed commit, commitReorder rolls the DOM back to `goodOrder`; the
+      // gesture is over either way, so clear the dirty flag now. (A rollback
+      // restores exactly `lastGoodOrder`, which is unchanged here.)
+      keyboardDirty = false;
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      // SPEC §2/§4.5: revert any un-committed live arrow moves to the baseline.
+      if (keyboardDirty) {
+        restoreRowOrder(table, lastGoodOrder);
+        announceReorder(table, "Reorder cancelled.");
+        keyboardDirty = false;
+        // Keep focus on the (now restored-position) row's handle.
+        handle.focus();
+      }
+      return;
+    }
   });
 }
 
