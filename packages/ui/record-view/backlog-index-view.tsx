@@ -203,18 +203,29 @@ const BacklogItemRow: React.FC<{ item: BacklogItem }> = ({ item }) => {
       data-priority-tier={item.priority}
     >
       <td className="record-view-drag-cell">
-        <span
-          data-drag-handle={item.id}
-          role="button"
-          tabIndex={0}
-          aria-label={`Reorder backlog item ${item.id}`}
-          data-keyboard-shortcut="arrow-up,arrow-down,enter"
-          // The visible glyph is U+2630 TRIGRAM FOR HEAVEN (≡-like
-          // drag affordance). Hidden from AT — the aria-label supplies
-          // accessible naming.
-        >
-          <span aria-hidden="true">{"☰"}</span>
-        </span>
+        {/* backlog-drag-reorder SPEC §6 (DR-6): omit the drag handle on a
+            read-only sibling page — drag + keyboard reorder mutate the
+            `rank` field, which has no sibling-write path (inv 43). With no
+            `[data-drag-handle]` in the served HTML the reorder listeners
+            have nothing to attach to (same posture as the suppressed rank
+            pencil below). The client also banner-guards, but SSR-omit is the
+            primary defence so a no-JS / read-only surface never shows a
+            misleading drag affordance (QC finding A). The gutter column +
+            its `.sr-only` header are kept for column-count stability. */}
+        {readOnly ? null : (
+          <span
+            data-drag-handle={item.id}
+            role="button"
+            tabIndex={0}
+            aria-label={`Reorder backlog item ${item.id}`}
+            data-keyboard-shortcut="arrow-up,arrow-down,enter"
+            // The visible glyph is U+2630 TRIGRAM FOR HEAVEN (≡-like
+            // drag affordance). Hidden from AT — the aria-label supplies
+            // accessible naming.
+          >
+            <span aria-hidden="true">{"☰"}</span>
+          </span>
+        )}
       </td>
       <td>
         <a
