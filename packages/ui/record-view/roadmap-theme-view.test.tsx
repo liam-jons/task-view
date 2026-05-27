@@ -116,7 +116,9 @@ describe("RoadmapThemeView — core surfaces", () => {
     expect(html).toContain("## Notes");
   });
 
-  test("renders linked_tasks as live cross-record links when present in ledger", () => {
+  test("renders linked_tasks as live CROSS-LEDGER links when present in ledger", () => {
+    // {20.29}: linked_tasks now route to the task-list sibling ledger via
+    // /?ledger=task-list&record=<id> and carry data-cross-ledger.
     const theme = mkTheme({ linked_tasks: ["20", "21"] });
     const ledger = buildLedgerContext({
       roadmap: mkRoadmap([theme]),
@@ -126,8 +128,9 @@ describe("RoadmapThemeView — core surfaces", () => {
       <RoadmapThemeView theme={theme} ledger={ledger} nav={NAV} />,
     );
     expect(html).toContain('data-section="linked_tasks"');
-    expect(html).toContain('href="/?record=20"');
-    expect(html).toContain('href="/?record=21"');
+    expect(html).toContain('href="/?ledger=task-list&amp;record=20"');
+    expect(html).toContain('href="/?ledger=task-list&amp;record=21"');
+    expect(html).toContain('data-cross-ledger="task-list"');
     expect(html).not.toContain("(missing)");
   });
 
@@ -144,7 +147,8 @@ describe("RoadmapThemeView — core surfaces", () => {
     expect(html).toContain("(missing)");
   });
 
-  test("renders linked_backlog as cross-record links", () => {
+  test("renders linked_backlog as CROSS-LEDGER links", () => {
+    // {20.29}: linked_backlog now routes to the backlog sibling ledger.
     const theme = mkTheme({ linked_backlog: ["45"] });
     const ledger = buildLedgerContext({
       roadmap: mkRoadmap([theme]),
@@ -154,7 +158,8 @@ describe("RoadmapThemeView — core surfaces", () => {
       <RoadmapThemeView theme={theme} ledger={ledger} nav={NAV} />,
     );
     expect(html).toContain('data-section="linked_backlog"');
-    expect(html).toContain('href="/?record=45"');
+    expect(html).toContain('href="/?ledger=backlog&amp;record=45"');
+    expect(html).toContain('data-cross-ledger="backlog"');
   });
 
   test("omits linked_tasks / linked_backlog sections when empty", () => {

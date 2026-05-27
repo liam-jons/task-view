@@ -29,7 +29,7 @@ import {
   type FrontmatterRow,
 } from "./record-frontmatter-card";
 import { MarkdownBody } from "./markdown-renderer";
-import { recordRouteHref } from "./anchors";
+import { crossLedgerRecordHref, type LedgerSlug } from "./anchors";
 import { StatusBadge } from "./status-badge";
 import type { LedgerContext, NavStripData } from "./types";
 
@@ -116,11 +116,17 @@ export const RoadmapThemeView: React.FC<{
         />
       </section>
 
+      {/* {20.29}: linked_tasks / linked_backlog are CROSS-ledger edges —
+          they target the sibling task-list / backlog ledgers, not the
+          launched roadmap. `exists` is computed against the sibling id
+          sets the server threads into the LedgerContext (SPEC §4); when
+          the sibling is absent those sets are empty → broken-target. */}
       <LinkedRecordList
         title="Linked tasks"
         sectionKey="linked_tasks"
         ids={theme.linked_tasks}
-        hrefFor={recordRouteHref}
+        crossLedger="task-list"
+        hrefFor={(id) => crossLedgerRecordHref("task-list", id)}
         labelFor={(id) => `ID-${id}`}
         existsFor={(id) => ledger.taskIds.has(id)}
       />
@@ -129,7 +135,8 @@ export const RoadmapThemeView: React.FC<{
         title="Linked backlog"
         sectionKey="linked_backlog"
         ids={theme.linked_backlog}
-        hrefFor={recordRouteHref}
+        crossLedger="backlog"
+        hrefFor={(id) => crossLedgerRecordHref("backlog", id)}
         labelFor={(id) => `#${id}`}
         existsFor={(id) => ledger.backlogItemIds.has(id)}
       />
@@ -199,10 +206,12 @@ const LinkedRecordList: React.FC<{
   title: string;
   sectionKey: "linked_tasks" | "linked_backlog";
   ids: readonly string[];
+  /** Sibling ledger the ids point at ({20.29}); drives data-cross-ledger. */
+  crossLedger: LedgerSlug;
   hrefFor: (id: string) => string;
   labelFor: (id: string) => string;
   existsFor: (id: string) => boolean;
-}> = ({ title, sectionKey, ids, hrefFor, labelFor, existsFor }) => {
+}> = ({ title, sectionKey, ids, crossLedger, hrefFor, labelFor, existsFor }) => {
   if (ids.length === 0) return null;
   return (
     <section
@@ -217,6 +226,7 @@ const LinkedRecordList: React.FC<{
               href={hrefFor(id)}
               label={labelFor(id)}
               exists={existsFor(id)}
+              crossLedger={crossLedger}
             />
           </li>
         ))}
