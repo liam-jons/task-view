@@ -280,13 +280,17 @@ describe("Roadmap end-to-end render (themes[] happy path — ID-20.19)", () => {
     // time_horizon + status frontmatter rows
     expect(html).toContain('data-frontmatter-row="time_horizon"');
     expect(html).toContain('data-frontmatter-row="status"');
-    // linked_tasks resolves to the live record route (live, not missing)
+    // {20.29}: linked_tasks / linked_backlog are CROSS-ledger edges now —
+    // they route to the sibling task-list / backlog ledgers (live, not
+    // missing, because the sibling ids are threaded into the LedgerContext).
     expect(html).toContain('data-section="linked_tasks"');
-    expect(html).toContain('href="/?record=20"');
+    expect(html).toContain('href="/?ledger=task-list&amp;record=20"');
+    expect(html).toContain('data-cross-ledger="task-list"');
     expect(html).not.toContain("(missing)");
-    // linked_backlog resolves to the live record route
+    // linked_backlog resolves to the backlog sibling ledger
     expect(html).toContain('data-section="linked_backlog"');
-    expect(html).toContain('href="/?record=45"');
+    expect(html).toContain('href="/?ledger=backlog&amp;record=45"');
+    expect(html).toContain('data-cross-ledger="backlog"');
     // cross_doc_links render
     expect(html).toContain('href="docs/specs/per-task-mirror/TECH.md#section-3-1"');
     // notes section
