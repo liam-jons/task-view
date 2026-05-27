@@ -53,6 +53,7 @@
 // edit-dispatch imports below.
 import hljs from "../../../packages/ui/record-view/hljs";
 import {
+  buildMultiPatchRequest,
   buildPatchForKind,
   buildPatchRequest,
   isDispatchKind,
@@ -62,7 +63,10 @@ import {
   type DocLinkRowInput,
 } from "../../../packages/ui/record-view/edit-dispatch";
 import { classifySaveResult } from "../../../packages/ui/record-view/edit-state";
-import { recomputeTierRanks } from "../../../packages/ui/record-view/backlog-reorder";
+import {
+  recomputeTierRanks,
+  type RankAssignment,
+} from "../../../packages/ui/record-view/backlog-reorder";
 import {
   applyThemeClassesToHtml,
   writeThemeCookie,
@@ -863,11 +867,15 @@ function wireThemePicker(): void {
   });
 }
 
-// ── Backlog drag-reorder (backlog-drag-reorder SPEC §3, §7, §8 — Slice A) ─────
+// ── Backlog drag-reorder (backlog-drag-reorder SPEC §3, §4, §7, §8 — Slice B) ─
 //
-// Slice A scope: drag mechanics + within-tier DOM reorder + cross-tier refusal.
-// NO persistence (no PATCH) yet — a valid drop only reorders the DOM and logs
-// the would-be changed rank set (Slice B wires the multi-patch PATCH).
+// Slice A wired the drag mechanics + within-tier DOM reorder + cross-tier
+// refusal. Slice B adds PERSISTENCE: a valid drop commits the new order via a
+// single atomic multi-patch PATCH (SPEC §4.3, DR-8), adopts the returned mtime,
+// updates rank cells in place (SPEC §8.4), and fires the follow-up full mirror
+// regen (SPEC §0.7). On a 409 / schema / walk / network failure the DOM is
+// rolled back to the last-known-good order (captured at dragstart, SPEC §4.5)
+// and a brief inline message is surfaced near the table.
 //
 // The SPA sets `draggable="true"` on each row at wire time — NOT the SSR
 // (SPEC §7.2): `draggable` only means something with JS listeners attached, so
@@ -917,12 +925,233 @@ function tierRunBounds(
 }
 
 /**
+ * Lazily create (once per table) the visually-hidden `role="status"`
+ * `aria-live="polite"` region used for reorder announcements (SPEC §8.3).
+ * Appended adjacent to the table so AT reads it in context.
+ */
+function ensureReorderStatus(table: HTMLElement): HTMLElement {
+  const parent = table.parentElement ?? table;
+  let region = parent.querySelector<HTMLElement>("[data-reorder-status]");
+  if (!region) {
+    region = document.createElement("div");
+    region.setAttribute("data-reorder-status", "");
+    region.setAttribute("role", "status");
+    region.setAttribute("aria-live", "polite");
+    region.className = "sr-only";
+    parent.appendChild(region);
+  }
+  return region;
+}
+
+/** Announce a reorder status message to AT via the polite live region. */
+function announceReorder(table: HTMLElement, message: string): void {
+  ensureReorderStatus(table).textContent = message;
+}
+
+/**
+ * Show a brief inline reorder error near the table (SPEC §4.5). A single
+ * `[data-reorder-error]` element is reused (created once, adjacent to the
+ * table). Passing `null` clears it.
+ */
+function setReorderError(table: HTMLElement, message: string | null): void {
+  const parent = table.parentElement ?? table;
+  let el = parent.querySelector<HTMLElement>("[data-reorder-error]");
+  if (message === null) {
+    if (el) el.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement("p");
+    el.setAttribute("data-reorder-error", "");
+    el.setAttribute("role", "alert");
+    el.className = "record-view-reorder-error";
+    parent.insertBefore(el, table);
+  }
+  el.textContent = message;
+}
+
+/**
+ * Write a row's new dense rank into BOTH the `data-rank-value` attribute and
+ * the visible `.record-view-rank-value` text (SPEC §8.4). Keeping the hook
+ * fresh means a subsequent rank-pencil open reads the new rank, not a stale
+ * one (mirrors `commitDisplay`'s `data-rank-value` write).
+ */
+function updateRowRankCell(table: HTMLElement, id: string, rank: number): void {
+  const row = table.querySelector<HTMLElement>(
+    `[data-backlog-row="${CSS.escape(id)}"]`,
+  );
+  if (!row) return;
+  const cell = row.querySelector<HTMLElement>("[data-rank-value]");
+  if (!cell) return;
+  cell.setAttribute("data-rank-value", String(rank));
+  const valueSpan = cell.querySelector<HTMLElement>(".record-view-rank-value");
+  if (valueSpan) valueSpan.textContent = String(rank);
+}
+
+/**
+ * Restore the table's row order to a captured id sequence (SPEC §4.5 rollback).
+ * Re-appends each `[data-backlog-row]` `<tr>` to its `<tbody>` in `idOrder`;
+ * re-appending an existing node moves it, so the live DOM order matches the
+ * snapshot afterward. Ids no longer present are skipped defensively.
+ */
+function restoreRowOrder(table: HTMLElement, idOrder: readonly string[]): void {
+  const byId = new Map<string, HTMLElement>();
+  for (const row of backlogRows(table)) {
+    byId.set(row.getAttribute("data-backlog-row") ?? "", row);
+  }
+  for (const id of idOrder) {
+    const row = byId.get(id);
+    if (row && row.parentNode) row.parentNode.appendChild(row);
+  }
+}
+
+/**
+ * Commit a reordered tier (SPEC §4.3, §4.5, DR-8). Builds ONE atomic
+ * multi-patch PATCH over the changed ranks, classifies the outcome, and:
+ *   - ok / mirror-regen-failed (SOFT — canonical written, live order correct):
+ *     adopt newMtime, write the new dense ranks into the rank cells in place
+ *     (§8.4), announce success, then fire-and-forget the full mirror regen
+ *     (§0.7 — a failed regen logs only, no rollback, no user error).
+ *   - mtime-conflict (409) / schema-error / walk-error / network-error:
+ *     roll back the DOM to `lastGoodOrder`, surface the inline error, and
+ *     (409) adopt the returned currentMtime so a retry can succeed.
+ *
+ * `onCommitted(idOrder)` is invoked after a successful commit so the caller can
+ * advance its last-known-good baseline to the just-persisted order.
+ */
+async function commitReorder(
+  table: HTMLElement,
+  draggedId: string,
+  changed: readonly RankAssignment[],
+  lastGoodOrder: readonly string[],
+  onCommitted: (idOrder: string[]) => void,
+): Promise<void> {
+  // SPEC §4.3 last bullet: empty changed → no PATCH, silent no-op.
+  if (changed.length === 0) return;
+  setReorderError(table, null);
+
+  let base: string;
+  try {
+    base = await ensureBaseMtime();
+  } catch (err) {
+    restoreRowOrder(table, lastGoodOrder);
+    setReorderError(table, `Could not save — ${(err as Error).message}.`);
+    announceReorder(
+      table,
+      "Could not save — ledger changed, please reload.",
+    );
+    return;
+  }
+
+  // SPEC §4.3: one integer patch per changed rank; one atomic multi-patch body.
+  const patches = changed.map(({ id, rank }) =>
+    buildPatchForKind("integer", ["items", id, "rank"], String(rank)),
+  );
+  const body = buildMultiPatchRequest(patches, base);
+
+  let json: unknown;
+  try {
+    // SPEC §4.3: URL recordId = the dragged row's id (the walk ignores it; the
+    // per-fieldPath item ids drive the writes — §0.6).
+    const res = await fetch(recordPatchPath(draggedId), {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    json = await res.json();
+  } catch (err) {
+    restoreRowOrder(table, lastGoodOrder);
+    setReorderError(
+      table,
+      `Could not save — network error: ${(err as Error).message}. Please retry.`,
+    );
+    announceReorder(
+      table,
+      "Could not save — ledger changed, please reload.",
+    );
+    return;
+  }
+
+  const outcome = classifySaveResult(json);
+  switch (outcome.kind) {
+    case "ok":
+    case "mirror-regen-failed": {
+      // SOFT for mirror-regen-failed: canonical written, live order correct.
+      if (outcome.newMtime) baseMtime = outcome.newMtime;
+      // SPEC §8.4: write the new dense ranks in place so a later pencil-open
+      // reads fresh ranks.
+      for (const { id, rank } of changed) updateRowRankCell(table, id, rank);
+      announceReorder(table, "Order saved.");
+      onCommitted(rowIdSequence(table));
+      // SPEC §0.7: fire-and-forget full mirror regen. A failed regen logs to
+      // console only — NO rollback, NO user-facing error (soft follow-up).
+      void fireRegen(baseMtime);
+      break;
+    }
+    case "mtime-conflict": {
+      // 409 — canonical NOT mutated. Roll back to last-known-good order, adopt
+      // the returned currentMtime as the new base so a retry can succeed.
+      restoreRowOrder(table, lastGoodOrder);
+      if (outcome.currentMtime) baseMtime = outcome.currentMtime;
+      setReorderError(table, outcome.message);
+      announceReorder(
+        table,
+        "Could not save — ledger changed, please reload.",
+      );
+      break;
+    }
+    case "schema-error":
+    case "walk-error":
+    case "network-error": {
+      // Should not occur for a well-formed dense renumber against existing ids;
+      // defensively roll back the DOM and surface the error / retry hint.
+      restoreRowOrder(table, lastGoodOrder);
+      setReorderError(table, outcome.message);
+      announceReorder(
+        table,
+        "Could not save — ledger changed, please reload.",
+      );
+      break;
+    }
+  }
+}
+
+/**
+ * Fire-and-forget the full mirror regen after a successful reorder PATCH
+ * (SPEC §0.7). We send the just-adopted mtime so the regen never 409s against
+ * our own write. Any failure is SOFT: the canonical + live viewer are already
+ * correct, so we only log — no rollback, no user-facing error.
+ */
+async function fireRegen(mtime: string | null): Promise<void> {
+  try {
+    const res = await fetch("/api/ledger/regen", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(mtime ? { baseMtime: mtime } : {}),
+    });
+    const body = (await res.json()) as { ok?: boolean; error?: unknown };
+    if (!body.ok) {
+      console.debug("[backlog-reorder] follow-up regen failed (soft):", body);
+    }
+  } catch (err) {
+    console.debug(
+      "[backlog-reorder] follow-up regen request failed (soft):",
+      (err as Error).message,
+    );
+  }
+}
+
+/**
  * The reorder controller for one backlog table. Tracks the dragged row +
  * highlighted drop target across the dragstart→dragover→drop→dragend lifecycle.
  */
 function wireBacklogReorderTable(table: HTMLElement): void {
   let dragged: HTMLElement | null = null;
   let dropTarget: HTMLElement | null = null;
+  // SPEC §4.5: last-known-good order — the row id sequence captured at the
+  // start of the gesture (dragstart). Rollback restores to this on a failed
+  // commit; a successful commit advances it to the just-persisted order.
+  let lastGoodOrder: string[] = rowIdSequence(table);
 
   // SPEC §7.2: the CLIENT marks rows draggable (never the SSR).
   for (const row of backlogRows(table)) {
@@ -947,6 +1176,9 @@ function wireBacklogReorderTable(table: HTMLElement): void {
     const row = target?.closest<HTMLElement>("[data-backlog-row]") ?? null;
     if (!row || !table.contains(row)) return;
     dragged = row;
+    // SPEC §4.5: capture the last-known-good order at the START of the gesture
+    // so a failed commit can roll the DOM back to exactly this sequence.
+    lastGoodOrder = rowIdSequence(table);
     row.classList.add(ROW_DRAGGING_CLASS);
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = "move";
@@ -1025,7 +1257,8 @@ function wireBacklogReorderTable(table: HTMLElement): void {
       tbody.insertBefore(draggedRow, over);
     }
 
-    // Slice A: no PATCH. Compute the would-be changed set for visibility only.
+    // SPEC §4.1: recompute the ENTIRE affected tier densely from its new
+    // top-to-bottom DOM order, then PATCH only the changed subset.
     const rowsAfter = backlogRows(table);
     const tierRows = rowsAfter
       .filter((r) => rowTier(r) === tier)
@@ -1034,11 +1267,20 @@ function wireBacklogReorderTable(table: HTMLElement): void {
         rank: rankOfRow(r),
       }));
     const { changed } = recomputeTierRanks(tierRows);
-    if (changed.length > 0) {
-      console.debug("[backlog-reorder] would PATCH (Slice B):", changed);
-    }
+    const draggedId = draggedRow.getAttribute("data-backlog-row") ?? "";
+    const goodOrder = lastGoodOrder;
 
+    // End the drag visuals before the async commit so the row isn't left
+    // greyed-out while the PATCH is in flight.
     endDrag();
+
+    // SPEC §4.3/§4.5: commit the new order via one atomic multi-patch PATCH.
+    // Empty `changed` (dropped back where it started) → silent no-op, no PATCH.
+    void commitReorder(table, draggedId, changed, goodOrder, (idOrder) => {
+      // Advance the last-known-good baseline to the just-persisted order so a
+      // subsequent failed gesture rolls back to here, not the pre-commit order.
+      lastGoodOrder = idOrder;
+    });
   });
 
   table.addEventListener("dragend", () => {

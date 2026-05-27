@@ -438,6 +438,15 @@
   box-shadow: inset 0 2px 0 0 var(--primary);
 }
 
+/* Slice B (SPEC §4.5): inline rollback message surfaced near the table on a
+   409 / schema / walk / network failure (`[data-reorder-error]`). Destructive
+   tint, matches the field-level inline-error styling. */
+.record-view-reorder-error {
+  color: var(--destructive);
+  font-size: 0.85rem;
+  margin: 0.35rem 0;
+}
+
 /* ================================================================== */
 /* SV-28/29 — empty + not-found states                                */
 /* ================================================================== */
