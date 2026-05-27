@@ -34,6 +34,7 @@ import {
   MarkdownBody,
 } from "./markdown-renderer";
 import {
+  crossLedgerRecordHref,
   recordRouteHref,
   subtaskAnchorId,
   subtaskDepLabel,
@@ -42,6 +43,18 @@ import {
 } from "./anchors";
 import { PriorityBadge, StatusBadge } from "./status-badge";
 import type { LedgerContext, NavStripData } from "./types";
+
+/**
+ * Chip label for the capability_theme cross-ledger row ({20.29} §6).
+ * `theme <id>: <title>` when the sibling roadmap resolved a title;
+ * bare `theme <id>` otherwise (sibling absent / id missing in the roadmap).
+ */
+function capabilityThemeChipLabel(
+  themeId: string,
+  title: string | null,
+): string {
+  return title !== null ? `theme ${themeId}: ${title}` : `theme ${themeId}`;
+}
 
 /**
  * URL helper for a commit ref. Form `<base>/commit/<sha>`; when the
@@ -151,6 +164,32 @@ export const TaskListView: React.FC<{
       label: "Updated",
       value: task.updatedAt,
     },
+    // {20.29}: capability_theme is a forward cross-ledger edge to the
+    // roadmap sibling. Rendered ONLY when set (SPEC §5 slice 5 / §6) as a
+    // clickable chip → /?ledger=roadmap&record=<themeId>. The theme title
+    // is resolved from the sibling roadmap when the server threads it into
+    // the LedgerContext; otherwise the chip falls back to the bare id.
+    ...(typeof task.capability_theme === "string" &&
+    task.capability_theme !== ""
+      ? [
+          {
+            key: "capability_theme",
+            label: "Capability theme",
+            value: (
+              <MaybeRecordLink
+                href={crossLedgerRecordHref("roadmap", task.capability_theme)}
+                label={capabilityThemeChipLabel(
+                  task.capability_theme,
+                  ledger.roadmapThemesById.get(task.capability_theme)?.title ??
+                    null,
+                )}
+                exists={true}
+                crossLedger="roadmap"
+              />
+            ),
+          } satisfies FrontmatterRow,
+        ]
+      : []),
     {
       key: "session_refs",
       label: "Session refs",
