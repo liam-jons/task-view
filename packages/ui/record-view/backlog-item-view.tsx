@@ -28,6 +28,7 @@ import {
   MarkdownBody,
 } from "./markdown-renderer";
 import { recordRouteHref } from "./anchors";
+import { useReadOnly } from "./read-only-context";
 import { PriorityBadge, StatusBadge } from "./status-badge";
 import { renderAppearsInThemes } from "./task-list-view";
 import type { LedgerContext, NavStripData } from "./types";
@@ -37,6 +38,10 @@ export const BacklogItemView: React.FC<{
   ledger: LedgerContext;
   nav: NavStripData;
 }> = ({ item, ledger, nav }) => {
+  // {backlog-ui-delete}: suppress the destructive delete affordance on a
+  // read-only sibling page (DR-6) — a cross-ledger nav target has no
+  // sibling-write path (inv 43), so a delete button would be inert/misleading.
+  const readOnly = useReadOnly();
   const missingDeps = item.dependencies.filter(
     (depId) => !ledger.backlogItemIds.has(depId),
   );
@@ -302,6 +307,22 @@ export const BacklogItemView: React.FC<{
             />
           </p>
         </section>
+      )}
+
+      {/* {backlog-ui-delete}: whole-record delete affordance. The SPA
+          dispatcher keys on data-delete-action and resolves the id from the
+          enclosing data-record-id on the <article>. Suppressed read-only. */}
+      {readOnly ? null : (
+        <div className="record-view-record-actions">
+          <button
+            type="button"
+            className="record-view-delete-button"
+            data-delete-action
+            aria-label={`Delete backlog item ${item.id}`}
+          >
+            Delete this item
+          </button>
+        </div>
       )}
     </article>
   );

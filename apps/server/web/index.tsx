@@ -53,16 +53,26 @@
 // edit-dispatch imports below.
 import hljs from "../../../packages/ui/record-view/hljs";
 import {
+  buildDeleteRequest,
   buildMultiPatchRequest,
   buildPatchForKind,
   buildPatchRequest,
   isDispatchKind,
   parseFieldPathAttr,
+  recordDeletePath,
   recordPatchPath,
   type DispatchKind,
   type DocLinkRowInput,
 } from "../../../packages/ui/record-view/edit-dispatch";
-import { classifySaveResult } from "../../../packages/ui/record-view/edit-state";
+import {
+  classifyDeleteResult,
+  classifySaveResult,
+  type DeleteOutcome,
+} from "../../../packages/ui/record-view/edit-state";
+import {
+  findBacklogReferences,
+  type BacklogReferences,
+} from "../../../packages/ui/record-view/backlog-references";
 import {
   recomputeTierRanks,
   type RankAssignment,

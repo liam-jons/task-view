@@ -60,6 +60,10 @@ export const BacklogIndexView: React.FC<BacklogIndexViewProps> = ({
   filters,
   trackOptions,
 }) => {
+  // {backlog-ui-delete}: the per-row delete affordance + its Actions column
+  // header are suppressed on a read-only sibling page (DR-6) — same posture
+  // as the already-gated rank pencil + drag handle.
+  const readOnly = useReadOnly();
   const tracks =
     trackOptions ?? Array.from(new Set(items.map((i) => i.track))).sort();
   // The Zod enum values are the canonical source per inv 31 (used here
@@ -84,6 +88,7 @@ export const BacklogIndexView: React.FC<BacklogIndexViewProps> = ({
         <p
           className="record-view-backlog-index-count"
           data-item-count={filtered.length}
+          data-item-total={items.length}
         >
           Showing {filtered.length} of {items.length} items
         </p>
@@ -159,6 +164,7 @@ export const BacklogIndexView: React.FC<BacklogIndexViewProps> = ({
               <th scope="col">Rank</th>
               <th scope="col">Track</th>
               <th scope="col">Effort</th>
+              {readOnly ? null : <th scope="col">Actions</th>}
             </tr>
           </thead>
           <tbody>
@@ -268,6 +274,21 @@ const BacklogItemRow: React.FC<{ item: BacklogItem }> = ({ item }) => {
       </td>
       <td>{item.track}</td>
       <td>{item.effort_estimate ?? "—"}</td>
+      {/* {backlog-ui-delete}: whole-record delete. The SPA dispatcher keys on
+          data-delete-action and resolves the id from the enclosing
+          data-backlog-row on the <tr>. Suppressed on read-only siblings. */}
+      {readOnly ? null : (
+        <td className="record-view-actions-cell">
+          <button
+            type="button"
+            className="record-view-delete-button"
+            data-delete-action
+            aria-label={`Delete backlog item ${item.id}`}
+          >
+            Delete
+          </button>
+        </td>
+      )}
     </tr>
   );
 };
