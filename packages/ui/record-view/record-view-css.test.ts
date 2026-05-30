@@ -64,6 +64,20 @@ const EMITTED_CLASSES: readonly string[] = [
   "record-view-status-badge",
   "record-view-priority-badge",
   "record-view-blocked-banner",
+  // backlog-ui-delete: whole-record delete affordance + confirm dialog
+  "record-view-record-actions",
+  "record-view-delete-button",
+  "record-view-delete-overlay",
+  "record-view-delete-panel",
+  "record-view-delete-confirm",
+  "record-view-delete-cancel",
+  // backlog-ui-delete: whole-record delete affordance + confirm dialog
+  "record-view-record-actions",
+  "record-view-delete-button",
+  "record-view-delete-overlay",
+  "record-view-delete-panel",
+  "record-view-delete-confirm",
+  "record-view-delete-cancel",
   // §3.4 frontmatter card
   "record-view-frontmatter-card",
   "record-view-frontmatter-row",

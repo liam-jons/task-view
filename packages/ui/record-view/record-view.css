@@ -603,6 +603,82 @@ td:focus-within > .record-view-pencil-button,
   flex-basis: 100%;
 }
 
+/* ================================================================== */
+/* backlog-ui-delete — whole-record delete affordance + confirm dialog */
+/* Token-driven (--destructive danger token); no raw colour literals.  */
+/* ================================================================== */
+
+.record-view-record-actions {
+  margin-top: 1rem;
+}
+
+.record-view-delete-button {
+  color: var(--destructive);
+  background: transparent;
+  border: 1px solid color-mix(in oklab, var(--destructive) 55%, transparent);
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0.25rem 0.7rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.record-view-delete-button:hover,
+.record-view-delete-button:focus-visible {
+  background: color-mix(in oklab, var(--destructive) 18%, transparent);
+}
+
+.record-view-delete-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in oklab, var(--foreground) 45%, transparent);
+  z-index: 1000;
+}
+
+.record-view-delete-panel {
+  background: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem 1.5rem;
+  max-width: 32rem;
+  box-shadow: 0 8px 32px color-mix(in oklab, var(--foreground) 30%, transparent);
+}
+
+.record-view-delete-warning {
+  color: var(--destructive);
+  font-weight: 600;
+}
+
+.record-view-delete-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+
+.record-view-delete-confirm {
+  background: var(--destructive);
+  color: var(--primary-foreground);
+  border: 1px solid var(--destructive);
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0.35rem 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.record-view-delete-cancel {
+  background: transparent;
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0.35rem 0.9rem;
+  cursor: pointer;
+}
+
 /* SV-36 — doc-link editor table. */
 .record-view-doclink-table {
   width: 100%;
