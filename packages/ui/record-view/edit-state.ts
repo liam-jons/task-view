@@ -437,3 +437,119 @@ export function classifySaveResult(response: unknown): SaveOutcome {
 
   return { kind: "network-error", message: "Unrecognised server response." };
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// DELETE-attempt classification — sibling of classifySaveResult for whole-
+// record deletion (backlog-ui-delete). The server's handleDeleteRecord
+// flattens errors to a top-level STRING `error` discriminant + sibling
+// fields, exactly like the PATCH path.
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * DELETE-attempt outcomes the viewer must distinguish.
+ *
+ * `ok` carries the server's `newMtime` so the hydration layer can adopt
+ * it as the next `baseMtime` (optimistic concurrency, TECH §5.4). A SOFT
+ * `mirror-regen-failed` collapses into `ok`: the canonical ledger DID
+ * persist (`canonicalWritten: true`) — only the on-disk mirror regen
+ * failed — so the record IS gone and the client should treat the delete
+ * as done (adopt `newMtime`), not surface a hard error.
+ *
+ * `mtime-conflict` carries `currentMtime` so the SPA can re-base against
+ * the latest mtime (PRODUCT inv 37). `not-found` means the record was
+ * already gone (concurrent delete / stale page). `schema-error` should
+ * be impossible from a pure removal but is mapped defensively (the
+ * server re-parses post-removal). Everything else is `network-error`.
+ */
+export type DeleteOutcome =
+  | { kind: "ok"; newMtime?: string }
+  | { kind: "not-found"; message: string }
+  | { kind: "mtime-conflict"; message: string; currentMtime?: string }
+  | { kind: "schema-error"; message: string }
+  | { kind: "network-error"; message: string };
+
+/**
+ * Classify the REAL handleDeleteRecord response shape. Verified against
+ * packages/server/patch-server.ts:
+ *
+ *   200 → { ok: true, newMtime, recordId, mirrorsDeleted }
+ *   409 → { ok: false, error: "mtime-mismatch", currentMtime, hint }
+ *   404 → { ok: false, error: "record-not-found", recordId }
+ *   422 → { ok: false, error: "schema-error", issues }
+ *   422 → { ok: false, error: "unknown-document-name", documentName }
+ *   500 → { ok: false, error: "mirror-regen-failed", canonicalWritten,
+ *                              newMtime, detail }   ← SOFT (record removed)
+ *   400/500 → invalid-json / missing-baseMtime / invalid-baseMtime /
+ *             write-failed / ledger-read-failed → network-error
+ */
+export function classifyDeleteResult(response: unknown): DeleteOutcome {
+  if (typeof response !== "object" || response === null) {
+    return { kind: "network-error", message: "Empty server response." };
+  }
+  const r = response as {
+    ok?: boolean;
+    error?: unknown;
+    newMtime?: unknown;
+    currentMtime?: unknown;
+    hint?: unknown;
+    issues?: unknown;
+    detail?: unknown;
+    documentName?: unknown;
+  };
+
+  if (r.ok === true) {
+    return {
+      kind: "ok",
+      newMtime: typeof r.newMtime === "string" ? r.newMtime : undefined,
+    };
+  }
+
+  if (r.ok === false && typeof r.error === "string") {
+    switch (r.error) {
+      case "mirror-regen-failed":
+        // SOFT: the canonical persisted (the record IS gone); only the
+        // mirror regen failed. Treat as success — adopt newMtime.
+        return {
+          kind: "ok",
+          newMtime: typeof r.newMtime === "string" ? r.newMtime : undefined,
+        };
+      case "record-not-found":
+        return {
+          kind: "not-found",
+          message: "That record no longer exists in the ledger.",
+        };
+      case "mtime-mismatch":
+        return {
+          kind: "mtime-conflict",
+          message:
+            typeof r.hint === "string"
+              ? r.hint
+              : "Ledger changed underneath you — reload from disk and try again.",
+          currentMtime:
+            typeof r.currentMtime === "string" ? r.currentMtime : undefined,
+        };
+      case "schema-error":
+        return {
+          kind: "schema-error",
+          message: formatZodIssuesInline(r.issues),
+        };
+      case "unknown-document-name":
+        return {
+          kind: "schema-error",
+          message: `Unrecognised ledger document_name: ${
+            typeof r.documentName === "string" ? r.documentName : "(null)"
+          }.`,
+        };
+      default:
+        // invalid-json / missing-baseMtime / invalid-baseMtime /
+        // write-failed / ledger-read-failed / anything else.
+        return {
+          kind: "network-error",
+          message:
+            typeof r.detail === "string" ? `${r.error}: ${r.detail}` : r.error,
+        };
+    }
+  }
+
+  return { kind: "network-error", message: "Unrecognised server response." };
+}
