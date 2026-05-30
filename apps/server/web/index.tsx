@@ -70,6 +70,7 @@ import {
   type DeleteOutcome,
 } from "../../../packages/ui/record-view/edit-state";
 import {
+  buildDeleteConfirmMessage,
   findBacklogReferences,
   type BacklogReferences,
 } from "../../../packages/ui/record-view/backlog-references";
@@ -766,6 +767,250 @@ function clearInlineError(container: HTMLElement): void {
   container.querySelectorAll("[data-edit-error]").forEach((n) => n.remove());
 }
 
+// ── Whole-record delete (backlog-ui-delete) ──────────────────────────────────
+//
+// The SSR emits a `[data-delete-action]` button on the Backlog item page
+// (inside the page-level `[data-record-id]` article) and one per index row
+// (inside `[data-backlog-row]`). The delegated `onClick` routes both here. The
+// flow is intentionally thin — all logic lives in the tested pure helpers
+// (`findBacklogReferences` / `buildDeleteConfirmMessage` / `recordDeletePath` /
+// `buildDeleteRequest` / `classifyDeleteResult`); this shell only does DOM:
+//
+//   1. Scan the ACTIVE ledger (GET /api/ledger → `data.items`) for backlog
+//      dependents the deletion would orphan, build the confirm prompt.
+//   2. Show a DOM-built confirm dialog (createElement + textContent — NO
+//      innerHTML, matching this file's strict convention). Cancel aborts.
+//   3. DELETE /api/ledger/record/:id with `{ baseMtime }`. The server
+//      regenerates mirrors internally on success — we do NOT fire a separate
+//      /api/ledger/regen.
+//   4. Route `classifyDeleteResult`:
+//        - ok (incl. SOFT mirror-regen-failed): adopt newMtime; on the index
+//          remove the `<tr>` + decrement the "Showing N of M" count; on the
+//          per-item page redirect to `/` (the backlog index).
+//        - mtime-conflict (409): adopt currentMtime; surface a page banner.
+//        - not-found (404): the row is already gone — drop it on the index;
+//          on the item page redirect (it no longer exists).
+//        - schema-error / network-error: surface a page banner.
+
+/**
+ * Fetch the active ledger's backlog references for `id`. Returns an empty
+ * (no-references) scan when the ledger fetch fails or the active ledger is
+ * not the backlog — the confirm still proceeds, just without the orphan
+ * warning (the core delete must never be blocked by a soft warning fetch).
+ *
+ * GET /api/ledger returns only the ACTIVE ledger, so cross-ledger roadmap
+ * `linked_backlog` refs are not covered here (the pure helper supports them;
+ * the sibling roadmap is simply not on the page). See the follow-up note.
+ */
+async function scanBacklogReferences(id: string): Promise<BacklogReferences> {
+  const empty: BacklogReferences = {
+    dependents: [],
+    themes: [],
+    hasReferences: false,
+  };
+  try {
+    const res = await fetch("/api/ledger", {
+      headers: { accept: "application/json" },
+    });
+    const body = (await res.json()) as {
+      ok?: boolean;
+      kind?: unknown;
+      data?: { items?: unknown };
+    };
+    if (!body.ok || body.kind !== "backlog") return empty;
+    const items = Array.isArray(body.data?.items) ? body.data.items : [];
+    // The pure helper only reads `.id` + `.dependencies` off each item; the
+    // wire JSON carries those, so the cast is safe for the scan.
+    return findBacklogReferences(id, {
+      items: items as BacklogReferences["dependents"],
+    });
+  } catch {
+    return empty;
+  }
+}
+
+/**
+ * Surface a page-level delete error banner (mirrors `saveEditor`'s inline
+ * error, but the delete affordance has no field container to attach to). A
+ * single reusable `[data-delete-error]` alert is inserted at the top of the
+ * record article / table region. Built with createElement + textContent.
+ */
+function setDeleteError(anchor: Element, message: string): void {
+  const host =
+    anchor.closest<HTMLElement>("[data-record-kind]") ??
+    document.body;
+  let el = host.querySelector<HTMLElement>("[data-delete-error]");
+  if (!el) {
+    el = document.createElement("p");
+    el.setAttribute("data-delete-error", "");
+    el.setAttribute("role", "alert");
+    el.className = "record-view-inline-error";
+    host.insertBefore(el, host.firstChild);
+  }
+  el.textContent = message;
+}
+
+/**
+ * Remove the deleted row from the Backlog index `<tr>` and decrement the
+ * "Showing N of M" count using the authoritative `data-item-count` /
+ * `data-item-total` hooks (no rendered-text re-parse). No-op off the index.
+ */
+function removeIndexRow(id: string): void {
+  const row = document.querySelector<HTMLElement>(
+    `[data-backlog-row="${CSS.escape(id)}"]`,
+  );
+  if (row) row.remove();
+
+  const count = document.querySelector<HTMLElement>(
+    "[data-item-count][data-item-total]",
+  );
+  if (!count) return;
+  const shown = Number(count.getAttribute("data-item-count"));
+  const total = Number(count.getAttribute("data-item-total"));
+  const nextShown = Number.isFinite(shown) ? Math.max(0, shown - 1) : 0;
+  const nextTotal = Number.isFinite(total) ? Math.max(0, total - 1) : 0;
+  count.setAttribute("data-item-count", String(nextShown));
+  count.setAttribute("data-item-total", String(nextTotal));
+  count.textContent = `Showing ${nextShown} of ${nextTotal} items`;
+}
+
+/** True when the delete affordance lives on a per-item page (not the index). */
+function isItemPage(anchor: Element): boolean {
+  return anchor.closest('[data-record-kind="backlog-item"]') !== null;
+}
+
+/**
+ * Build + mount the confirm dialog. Resolves true if the user confirms,
+ * false if they cancel (or dismiss via the overlay / Escape). All DOM is
+ * createElement + textContent — no innerHTML.
+ */
+function confirmDelete(message: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "record-view-delete-overlay";
+    overlay.setAttribute("data-delete-overlay", "");
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+
+    const panel = document.createElement("div");
+    panel.className = "record-view-delete-panel";
+
+    const prompt = document.createElement("p");
+    prompt.className = "record-view-delete-warning";
+    prompt.textContent = message;
+    panel.appendChild(prompt);
+
+    const actions = document.createElement("div");
+    actions.className = "record-view-delete-actions";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "record-view-delete-cancel";
+    cancelBtn.textContent = "Cancel";
+
+    const confirmBtn = document.createElement("button");
+    confirmBtn.type = "button";
+    confirmBtn.className = "record-view-delete-confirm";
+    confirmBtn.textContent = "Delete";
+
+    actions.appendChild(cancelBtn);
+    actions.appendChild(confirmBtn);
+    panel.appendChild(actions);
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    confirmBtn.focus();
+
+    const close = (result: boolean): void => {
+      overlay.removeEventListener("keydown", onKey);
+      overlay.remove();
+      resolve(result);
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        close(false);
+      }
+    };
+    cancelBtn.addEventListener("click", () => close(false));
+    confirmBtn.addEventListener("click", () => close(true));
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) close(false);
+    });
+    overlay.addEventListener("keydown", onKey);
+  });
+}
+
+/**
+ * Drive the whole delete flow for a `[data-delete-action]` button. Banner-
+ * guarded by the caller; this assumes an editable (launched) ledger.
+ */
+async function deleteBacklogRecord(button: HTMLElement): Promise<void> {
+  const recordId = resolveRecordId(button);
+  if (!recordId) return;
+
+  const refs = await scanBacklogReferences(recordId);
+  const confirmed = await confirmDelete(
+    buildDeleteConfirmMessage(recordId, refs),
+  );
+  if (!confirmed) return;
+
+  let base: string;
+  try {
+    base = await ensureBaseMtime();
+  } catch (err) {
+    setDeleteError(button, `Could not delete — ${(err as Error).message}.`);
+    return;
+  }
+
+  let json: unknown;
+  try {
+    const res = await fetch(recordDeletePath(recordId), {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(buildDeleteRequest(base)),
+    });
+    json = await res.json();
+  } catch (err) {
+    setDeleteError(
+      button,
+      `Could not delete — network error: ${(err as Error).message}. Please retry.`,
+    );
+    return;
+  }
+
+  const outcome: DeleteOutcome = classifyDeleteResult(json);
+  switch (outcome.kind) {
+    case "ok":
+      // Canonical persisted (mirror regen ran server-side; SOFT regen failure
+      // collapses to ok). Adopt the new mtime so later edits re-base correctly.
+      if (outcome.newMtime) baseMtime = outcome.newMtime;
+      if (isItemPage(button)) {
+        window.location.assign("/");
+      } else {
+        removeIndexRow(recordId);
+      }
+      break;
+    case "not-found":
+      // Already gone (concurrent delete / stale page). Reconcile the view: drop
+      // the row on the index, leave the item page (it no longer exists).
+      if (isItemPage(button)) {
+        window.location.assign("/");
+      } else {
+        removeIndexRow(recordId);
+      }
+      break;
+    case "mtime-conflict":
+      // 409 — canonical NOT mutated. Adopt currentMtime so a retry can succeed.
+      if (outcome.currentMtime) baseMtime = outcome.currentMtime;
+      setDeleteError(button, outcome.message);
+      break;
+    case "schema-error":
+    case "network-error":
+      setDeleteError(button, outcome.message);
+      break;
+  }
+}
+
 // ── Delegated listeners ──────────────────────────────────────────────────────
 
 function onClick(event: MouseEvent): void {
@@ -779,6 +1024,18 @@ function onClick(event: MouseEvent): void {
   if (doclinkEl) {
     event.preventDefault();
     handleDocLinkAction(doclinkEl);
+    return;
+  }
+
+  // backlog-ui-delete: whole-record delete affordance. Banner-guarded
+  // (defence-in-depth, same posture as wireBacklogReorder) — a read-only
+  // sibling page never emits the button, but never wire a mutation on one
+  // even if it somehow appears.
+  const deleteEl = target.closest<HTMLElement>("[data-delete-action]");
+  if (deleteEl) {
+    event.preventDefault();
+    if (document.querySelector("[data-ledger-banner]")) return;
+    void deleteBacklogRecord(deleteEl);
     return;
   }
 
