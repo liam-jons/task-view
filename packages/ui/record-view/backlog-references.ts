@@ -54,3 +54,45 @@ export function findBacklogReferences(
     hasReferences: dependents.length > 0 || themes.length > 0,
   };
 }
+
+/**
+ * Build the human-readable confirmation prompt the delete-confirm dialog
+ * shows before issuing the DELETE (backlog-ui-delete). Pure + tested so the
+ * client DOM layer only has to drop the string into a `textContent` — no
+ * message-construction logic in the untested DOM shell.
+ *
+ * The result is a plain string (no HTML markup) safe to assign to
+ * `textContent`. When `refs.hasReferences` is true it names the orphaned
+ * dependent item ids and/or roadmap theme ids so the user sees exactly what
+ * the deletion would break (the schema does NOT enforce referential
+ * integrity — deletion silently orphans these edges).
+ */
+export function buildDeleteConfirmMessage(
+  id: string,
+  refs: BacklogReferences,
+): string {
+  const lead = `Delete backlog item ${id}? This cannot be undone.`;
+  if (!refs.hasReferences) return lead;
+
+  const warnings: string[] = [];
+  if (refs.dependents.length > 0) {
+    const ids = refs.dependents.map((d) => d.id).join(", ");
+    warnings.push(
+      `${refs.dependents.length} other backlog ${
+        refs.dependents.length === 1 ? "item depends" : "items depend"
+      } on it (${ids})`,
+    );
+  }
+  if (refs.themes.length > 0) {
+    const ids = refs.themes.map((t) => t.id).join(", ");
+    warnings.push(
+      `${refs.themes.length} roadmap ${
+        refs.themes.length === 1 ? "theme links" : "themes link"
+      } to it (${ids})`,
+    );
+  }
+
+  return `${lead} Warning: deleting it will orphan ${warnings.join(
+    " and ",
+  )}.`;
+}

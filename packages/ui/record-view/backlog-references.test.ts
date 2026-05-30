@@ -9,7 +9,10 @@
 import { describe, expect, test } from "bun:test";
 import type { BacklogItem } from "@task-view/schemas/backlog";
 import type { Roadmap } from "@task-view/schemas/roadmap";
-import { findBacklogReferences } from "./backlog-references";
+import {
+  buildDeleteConfirmMessage,
+  findBacklogReferences,
+} from "./backlog-references";
 
 const mkItem = (overrides: Partial<BacklogItem> = {}): BacklogItem => ({
   id: "1",
@@ -129,5 +132,49 @@ describe("findBacklogReferences — hasReferences flag", () => {
     expect(
       findBacklogReferences("1", { items: [], roadmap }).hasReferences,
     ).toBe(true);
+  });
+});
+
+describe("buildDeleteConfirmMessage", () => {
+  test("plain confirm when nothing references the id", () => {
+    const refs = findBacklogReferences("45", { items: [mkItem({ id: "1" })] });
+    const msg = buildDeleteConfirmMessage("45", refs);
+    expect(msg).toContain("45");
+    // No orphan warning when there are no references.
+    expect(msg.toLowerCase()).not.toContain("orphan");
+    expect(msg.toLowerCase()).not.toContain("depend");
+  });
+
+  test("warns + names dependent item ids when other items depend on it", () => {
+    const refs = findBacklogReferences("1", {
+      items: [
+        mkItem({ id: "2", dependencies: ["1"] }),
+        mkItem({ id: "7", dependencies: ["1"] }),
+      ],
+    });
+    const msg = buildDeleteConfirmMessage("1", refs);
+    expect(msg).toContain("2");
+    expect(msg).toContain("7");
+    // Surfaces that the deletion orphans references.
+    expect(msg.toLowerCase()).toContain("depend");
+  });
+
+  test("warns + names roadmap theme ids when a theme links the id", () => {
+    const roadmap = mkRoadmap([
+      { id: "T1", title: "One", linked_backlog: ["1"] },
+    ]);
+    const refs = findBacklogReferences("1", { items: [], roadmap });
+    const msg = buildDeleteConfirmMessage("1", refs);
+    expect(msg).toContain("T1");
+    expect(msg.toLowerCase()).toContain("theme");
+  });
+
+  test("is a plain string with no HTML markup (textContent-safe)", () => {
+    const refs = findBacklogReferences("1", {
+      items: [mkItem({ id: "2", dependencies: ["1"] })],
+    });
+    const msg = buildDeleteConfirmMessage("1", refs);
+    expect(msg).not.toContain("<");
+    expect(msg).not.toContain(">");
   });
 });
