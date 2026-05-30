@@ -82,6 +82,7 @@ import {
   applyThemeClassesToHtml,
   writeThemeCookie,
 } from "../../../packages/ui/record-view/theme-client";
+import { FILTER_ALL } from "../../../packages/ui/record-view/url-state";
 
 /** Selector for the container that holds both a value + its affordance. */
 const CONTAINER_SELECTOR =
@@ -1134,6 +1135,51 @@ function wireThemePicker(): void {
   });
 }
 
+// ── Backlog filter dropdowns (PRODUCT inv 23) ────────────────────────────────
+//
+// The SSR backlog index emits a `<form data-backlog-filters>` with three
+// `<select data-filter-control="track|status|priority">` controls plus a
+// `<noscript>` submit button. The server already decodes `?track=&status=
+// &priority=` via `decodeBacklogFilters` and filters the table — but with JS
+// enabled the `<noscript>` button is absent AND a native `<select>` change does
+// NOT submit a GET form on its own, so the dropdowns were inert (the bug).
+//
+// On change we rebuild the query string from ALL three selects and navigate;
+// the SSR re-renders the filtered table and the URL stays bookmarkable /
+// shareable (inv 23). FILTER_ALL / empty is the canonical "no filter" → the
+// key is dropped so the URL stays minimal (matches `encodeBacklogFilters`).
+// Non-filter params already on the URL (e.g. a cross-ledger `?ledger=` slug)
+// are preserved. Mirrors `wireThemePicker`'s feature-detect + change pattern.
+function wireBacklogFilters(): void {
+  const form = document.querySelector<HTMLFormElement>("[data-backlog-filters]");
+  if (!form) return;
+  const selects = Array.from(
+    form.querySelectorAll<HTMLSelectElement>("select[data-filter-control]"),
+  );
+  if (selects.length === 0) return;
+
+  function applyFilters(): void {
+    const params = new URLSearchParams(window.location.search);
+    for (const select of selects) {
+      const name = select.getAttribute("data-filter-control");
+      if (!name) continue;
+      if (select.value === FILTER_ALL || select.value === "") {
+        params.delete(name);
+      } else {
+        params.set(name, select.value);
+      }
+    }
+    // Assigning location.search triggers a navigation + SSR re-render. An empty
+    // string drops the query entirely (all filters cleared); assigning the
+    // current value is a no-op, so a redundant re-select never reloads.
+    window.location.search = params.toString();
+  }
+
+  for (const select of selects) {
+    select.addEventListener("change", applyFilters);
+  }
+}
+
 // ── Backlog reorder (backlog-drag-reorder SPEC §2, §3, §4, §7, §8 — Slice C) ──
 //
 // Slice A wired the drag mechanics + within-tier DOM reorder + cross-tier
@@ -1767,6 +1813,7 @@ function init(): void {
   highlightCodeBlocks();
   wirePrintClassToggle();
   wireThemePicker();
+  wireBacklogFilters();
   wireBacklogReorder();
 }
 
