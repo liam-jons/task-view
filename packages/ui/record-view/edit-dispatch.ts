@@ -239,3 +239,33 @@ export function buildMultiPatchRequest(
 export function recordPatchPath(recordId: string): string {
   return `/api/ledger/record/${encodeURIComponent(recordId)}`;
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// DELETE request — matches handleDeleteRecord's contract.
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The JSON body for `DELETE /api/ledger/record/:recordId`. The server
+ * (handleDeleteRecord) reads exactly one field — `baseMtime`, the ISO
+ * mtime STRING it `Date.parse`s for the optimistic-concurrency guard
+ * (a 409 `mtime-mismatch` when the on-disk ledger is newer). No body
+ * other than `baseMtime` is consumed.
+ */
+export interface DeleteRequestBody {
+  baseMtime: string;
+}
+
+/** Assemble the DELETE request body from the current base mtime. */
+export function buildDeleteRequest(baseMtime: string): DeleteRequestBody {
+  return { baseMtime };
+}
+
+/**
+ * Derive the DELETE URL for a record. The server routes GET / PATCH /
+ * DELETE on the SAME `/api/ledger/record/:recordId` path, so this is
+ * identical to {@link recordPatchPath}; kept as a named export so call
+ * sites read intent-first.
+ */
+export function recordDeletePath(recordId: string): string {
+  return `/api/ledger/record/${encodeURIComponent(recordId)}`;
+}
