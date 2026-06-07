@@ -264,7 +264,17 @@ describe("PATCH wiring — budget gate", () => {
     const body = (await res.json()) as { ok: boolean; warnings?: string[] };
     expect(body.ok).toBe(true);
     expect(body.warnings).toBeDefined();
-    expect(body.warnings![0]).toStartWith("budget (untouched): description is 1510 chars");
+    // ID-90.12 U10: the envelope now ALSO carries the {35.30}-scoped
+    // discipline line for the same over-budget field (KH commitMutation
+    // order — discipline first), so assert presence rather than position.
+    expect(
+      body.warnings!.some((w) =>
+        w.startsWith("budget (untouched): description is 1510 chars"),
+      ),
+    ).toBe(true);
+    expect(
+      body.warnings!.some((w) => w.startsWith('Task "20" description is')),
+    ).toBe(true);
     // The status flip itself landed.
     const written = JSON.parse(await readFile(s.ledgerPath, "utf8")) as {
       tasks: { status: string }[];

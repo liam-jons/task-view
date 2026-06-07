@@ -116,6 +116,15 @@ import {
   topLevelCollectionFor,
 } from "./gates/record-set-gate";
 import { buildPreWriteGates, runPreWriteGates } from "./gates/gate-chain";
+import {
+  parseMutationOptions,
+  type MutationOptions,
+} from "./mutation-options";
+import {
+  disciplineWarnings,
+  disciplineWarningsForScopes,
+  warningScopesForPatches,
+} from "./discipline-warnings";
 import { promoteTransaction } from "./ledger-transaction";
 import { withPathLock, withPathLocks } from "./path-mutex";
 import { scanForLedgers } from "./path-resolution";
@@ -202,6 +211,29 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
   // explicitly omit Access-Control-Allow-Origin to avoid unintentional
   // cross-origin leakage.
   return new Response(JSON.stringify(body), { ...init, headers });
+}
+
+/**
+ * ID-90.12 U10: parse the per-request override body fields
+ * {dryRun?, force?, allowClientName?, regenMirrors?} from a mutation body
+ * (T-3 ratified — JSON body fields, never headers; defaults applied per
+ * request, NOTHING stored server-side — PRODUCT invariants 16, 26, 33).
+ * A present non-boolean value is a 400 `invalid-option` response.
+ */
+function mutationOptionsOrError(
+  body: Record<string, unknown>,
+):
+  | { ok: true; options: MutationOptions }
+  | { ok: false; response: Response } {
+  const parsed = parseMutationOptions(body);
+  if (parsed.ok) return parsed;
+  return {
+    ok: false,
+    response: jsonResponse(
+      { ok: false, error: "invalid-option", detail: parsed.detail },
+      { status: 400 },
+    ),
+  };
 }
 
 /**
@@ -646,6 +678,11 @@ async function handlePatchRecord(
   }
   const patches = body.patches as FieldPatch[];
 
+  // ID-90.12 U10: per-request overrides ride as body fields (T-3).
+  const opt = mutationOptionsOrError(body as Record<string, unknown>);
+  if (!opt.ok) return opt.response;
+  const options = opt.options;
+
   let canonical;
   try {
     canonical = await readCanonical(ctx.ledgerPath);
@@ -739,12 +776,13 @@ async function handlePatchRecord(
 
   // ID-90 U2 budget gate — post-mutation / pre-serialisation. Each patched
   // field is a mutated field (can hard-reject); untouched over-budget fields
-  // soft-warn (PRODUCT invariants 25–27). `force` arrives as a body field in
-  // U10 (record 12); until then the per-request default (false) applies.
+  // soft-warn (PRODUCT invariants 25–27). U10: `force` arrives as a body
+  // field and downgrades a rejection per request (invariant 26).
   const budget = checkBudgetForPatches(
     canonical.detected.kind,
     applyResult.parsed,
     patches,
+    { force: options.force },
   );
   if (!budget.ok) {
     return jsonResponse(
@@ -812,7 +850,8 @@ async function handlePatchRecord(
         requireDenylist: ctx.requireDenylist,
       },
     }),
-    { content: serialised },
+    // U10: the guard-side override arrives per request (invariant 33).
+    { content: serialised, options: { allowClientName: options.allowClientName } },
   );
   if (!gateVerdict.ok) {
     return jsonResponse(
@@ -827,7 +866,30 @@ async function handlePatchRecord(
       { status: gateVerdict.status },
     );
   }
-  const responseWarnings = [...budget.warnings, ...gateVerdict.warnings];
+  // ID-90.12 U10 (invariant 41): ported disciplineWarnings, {35.30}-scoped
+  // to the records this PATCH batch touched, lead the warnings envelope
+  // (KH commitMutation order: discipline first, then gate warnings).
+  const responseWarnings = [
+    ...disciplineWarningsForScopes(
+      serialisedDetected,
+      warningScopesForPatches(patches),
+    ),
+    ...budget.warnings,
+    ...gateVerdict.warnings,
+  ];
+
+  // ID-90.12 U10 dryRun (invariant 16): the FULL gate chain ran above on
+  // the exact would-be bytes; return the would-be payload with NO write,
+  // NO mirror regen, NO mtime change.
+  if (options.dryRun) {
+    return jsonResponse({
+      ok: true,
+      dryRun: true,
+      recordId,
+      mtime: canonical.mtimeIso,
+      ...(responseWarnings.length > 0 ? { warnings: responseWarnings } : {}),
+    });
+  }
 
   try {
     await atomicWriteFile(ctx.ledgerPath, serialised);
@@ -836,6 +898,19 @@ async function handlePatchRecord(
       { ok: false, error: "write-failed", detail: (err as Error).message },
       { status: 500 },
     );
+  }
+
+  // ID-90.12 U10 regenMirrors:false — skip the regen and REPORT it; the K2
+  // mapping surfaces `mirrorStaleReason: 'suppressed'` ({35.32} parity).
+  if (!options.regenMirrors) {
+    const newMtime = (await stat(ctx.ledgerPath)).mtime.toISOString();
+    return jsonResponse({
+      ok: true,
+      newMtime,
+      recordId,
+      mirrorRegen: "suppressed",
+      ...(responseWarnings.length > 0 ? { warnings: responseWarnings } : {}),
+    });
   }
 
   // §5.5 mirror regen — runs ONCE after the whole multi-field PATCH, not
@@ -876,8 +951,8 @@ async function handlePatchRecord(
     mirrorDir: regen.mirrorDir,
     mirrorsWritten: regen.written,
     mirrorsDeleted: regen.deleted,
-    // Gate soft warnings (budget untouched-field / forced downgrades). The
-    // full U10 warnings envelope (disciplineWarnings etc.) extends this.
+    // U10 warnings envelope: discipline + budget soft-warns + forced
+    // downgrades + guard-override warnings (invariant 41).
     ...(responseWarnings.length > 0 ? { warnings: responseWarnings } : {}),
   });
 }
@@ -922,6 +997,11 @@ async function handlePostRecord(
       { status: 400 },
     );
   }
+
+  // ID-90.12 U10: per-request overrides ride as body fields (T-3).
+  const opt = mutationOptionsOrError(body as Record<string, unknown>);
+  if (!opt.ok) return opt.response;
+  const options = opt.options;
 
   let canonical;
   try {
@@ -1029,9 +1109,11 @@ async function handlePostRecord(
   }
 
   // ID-90 U2 budget gate — create mode (every budgeted field is freshly
-  // authored): first over-budget field is fatal (invariant 25). `force`
-  // arrives as a body field in U10 (record 12).
-  const budget = checkBudgetForCreate(createKind, record);
+  // authored): first over-budget field is fatal (invariant 25). U10:
+  // `force` arrives as a body field and downgrades per request (inv 26).
+  const budget = checkBudgetForCreate(createKind, record, {
+    force: options.force,
+  });
   if (!budget.ok) {
     return jsonResponse(
       {
@@ -1093,7 +1175,8 @@ async function handlePostRecord(
         requireDenylist: ctx.requireDenylist,
       },
     }),
-    { content: spliced.text },
+    // U10: the guard-side override arrives per request (invariant 33).
+    { content: spliced.text, options: { allowClientName: options.allowClientName } },
   );
   if (!gateVerdict.ok) {
     return jsonResponse(
@@ -1108,7 +1191,27 @@ async function handlePostRecord(
       { status: gateVerdict.status },
     );
   }
-  const responseWarnings = [...budget.warnings, ...gateVerdict.warnings];
+  // ID-90.12 U10 (invariant 41): discipline warnings scoped to the created
+  // record ({35.30} — KH create-task parity); [] for roadmap/backlog kinds.
+  const responseWarnings = [
+    ...disciplineWarnings(result.detected, {
+      taskId: String(result.recordId),
+    }),
+    ...budget.warnings,
+    ...gateVerdict.warnings,
+  ];
+
+  // ID-90.12 U10 dryRun (invariant 16): full gate chain ran; report the
+  // would-be id with NO write, NO mirror regen, NO mtime change.
+  if (options.dryRun) {
+    return jsonResponse({
+      ok: true,
+      dryRun: true,
+      recordId: result.recordId,
+      mtime: canonical.mtimeIso,
+      ...(responseWarnings.length > 0 ? { warnings: responseWarnings } : {}),
+    });
+  }
 
   try {
     await atomicWriteFile(ctx.ledgerPath, spliced.text);
@@ -1116,6 +1219,21 @@ async function handlePostRecord(
     return jsonResponse(
       { ok: false, error: "write-failed", detail: (err as Error).message },
       { status: 500 },
+    );
+  }
+
+  // ID-90.12 U10 regenMirrors:false — skip the regen and REPORT it.
+  if (!options.regenMirrors) {
+    const newMtime = (await stat(ctx.ledgerPath)).mtime.toISOString();
+    return jsonResponse(
+      {
+        ok: true,
+        newMtime,
+        recordId: result.recordId,
+        mirrorRegen: "suppressed",
+        ...(responseWarnings.length > 0 ? { warnings: responseWarnings } : {}),
+      },
+      { status: 201 },
     );
   }
 
@@ -1191,6 +1309,11 @@ async function handleDeleteRecord(
       { status: 400 },
     );
   }
+
+  // ID-90.12 U10: per-request overrides ride as body fields (T-3).
+  const opt = mutationOptionsOrError(body as Record<string, unknown>);
+  if (!opt.ok) return opt.response;
+  const options = opt.options;
 
   let canonical;
   try {
@@ -1294,7 +1417,8 @@ async function handleDeleteRecord(
         requireDenylist: ctx.requireDenylist,
       },
     }),
-    { content: serialised },
+    // U10: the guard-side override arrives per request (invariant 33).
+    { content: serialised, options: { allowClientName: options.allowClientName } },
   );
   if (!gateVerdict.ok) {
     return jsonResponse(
@@ -1309,6 +1433,20 @@ async function handleDeleteRecord(
       { status: gateVerdict.status },
     );
   }
+  // ID-90.12 U10: no discipline scope survives a record DELETE (the record's
+  // own lines vanish with it) — the envelope carries gate warnings only.
+  const responseWarnings = [...gateVerdict.warnings];
+
+  // ID-90.12 U10 dryRun (invariant 16): full gate chain ran; nothing written.
+  if (options.dryRun) {
+    return jsonResponse({
+      ok: true,
+      dryRun: true,
+      recordId,
+      mtime: canonical.mtimeIso,
+      ...(responseWarnings.length > 0 ? { warnings: responseWarnings } : {}),
+    });
+  }
 
   try {
     await atomicWriteFile(ctx.ledgerPath, serialised);
@@ -1317,6 +1455,20 @@ async function handleDeleteRecord(
       { ok: false, error: "write-failed", detail: (err as Error).message },
       { status: 500 },
     );
+  }
+
+  // ID-90.12 U10 regenMirrors:false — skip the regen and REPORT it. NOTE:
+  // a DELETE's suppressed regen leaves the removed record's mirror ORPHANED
+  // until the next regen — exactly the staleness `suppressed` signals.
+  if (!options.regenMirrors) {
+    const newMtime = (await stat(ctx.ledgerPath)).mtime.toISOString();
+    return jsonResponse({
+      ok: true,
+      newMtime,
+      recordId,
+      mirrorRegen: "suppressed",
+      ...(responseWarnings.length > 0 ? { warnings: responseWarnings } : {}),
+    });
   }
 
   // Full regen so the deleted record's mirror is orphan-deleted (§3.4).
@@ -1345,9 +1497,7 @@ async function handleDeleteRecord(
     mirrorDir: regen.mirrorDir,
     mirrorsWritten: regen.written,
     mirrorsDeleted: regen.deleted,
-    ...(gateVerdict.warnings.length > 0
-      ? { warnings: gateVerdict.warnings }
-      : {}),
+    ...(responseWarnings.length > 0 ? { warnings: responseWarnings } : {}),
   });
 }
 
@@ -1399,6 +1549,11 @@ async function handlePostSubtasks(
       { status: 400 },
     );
   }
+
+  // ID-90.12 U10: per-request overrides ride as body fields (T-3).
+  const opt = mutationOptionsOrError(body as Record<string, unknown>);
+  if (!opt.ok) return opt.response;
+  const options = opt.options;
 
   let canonical;
   try {
@@ -1478,7 +1633,13 @@ async function handlePostSubtasks(
   // `subtask <taskId>.<subId>` (ID-35.27).
   const budgetWarnings: string[] = [];
   for (const record of result.records) {
-    const budget = checkBudgetForCreate("subtask", record, {}, taskId);
+    // U10: `force` downgrades per record, per request (invariant 26).
+    const budget = checkBudgetForCreate(
+      "subtask",
+      record,
+      { force: options.force },
+      taskId,
+    );
     budgetWarnings.push(...budget.warnings);
     if (!budget.ok) {
       return jsonResponse(
@@ -1544,7 +1705,8 @@ async function handlePostSubtasks(
         requireDenylist: ctx.requireDenylist,
       },
     }),
-    { content: serialised },
+    // U10: the guard-side override arrives per request (invariant 33).
+    { content: serialised, options: { allowClientName: options.allowClientName } },
   );
   if (!gateVerdict.ok) {
     return jsonResponse(
@@ -1559,7 +1721,29 @@ async function handlePostSubtasks(
       { status: gateVerdict.status },
     );
   }
-  const responseWarnings = [...budgetWarnings, ...gateVerdict.warnings];
+  // ID-90.12 U10 (invariant 41): discipline warnings {35.30}-scoped to each
+  // created subtask (KH add-subtask `{taskId, subId: newSubId}` parity).
+  const responseWarnings = [
+    ...disciplineWarningsForScopes(
+      result.detected,
+      result.subtaskIds.map((subId) => ({ taskId, subId })),
+    ),
+    ...budgetWarnings,
+    ...gateVerdict.warnings,
+  ];
+
+  // ID-90.12 U10 dryRun (invariant 16): full gate chain ran; report the
+  // would-be subtask ids with NO write, NO mirror regen, NO mtime change.
+  if (options.dryRun) {
+    return jsonResponse({
+      ok: true,
+      dryRun: true,
+      taskId,
+      subtaskIds: result.subtaskIds,
+      mtime: canonical.mtimeIso,
+      ...(responseWarnings.length > 0 ? { warnings: responseWarnings } : {}),
+    });
+  }
 
   try {
     await atomicWriteFile(ctx.ledgerPath, serialised);
@@ -1567,6 +1751,22 @@ async function handlePostSubtasks(
     return jsonResponse(
       { ok: false, error: "write-failed", detail: (err as Error).message },
       { status: 500 },
+    );
+  }
+
+  // ID-90.12 U10 regenMirrors:false — skip the regen and REPORT it.
+  if (!options.regenMirrors) {
+    const newMtime = (await stat(ctx.ledgerPath)).mtime.toISOString();
+    return jsonResponse(
+      {
+        ok: true,
+        newMtime,
+        taskId,
+        subtaskIds: result.subtaskIds,
+        mirrorRegen: "suppressed",
+        ...(responseWarnings.length > 0 ? { warnings: responseWarnings } : {}),
+      },
+      { status: 201 },
     );
   }
 
@@ -1644,6 +1844,11 @@ async function handleDeleteSubtask(
       { status: 400 },
     );
   }
+  // ID-90.12 U10: per-request overrides ride as body fields (T-3).
+  const opt = mutationOptionsOrError(body as Record<string, unknown>);
+  if (!opt.ok) return opt.response;
+  const options = opt.options;
+
   // ID-35.43 subId coercion (CLI parity): the path segment arrives as a
   // string but `SubtaskSchema.id` is a NUMBER — a numeric string coerces;
   // anything else is a structured `invalid-id` rather than a confusing 404.
@@ -1774,7 +1979,8 @@ async function handleDeleteSubtask(
         requireDenylist: ctx.requireDenylist,
       },
     }),
-    { content: spliced.text },
+    // U10: the guard-side override arrives per request (invariant 33).
+    { content: spliced.text, options: { allowClientName: options.allowClientName } },
   );
   if (!gateVerdict.ok) {
     return jsonResponse(
@@ -1789,6 +1995,25 @@ async function handleDeleteSubtask(
       { status: gateVerdict.status },
     );
   }
+  // ID-90.12 U10 (invariant 41): discipline warnings {35.30}-scoped to the
+  // PARENT task (KH remove-subtask `{taskId}` parity — the removed
+  // subtask's own lines vanish with it).
+  const responseWarnings = [
+    ...disciplineWarnings(result.detected, { taskId }),
+    ...gateVerdict.warnings,
+  ];
+
+  // ID-90.12 U10 dryRun (invariant 16): full gate chain ran; nothing written.
+  if (options.dryRun) {
+    return jsonResponse({
+      ok: true,
+      dryRun: true,
+      taskId,
+      subtaskId,
+      mtime: canonical.mtimeIso,
+      ...(responseWarnings.length > 0 ? { warnings: responseWarnings } : {}),
+    });
+  }
 
   try {
     await atomicWriteFile(ctx.ledgerPath, spliced.text);
@@ -1797,6 +2022,19 @@ async function handleDeleteSubtask(
       { ok: false, error: "write-failed", detail: (err as Error).message },
       { status: 500 },
     );
+  }
+
+  // ID-90.12 U10 regenMirrors:false — skip the regen and REPORT it.
+  if (!options.regenMirrors) {
+    const newMtime = (await stat(ctx.ledgerPath)).mtime.toISOString();
+    return jsonResponse({
+      ok: true,
+      newMtime,
+      taskId,
+      subtaskId,
+      mirrorRegen: "suppressed",
+      ...(responseWarnings.length > 0 ? { warnings: responseWarnings } : {}),
+    });
   }
 
   let regen;
@@ -1825,9 +2063,7 @@ async function handleDeleteSubtask(
     mirrorDir: regen.mirrorDir,
     mirrorsWritten: regen.written,
     mirrorsDeleted: regen.deleted,
-    ...(gateVerdict.warnings.length > 0
-      ? { warnings: gateVerdict.warnings }
-      : {}),
+    ...(responseWarnings.length > 0 ? { warnings: responseWarnings } : {}),
   });
 }
 
