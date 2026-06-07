@@ -4,8 +4,9 @@
  * VENDORED into task-view from Knowledge Hub `lib/validation/task-list-schema.ts`
  * — see CONTRIBUTING.md for re-vendoring procedure. Per TECH §1.5 of
  * per-task-mirror, the BARE_ID_REGEX import (from KH's separate
- * `lib/validation/schemas.ts`) is inlined below since the 4-file vendor
- * bundle does not include the full KH schemas.ts.
+ * `lib/validation/schemas.ts`) is inlined below since the vendor bundle
+ * does not include the full KH schemas.ts. Re-vendored from KH @ 8d27cd23
+ * (ID-90 U0 — brings the budget-aware `parseTaskListWithWarnings`).
  *
  * Mirrors the structure of `roadmap-schema.ts` (Zod, strict, typed exports).
  * Three exported schemas:
@@ -30,11 +31,12 @@
 import { z } from 'zod';
 import { TaskListStatus, Priority } from './work-status';
 import { DocLinkSchema } from './roadmap-schema';
+import { FIELD_BUDGETS, DISCIPLINE_DOC } from './ledger-budgets';
 
 // Inlined from upstream KH `lib/validation/schemas.ts`. The full
 // schemas.ts module is out of scope for the task-view vendor bundle
-// (TECH §1.5 specifies a 4-file bundle: task-list-schema, roadmap-schema,
-// backlog-schema, work-status). The regex stays in sync via the
+// (task-list-schema, roadmap-schema, backlog-schema, work-status,
+// ledger-budgets, umbrellas-schema). The regex stays in sync via the
 // re-vendoring procedure in CONTRIBUTING.md — match KH's source verbatim
 // when re-vendoring.
 const BARE_ID_REGEX = /^\d+$/;
@@ -193,12 +195,12 @@ export const TaskListSchema = z
 export type TaskList = z.infer<typeof TaskListSchema>;
 
 // ──────────────────────────────────────────────────────────────────────────────
-// parseTaskListWithWarnings — PRODUCT inv 20 (25-Subtask soft ceiling)
+// parseTaskListWithWarnings — field-length discipline warnings (ID-34)
 // ──────────────────────────────────────────────────────────────────────────────
 
 /**
- * A warning raised by `parseTaskListWithWarnings` when a Task exceeds the
- * 25-Subtask soft ceiling defined in PRODUCT inv 20.
+ * A warning raised by `parseTaskListWithWarnings` when a Task field exceeds a
+ * field-length budget (ID-34 task-list field discipline).
  */
 export interface TaskListWarning {
   taskId: string;
@@ -206,20 +208,38 @@ export interface TaskListWarning {
 }
 
 /**
- * Parse a TaskList and surface warnings for any Task that exceeds the
- * 25-Subtask soft ceiling (PRODUCT inv 20).
+ * Advisory char budgets per the task-list field discipline
+ * (`docs/reference/task-list-discipline.md`, ID-34 PRODUCT §2). These are
+ * SOFT warnings, never schema rejections — over-budget records still parse,
+ * so the live ledger is never broken and the vendored schema shape stays
+ * identical to task-view's source (no `.max()` added; warning logic lives in
+ * the function body only, vendor-drift safe — ID-34 TECH §3).
  *
- * The soft ceiling is NOT enforced as a schema rejection — `TaskListSchema.parse()`
- * continues to accept Tasks with >25 Subtasks because the invariant is a
- * planning signal, not a hard constraint. Consumers that want to surface the
- * warning (e.g. a Planner agent) call this helper; consumers that don't care
- * continue using `TaskListSchema.parse()` directly.
+ * `Subtask.details` is intentionally NOT budgeted — it is the append-only
+ * dispatch-brief + journal home; length there is legitimate.
+ *
+ * As of {35.13} the canonical budget numbers live in the unified 3-ledger
+ * registry `lib/validation/ledger-budgets.ts`; `FIELD_BUDGETS` is re-exported
+ * here so the existing named import (`parseTaskListWithWarnings`,
+ * `scripts/ledger-sweep-s269.ts`) keeps working unchanged.
+ */
+export { FIELD_BUDGETS } from './ledger-budgets';
+
+/**
+ * Parse a TaskList and surface soft field-length-discipline warnings (ID-34).
+ *
+ * Field-length budgets are NOT enforced as schema rejections —
+ * `TaskListSchema.parse()` continues to accept over-budget fields because the
+ * budget is a planning signal, not a hard constraint. Consumers that want to
+ * surface the warnings (e.g. a Planner agent) call this helper; consumers that
+ * don't care continue using `TaskListSchema.parse()` directly.
  *
  * Throws `ZodError` on hard validation failure (same behaviour as
  * `TaskListSchema.parse()`). On success, returns the parsed `TaskList` plus a
- * `warnings` array — empty when all Tasks are within the ceiling.
+ * `warnings` array — empty when all fields are within budget.
  *
- * One warning entry per offending Task (not per excess Subtask).
+ * (The former >25-Subtask soft-ceiling warning was removed S279 — a Task may
+ * grow beyond 25 Subtasks; it was never a real requirement, only an early note.)
  */
 export function parseTaskListWithWarnings(input: unknown): {
   value: TaskList;
@@ -230,13 +250,51 @@ export function parseTaskListWithWarnings(input: unknown): {
 
   const warnings: TaskListWarning[] = [];
   for (const task of value.tasks) {
-    if (task.subtasks.length > 25) {
+    // ── Field-length discipline (ID-34) — soft warnings, never rejections ──
+    if (task.description.length > FIELD_BUDGETS.taskDescription) {
       warnings.push({
         taskId: task.id,
         message:
-          `Task "${task.id}" has ${task.subtasks.length} subtasks (>25). ` +
-          `Per PRODUCT inv 20, consider splitting into multiple Tasks linked by Task.dependencies[].`,
+          `Task "${task.id}" description is ${task.description.length} chars ` +
+          `(budget ${FIELD_BUDGETS.taskDescription}). Move design rationale to docs/ ` +
+          `and reference it via cross_doc_links (see ${DISCIPLINE_DOC}).`,
       });
+    }
+    if (
+      task.status_note &&
+      task.status_note.length > FIELD_BUDGETS.taskStatusNote
+    ) {
+      warnings.push({
+        taskId: task.id,
+        message:
+          `Task "${task.id}" status_note is ${task.status_note.length} chars ` +
+          `(budget ${FIELD_BUDGETS.taskStatusNote}). Keep acute current-status context only; ` +
+          `move session narrative to the relevant Subtask details journal (see ${DISCIPLINE_DOC}).`,
+      });
+    }
+
+    for (const subtask of task.subtasks) {
+      if (subtask.description.length > FIELD_BUDGETS.subtaskDescription) {
+        warnings.push({
+          taskId: task.id,
+          message:
+            `Subtask ${task.id}.${subtask.id} description is ${subtask.description.length} chars ` +
+            `(budget ${FIELD_BUDGETS.subtaskDescription}). Keep it a one-sentence summary; ` +
+            `the dispatch brief lives in details (see ${DISCIPLINE_DOC}).`,
+        });
+      }
+      if (
+        subtask.testStrategy &&
+        subtask.testStrategy.length > FIELD_BUDGETS.subtaskTestStrategy
+      ) {
+        warnings.push({
+          taskId: task.id,
+          message:
+            `Subtask ${task.id}.${subtask.id} testStrategy is ${subtask.testStrategy.length} chars ` +
+            `(budget ${FIELD_BUDGETS.subtaskTestStrategy}). Reduce to a one-line acceptance ` +
+            `criterion the Checker gates against (see ${DISCIPLINE_DOC}).`,
+        });
+      }
     }
   }
   return { value, warnings };

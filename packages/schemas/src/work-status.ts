@@ -4,7 +4,8 @@
  * VENDORED into task-view from Knowledge Hub `lib/validation/work-status.ts`
  * — see CONTRIBUTING.md for re-vendoring procedure. Per TECH §1.5 of
  * per-task-mirror, task-view consumes its own frozen copy of this file;
- * updates flow into the tool via explicit re-vendoring.
+ * updates flow into the tool via explicit re-vendoring. Re-vendored from
+ * KH @ 8d27cd23 (ID-90 U0).
  *
  * Single canonical `WorkStatus` master enum spanning all three KH task surfaces.
  * Per-surface subsets derived via `.exclude(...)` — no per-surface inline
@@ -77,7 +78,7 @@ export type BacklogStatus = z.infer<typeof BacklogStatus>;
  * Task list subset — in-work (active Tasks and Subtasks).
  * Task level: done | pending | in_progress | blocked | deferred |
  *             cancelled | spec_needed | imp_deferred  (8 values)
- * Subtask level: further excludes 'spec_needed', 'imp_deferred'
+ * Subtask level: further excludes 'cancelled', 'spec_needed', 'imp_deferred'
  *                — applied in task-list-schema.ts.
  * Excluded from Task level: needs_research | parked | ready
  */

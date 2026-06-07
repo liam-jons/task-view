@@ -10,9 +10,14 @@
  * ID-20.13.
  */
 import { describe, expect, test } from "bun:test";
-import { TaskListSchema, parseTaskListWithWarnings } from "./task-list-schema";
-import { RoadmapSchema } from "./roadmap-schema";
-import { BacklogSchema } from "./backlog-schema";
+import {
+  TaskListSchema,
+  parseTaskListWithWarnings,
+  FIELD_BUDGETS,
+} from "./task-list-schema";
+import { RoadmapSchema, parseRoadmapWithWarnings } from "./roadmap-schema";
+import { BacklogSchema, parseBacklogWithWarnings } from "./backlog-schema";
+import { LEDGER_BUDGETS } from "./ledger-budgets";
 import { WorkStatus, TaskListStatus, BacklogStatus, RoadmapStatus, Priority } from "./work-status";
 
 const minimalTaskList = {
@@ -230,6 +235,184 @@ describe("BacklogItemSchema rank field (roadmap-backlog-consolidation inv 3)", (
   test("item with rank: 1.5 fails (non-integer)", () => {
     const result = BacklogSchema.safeParse(mkItemWithRank(1.5));
     expect(result.success).toBe(false);
+  });
+});
+
+// ── Budget soft-warnings (ID-90 U0 re-vendor — KH ID-34/{35.13} parity) ──────
+// The budget-aware parse helpers surface SOFT warnings sourced from the
+// relocated ledger-budgets registry. Never schema rejections (invariant 24):
+// over-budget documents still parse.
+
+describe("parseTaskListWithWarnings budget soft-warnings (ID-90 U0 / invariant 41)", () => {
+  const mkTaskList = (taskOverrides: object, subtaskOverrides: object = {}) => ({
+    ...minimalTaskList,
+    tasks: [
+      {
+        ...minimalTaskList.tasks[0],
+        ...taskOverrides,
+        subtasks: [
+          { ...minimalTaskList.tasks[0].subtasks[0], ...subtaskOverrides },
+        ],
+      },
+    ],
+  });
+
+  test("FIELD_BUDGETS is re-exported from task-list-schema and sourced from the registry", () => {
+    expect(FIELD_BUDGETS.taskDescription).toBe(LEDGER_BUDGETS.task.description);
+    expect(FIELD_BUDGETS.taskStatusNote).toBe(LEDGER_BUDGETS.task.status_note);
+    expect(FIELD_BUDGETS.subtaskDescription).toBe(LEDGER_BUDGETS.subtask.description);
+    expect(FIELD_BUDGETS.subtaskTestStrategy).toBe(LEDGER_BUDGETS.subtask.testStrategy);
+  });
+
+  test("over-budget task description still PARSES (no .max()) and emits a soft warning", () => {
+    const doc = mkTaskList({
+      description: "d".repeat(FIELD_BUDGETS.taskDescription + 1),
+    });
+    const { value, warnings } = parseTaskListWithWarnings(doc);
+    expect(value.tasks).toHaveLength(1);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].taskId).toBe("20");
+    expect(warnings[0].message).toContain("description");
+    expect(warnings[0].message).toContain(`budget ${FIELD_BUDGETS.taskDescription}`);
+  });
+
+  test("over-budget task status_note emits a soft warning", () => {
+    const doc = mkTaskList({
+      status_note: "n".repeat(FIELD_BUDGETS.taskStatusNote + 1),
+    });
+    const { warnings } = parseTaskListWithWarnings(doc);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain("status_note");
+  });
+
+  test("over-budget subtask description emits a soft warning naming N.M", () => {
+    const doc = mkTaskList(
+      {},
+      { description: "s".repeat(FIELD_BUDGETS.subtaskDescription + 1) },
+    );
+    const { warnings } = parseTaskListWithWarnings(doc);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain("Subtask 20.6");
+    expect(warnings[0].message).toContain(`budget ${FIELD_BUDGETS.subtaskDescription}`);
+  });
+
+  test("over-budget subtask testStrategy emits a soft warning", () => {
+    const doc = mkTaskList(
+      {},
+      { testStrategy: "t".repeat(FIELD_BUDGETS.subtaskTestStrategy + 1) },
+    );
+    const { warnings } = parseTaskListWithWarnings(doc);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain("testStrategy");
+  });
+
+  test("within-budget document emits zero warnings", () => {
+    const { warnings } = parseTaskListWithWarnings(minimalTaskList);
+    expect(warnings).toHaveLength(0);
+  });
+
+  test("subtask details is NOT budgeted — long details emit no warning", () => {
+    const doc = mkTaskList({}, { details: "j".repeat(10000) });
+    const { warnings } = parseTaskListWithWarnings(doc);
+    expect(warnings).toHaveLength(0);
+  });
+});
+
+describe("parseRoadmapWithWarnings theme budget soft-warnings ({35.13} parity)", () => {
+  test("over-budget theme description still parses and emits a themeId-scoped warning", () => {
+    const doc = {
+      ...minimalRoadmap,
+      themes: [
+        {
+          ...minimalRoadmap.themes[0],
+          description: "d".repeat(LEDGER_BUDGETS.theme.description + 1),
+        },
+      ],
+    };
+    const { value, warnings } = parseRoadmapWithWarnings(doc);
+    expect(value.themes).toHaveLength(1);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].themeId).toBe("1");
+    expect(warnings[0].message).toContain(`budget ${LEDGER_BUDGETS.theme.description}`);
+  });
+
+  test("over-budget theme notes emits a soft warning (null notes guarded)", () => {
+    const doc = {
+      ...minimalRoadmap,
+      themes: [
+        {
+          ...minimalRoadmap.themes[0],
+          notes: "n".repeat(LEDGER_BUDGETS.theme.notes + 1),
+        },
+      ],
+    };
+    const { warnings } = parseRoadmapWithWarnings(doc);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain("notes");
+  });
+
+  test("12-theme soft ceiling still surfaces with themeCount", () => {
+    const themes = Array.from({ length: 13 }, (_, i) => ({
+      ...minimalRoadmap.themes[0],
+      id: String(i + 1),
+    }));
+    const { warnings } = parseRoadmapWithWarnings({ ...minimalRoadmap, themes });
+    const ceiling = warnings.find((w) => w.themeCount !== undefined);
+    expect(ceiling).toBeDefined();
+    expect(ceiling?.themeCount).toBe(13);
+  });
+
+  test("within-budget roadmap emits zero warnings", () => {
+    const { warnings } = parseRoadmapWithWarnings(minimalRoadmap);
+    expect(warnings).toHaveLength(0);
+  });
+});
+
+describe("parseBacklogWithWarnings item budget soft-warnings ({35.13} parity)", () => {
+  test("BacklogItemSchema accepts the optional title field ({35.14})", () => {
+    const doc = {
+      ...minimalBacklog,
+      items: [{ ...minimalBacklog.items[0], title: "Short heading" }],
+    };
+    const result = BacklogSchema.safeParse(doc);
+    expect(result.success).toBe(true);
+  });
+
+  test("over-budget item title still parses and emits an itemId-scoped warning", () => {
+    const doc = {
+      ...minimalBacklog,
+      items: [
+        {
+          ...minimalBacklog.items[0],
+          title: "t".repeat(LEDGER_BUDGETS.item.title + 1),
+        },
+      ],
+    };
+    const { value, warnings } = parseBacklogWithWarnings(doc);
+    expect(value.items).toHaveLength(1);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].itemId).toBe("1");
+    expect(warnings[0].message).toContain(`budget ${LEDGER_BUDGETS.item.title}`);
+  });
+
+  test("over-budget item description emits a soft warning", () => {
+    const doc = {
+      ...minimalBacklog,
+      items: [
+        {
+          ...minimalBacklog.items[0],
+          description: "d".repeat(LEDGER_BUDGETS.item.description + 1),
+        },
+      ],
+    };
+    const { warnings } = parseBacklogWithWarnings(doc);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain("description");
+  });
+
+  test("within-budget backlog emits zero warnings", () => {
+    const { warnings } = parseBacklogWithWarnings(minimalBacklog);
+    expect(warnings).toHaveLength(0);
   });
 });
 

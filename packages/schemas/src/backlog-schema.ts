@@ -4,8 +4,10 @@
  * VENDORED into task-view from Knowledge Hub `lib/validation/backlog-schema.ts`
  * — see CONTRIBUTING.md for re-vendoring procedure. Per TECH §1.5 of
  * per-task-mirror, the BARE_ID_REGEX import (from KH's separate
- * `lib/validation/schemas.ts`) is inlined below since the 4-file vendor
- * bundle does not include the full KH schemas.ts.
+ * `lib/validation/schemas.ts`) is inlined below since the vendor bundle
+ * does not include the full KH schemas.ts. Re-vendored from KH @ 8d27cd23
+ * (ID-90 U0 — brings the optional `title` field ({35.14}) and
+ * `parseBacklogWithWarnings`).
  *
  * Formalises `docs/reference/product-backlog.json` shape with Zod so the
  * schema is the canonical source of truth for allowed status values and field
@@ -26,11 +28,12 @@
 import { z } from 'zod';
 import { BacklogStatus, Priority } from './work-status';
 import { DocLinkSchema } from './roadmap-schema';
+import { LEDGER_BUDGETS, DISCIPLINE_DOC } from './ledger-budgets';
 
 // Inlined from upstream KH `lib/validation/schemas.ts`. The full
 // schemas.ts module is out of scope for the task-view vendor bundle
-// (TECH §1.5 specifies a 4-file bundle: task-list-schema, roadmap-schema,
-// backlog-schema, work-status). The regex stays in sync via the
+// (task-list-schema, roadmap-schema, backlog-schema, work-status,
+// ledger-budgets, umbrellas-schema). The regex stays in sync via the
 // re-vendoring procedure in CONTRIBUTING.md — match KH's source verbatim
 // when re-vendoring.
 const BARE_ID_REGEX = /^\d+$/;
@@ -42,12 +45,10 @@ const BARE_ID_REGEX = /^\d+$/;
 
 // Vendoring adaptation: a single re-export from './work-status' carries
 // BOTH the value (Zod schema) and the type alias, since work-status.ts
-// exports `BacklogStatus` as value + type. The upstream KH source pairs
-// `export { BacklogStatus }` (the local import) with a separate
-// `export type BacklogStatus = z.infer<...>` line; under the vendor
-// package's `isolatedModules` tsconfig that pairing trips TS2440/TS2484
-// (import/local-declaration conflict). Re-exporting from the source module
-// is semantically identical and conflict-free.
+// exports `BacklogStatus` as value + type. The upstream KH source uses
+// `export { BacklogStatus };` (re-exporting the local import); under the
+// vendor package's `isolatedModules` tsconfig the re-export-from-module
+// form is the proven conflict-free equivalent.
 export { BacklogStatus } from './work-status';
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -88,6 +89,28 @@ export const BacklogItemSchema = z.object({
   id: z
     .string()
     .regex(BARE_ID_REGEX, 'Backlog item id must be a bare digit string'),
+
+  /**
+   * Short noun-phrase heading ({35.14} / RESEARCH §6.1). OPTIONAL — all 149
+   * live items lack it, so the schema must keep parsing the live ledger before
+   * the {35.23} backfill completes. Positioned first after `id` per the
+   * Task/Subtask heading convention (`title` precedes `description`).
+   *
+   * `BacklogItemSchema` is NOT `.strict()`, so adding this is non-breaking, and
+   * `patch-apply`'s `BACKLOG_ITEM_KNOWN_FIELDS` (= `Object.keys(Schema.shape)`)
+   * auto-picks it up → `update-backlog <id> title <value>` works with no walker
+   * change.
+   *
+   * Budget: max 80 chars — registered in `lib/validation/ledger-budgets.ts`
+   * (`item.title`), enforced as a CLI write-time soft gate, NOT a Zod `.max()`
+   * (no hard cap — RESEARCH §2.3/§7).
+   *
+   * NOTE: adding this field to the vendored `backlog-schema.ts` trips the
+   * NON-BLOCKING `task-view-vendor-drift.yml` `::warning::` re-vendor reminder.
+   * This is EXPECTED and acceptable (RESEARCH §7) — do NOT edit the task-view
+   * fork to silence it.
+   */
+  title: z.string().min(1).optional(),
 
   /** One-sentence summary of the work item. */
   description: z.string().min(1),
@@ -148,10 +171,6 @@ export const BacklogItemSchema = z.object({
    * or contiguity within tier (PRODUCT inv 3). Curator skill maintains
    * discipline (Subtask 30.5 + P-OQ-3 auto-shift default). Per TECH §3.1
    * (Subtask 30.6).
-   *
-   * Re-vendored from upstream KH `lib/validation/backlog-schema.ts` for
-   * Subtask 30.8 (per-task-mirror 20.14 extension); kept in sync via
-   * CONTRIBUTING.md re-vendoring procedure.
    */
   rank: z.number().int().nullable().optional(),
 
@@ -210,3 +229,61 @@ export const BacklogSchema = z
   });
 
 export type BacklogDocument = z.infer<typeof BacklogSchema>;
+
+// ──────────────────────────────────────────────────────────────────────────────
+// parseBacklogWithWarnings — field-length budget warnings ({35.13})
+//
+// Mirrors `parseTaskListWithWarnings` / `parseRoadmapWithWarnings`. Surfaces a
+// SOFT warning for any item field that exceeds its char budget in the unified
+// registry (`lib/validation/ledger-budgets.ts`). NOT a schema rejection — no
+// `.max()` is added, so the live ledger keeps parsing and the vendored schema
+// shape is unchanged (RESEARCH §2.3/§7). The CLI write-time pre-check ({35.17})
+// is the prevent-at-source gate; this helper is the read-side advisory.
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A warning raised by `parseBacklogWithWarnings` when an item field exceeds its
+ * char budget. `itemId` scopes the warning to the offending item.
+ */
+export interface BacklogWarning {
+  itemId: string;
+  message: string;
+}
+
+/**
+ * Parse a Backlog document and surface soft field-length warnings sourced from
+ * the unified budget registry. Throws `ZodError` on hard validation failure
+ * (same behaviour as `BacklogSchema.parse()`). On success, returns the parsed
+ * document plus a `warnings` array — empty when every item is within budget.
+ */
+export function parseBacklogWithWarnings(input: unknown): {
+  value: BacklogDocument;
+  warnings: BacklogWarning[];
+} {
+  const value = BacklogSchema.parse(input);
+  const warnings: BacklogWarning[] = [];
+
+  for (const item of value.items) {
+    if (item.title && item.title.length > LEDGER_BUDGETS.item.title) {
+      warnings.push({
+        itemId: item.id,
+        message:
+          `Backlog item "${item.id}" title is ${item.title.length} chars ` +
+          `(budget ${LEDGER_BUDGETS.item.title}). Keep it a short noun-phrase ` +
+          `heading (see ${DISCIPLINE_DOC}).`,
+      });
+    }
+    if (item.description.length > LEDGER_BUDGETS.item.description) {
+      warnings.push({
+        itemId: item.id,
+        message:
+          `Backlog item "${item.id}" description is ${item.description.length} chars ` +
+          `(budget ${LEDGER_BUDGETS.item.description}). Keep it a one-sentence summary; ` +
+          `move detail to a spec/research doc and reference via cross_doc_links ` +
+          `(see ${DISCIPLINE_DOC}).`,
+      });
+    }
+  }
+
+  return { value, warnings };
+}

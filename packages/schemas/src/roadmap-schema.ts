@@ -4,8 +4,9 @@
  * VENDORED into task-view from Knowledge Hub `lib/validation/roadmap-schema.ts`
  * — see CONTRIBUTING.md for re-vendoring procedure. Per TECH §1.5 of
  * per-task-mirror, the BARE_ID_REGEX import (from KH's separate
- * `lib/validation/schemas.ts`) is inlined below since the 4-file vendor
- * bundle does not include the full KH schemas.ts.
+ * `lib/validation/schemas.ts`) is inlined below since the vendor bundle
+ * does not include the full KH schemas.ts. Re-vendored from KH @ 8d27cd23
+ * (ID-90 U0 — brings the theme field-budget soft warnings).
  *
  * Single source of truth for the JSON shape of `docs/reference/product-roadmap.json`
  * (the JSON-authoritative artefact replacing the legacy MD-only `product-roadmap.md`
@@ -33,11 +34,12 @@
 
 import { z } from 'zod';
 import { Priority } from './work-status';
+import { LEDGER_BUDGETS, DISCIPLINE_DOC } from './ledger-budgets';
 
 // Inlined from upstream KH `lib/validation/schemas.ts`. The full
 // schemas.ts module is out of scope for the task-view vendor bundle
-// (TECH §1.5 specifies a 4-file bundle: task-list-schema, roadmap-schema,
-// backlog-schema, work-status). The regex stays in sync via the
+// (task-list-schema, roadmap-schema, backlog-schema, work-status,
+// ledger-budgets, umbrellas-schema). The regex stays in sync via the
 // re-vendoring procedure in CONTRIBUTING.md — match KH's source verbatim
 // when re-vendoring.
 const BARE_ID_REGEX = /^\d+$/;
@@ -213,10 +215,16 @@ export type Roadmap = z.infer<typeof RoadmapSchema>;
 
 /**
  * A warning raised by `parseRoadmapWithWarnings` when a document exceeds the
- * 12-theme soft ceiling defined in PRODUCT inv 8.
+ * 12-theme soft ceiling (PRODUCT inv 8) or a theme field exceeds its char
+ * budget ({35.13} — sourced from `lib/validation/ledger-budgets.ts`).
+ *
+ * `themeCount` is set on the per-document ceiling warning; `themeId` is set on
+ * a per-theme field-budget warning. Soft warnings only — never schema
+ * rejections (no `.max()`; the registry is plain data — RESEARCH §2.3/§7).
  */
 export interface RoadmapWarning {
   themeCount?: number;
+  themeId?: string;
   message: string;
 }
 
@@ -251,5 +259,29 @@ export function parseRoadmapWithWarnings(input: unknown): {
         `Per PRODUCT inv 8, consider merging.`,
     });
   }
+
+  // ── Theme field-length budgets ({35.13}) — soft warnings, never rejections.
+  // Sourced from the unified registry; `notes` is nullable so guard for null.
+  for (const theme of value.themes) {
+    if (theme.description.length > LEDGER_BUDGETS.theme.description) {
+      warnings.push({
+        themeId: theme.id,
+        message:
+          `Roadmap theme "${theme.id}" description is ${theme.description.length} chars ` +
+          `(budget ${LEDGER_BUDGETS.theme.description}). Move detail to docs/ and reference ` +
+          `it via cross_doc_links (see ${DISCIPLINE_DOC}).`,
+      });
+    }
+    if (theme.notes && theme.notes.length > LEDGER_BUDGETS.theme.notes) {
+      warnings.push({
+        themeId: theme.id,
+        message:
+          `Roadmap theme "${theme.id}" notes is ${theme.notes.length} chars ` +
+          `(budget ${LEDGER_BUDGETS.theme.notes}). Keep notes to acute context only ` +
+          `(see ${DISCIPLINE_DOC}).`,
+      });
+    }
+  }
+
   return { value, warnings };
 }
