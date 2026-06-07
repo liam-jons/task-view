@@ -220,3 +220,313 @@ export function removeRecord(
     recordId,
   };
 }
+
+// ── ID-90.9 U5: create defaults + auto-id + subtask CRUD ─────────────────────
+//
+// Ported from the KH ledger-CLI (scripts/ledger-cli.ts):
+//   - `CREATE_DEFAULTS` / `withCreateDefaults` (ledger-cli.ts:2237) — merge
+//     structural defaults UNDER the supplied record (supplied fields win).
+//   - `nextId` (ledger-cli.ts:645-674) — per-record max+1 allocation with the
+//     correct primitive TYPE per collection.
+//   - the bulk `add-subtasks` fold-left create + `delete-subtask` removal
+//     (PRODUCT invariants 37-38; invariant 38's mutex half lands in record 11).
+
+/** The four documented record kinds, each with structural create defaults. */
+export type CreateRecordKind = "subtask" | "task" | "theme" | "item";
+
+/** Per-record-kind structural defaults — empty arrays, nulls, empty strings.
+ * Ported VERBATIM from the KH ledger-CLI `CREATE_DEFAULTS` (ledger-cli.ts). */
+const CREATE_DEFAULTS: Record<CreateRecordKind, Record<string, unknown>> = {
+  subtask: {
+    details: "",
+    status: "pending",
+    dependencies: [],
+    testStrategy: null,
+  },
+  task: {
+    status: "pending",
+    dependencies: [],
+    subtasks: [],
+    effort_estimate: null,
+    owner: null,
+    priority_note: null,
+    status_note: null,
+    cross_doc_links: [],
+    session_refs: [],
+    commit_refs: [],
+    updatedAt: "",
+  },
+  theme: {
+    status: "pending",
+    time_horizon: "later",
+    linked_tasks: [],
+    linked_backlog: [],
+    session_refs: [],
+    commit_refs: [],
+    cross_doc_links: [],
+    notes: null,
+  },
+  item: {
+    // `type` / `track` are required scalars with no inherent empty value;
+    // these structural defaults keep a bare minimal create valid and signal
+    // an untriaged item (override via the body).
+    type: "feature",
+    track: "unsorted",
+    status: "parked",
+    dependencies: [],
+    effort_estimate: null,
+    session_refs: [],
+    commit_refs: [],
+    cross_doc_links: [],
+    notes: null,
+  },
+};
+
+/**
+ * Merge structural defaults UNDER the supplied record (supplied fields win).
+ * Defaults only apply for absent keys, so a body that already carries (e.g.)
+ * `status` keeps its value. `task.updatedAt` defaults to the write timestamp
+ * when absent. Ported from ledger-cli.ts:2237.
+ */
+export function withCreateDefaults(
+  recordKind: CreateRecordKind,
+  record: Record<string, unknown>,
+): Record<string, unknown> {
+  const defaults = { ...CREATE_DEFAULTS[recordKind] };
+  if (recordKind === "task" && record.updatedAt === undefined) {
+    defaults.updatedAt = new Date().toISOString();
+  }
+  return { ...defaults, ...record };
+}
+
+/**
+ * Per-record auto-id (ledger-cli.ts:645-674 port). Computes
+ * `max(existingIds) + 1` for a collection, returning the correct primitive
+ * TYPE:
+ *   - `tasks` / `themes` / `items` → bare-digit STRING (`"186"`)
+ *   - `subtasks`                    → NUMBER (`13`), scoped to `taskId`
+ *
+ * `max+1` is the monotonic semantics (never reuses a freed id; does NOT fill
+ * gaps).
+ */
+export function nextId(
+  detected: KnownDetected,
+  collectionKey: "tasks" | "themes" | "items" | "subtasks",
+  taskId?: string,
+): string | number {
+  if (collectionKey === "subtasks") {
+    if (detected.kind !== "task-list") {
+      throw new Error("nextId(subtasks) requires a task-list ledger");
+    }
+    if (taskId === undefined) {
+      throw new Error("nextId(subtasks) requires a taskId");
+    }
+    const task = detected.data.tasks.find((t) => t.id === taskId);
+    const ids = (task?.subtasks ?? []).map((s) => s.id);
+    return ids.length === 0 ? 1 : Math.max(...ids) + 1;
+  }
+  let ids: string[] = [];
+  if (collectionKey === "tasks" && detected.kind === "task-list") {
+    ids = detected.data.tasks.map((t) => t.id);
+  } else if (collectionKey === "themes" && detected.kind === "roadmap") {
+    ids = detected.data.themes.map((t) => t.id);
+  } else if (collectionKey === "items" && detected.kind === "backlog") {
+    ids = detected.data.items.map((it) => it.id);
+  } else {
+    throw new Error(
+      `nextId(${collectionKey}) does not match detected ledger kind ${detected.kind}`,
+    );
+  }
+  const nums = ids.map((id) => Number(id)).filter((n) => !Number.isNaN(n));
+  return String(nums.length === 0 ? 1 : Math.max(...nums) + 1);
+}
+
+/**
+ * Result of a bulk subtask insert.
+ *
+ *   - { ok: true, detected, subtaskIds, records } — applied + re-parsed OK.
+ *     `records` are the EXACT coerced record objects (defaults merged, ids
+ *     injected) so the caller can splice the SAME objects into the
+ *     parsed-original text (scoped write).
+ *   - { ok: false, kind: 'task-not-found' }    — no Task carries `taskId`.
+ *   - { ok: false, kind: 'duplicate-id' }      — an explicit subtask id
+ *     collides with an existing sibling or with another batch member.
+ *   - { ok: false, kind: 'invalid-body' }      — empty batch / non-object
+ *     element.
+ *   - { ok: false, kind: 'schema-error' }      — the whole-doc Zod re-parse
+ *     failed (malformed record body).
+ */
+export type InsertSubtasksResult =
+  | {
+      ok: true;
+      detected: KnownDetected;
+      taskId: string;
+      subtaskIds: number[];
+      records: Record<string, unknown>[];
+    }
+  | { ok: false; kind: "task-not-found"; taskId: string }
+  | { ok: false; kind: "duplicate-id"; subtaskId: number }
+  | { ok: false; kind: "invalid-body"; detail: string }
+  | { ok: false; kind: "schema-error"; zodError: ZodError };
+
+/**
+ * Bulk-insert subtasks into one Task (ID-90 U5 — PRODUCT invariant 37).
+ *
+ * Fold-left semantics: records are appended ONE AT A TIME to the working
+ * subtasks[] and each record lacking an id receives `max(accumulated)+1` at
+ * its turn — so a batch of N id-less records gets N sequential ids, and an
+ * explicit id mid-batch advances the allocation point past itself (later
+ * auto-ids never collide with it). Records carrying an explicit id keep it.
+ *
+ * Duplicate-id pre-check runs against the accumulated id-set (existing
+ * siblings + earlier batch members) BEFORE the schema parse so the collision
+ * gets a dedicated 409-mappable result rather than a generic schema error
+ * (z.array(SubtaskSchema) has no within-array uniqueness constraint — the
+ * pre-check is the only structured guard).
+ *
+ * Create defaults (`withCreateDefaults('subtask', …)`) are merged per record
+ * before allocation. The whole document is Zod re-parsed once after the fold
+ * (all-or-nothing — matches insertRecord / applyPatches).
+ */
+export function insertSubtasks(
+  detected: KnownDetected,
+  taskId: string,
+  subtasks: readonly unknown[],
+): InsertSubtasksResult {
+  if (detected.kind !== "task-list") {
+    return {
+      ok: false,
+      kind: "invalid-body",
+      detail: "Subtask mutations require a task-list ledger.",
+    };
+  }
+  if (!Array.isArray(subtasks) || subtasks.length === 0) {
+    return {
+      ok: false,
+      kind: "invalid-body",
+      detail: "Body must carry a non-empty `subtasks` array of record objects.",
+    };
+  }
+  const task = detected.data.tasks.find((t) => t.id === taskId);
+  if (!task) {
+    return { ok: false, kind: "task-not-found", taskId };
+  }
+
+  // Fold-left over the batch: accumulate ids (existing + already-folded) and
+  // allocate max+1 per id-less record at its turn.
+  const accumulatedIds = new Set<number>(task.subtasks.map((s) => s.id));
+  let maxId = task.subtasks.reduce((m, s) => Math.max(m, s.id), 0);
+  const records: Record<string, unknown>[] = [];
+  const subtaskIds: number[] = [];
+  for (const raw of subtasks) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return {
+        ok: false,
+        kind: "invalid-body",
+        detail: "Each `subtasks` element must be a subtask record object.",
+      };
+    }
+    let record = withCreateDefaults(
+      "subtask",
+      raw as Record<string, unknown>,
+    );
+    if (record.id === undefined) {
+      // Per-record nextId max+1 over the ACCUMULATED set (fold-left).
+      record = { ...record, id: maxId + 1 };
+    }
+    const id = record.id;
+    if (typeof id === "number" && Number.isInteger(id)) {
+      if (accumulatedIds.has(id)) {
+        return { ok: false, kind: "duplicate-id", subtaskId: id };
+      }
+      accumulatedIds.add(id);
+      if (id > maxId) maxId = id;
+      subtaskIds.push(id);
+    } else {
+      // A non-numeric explicit id cannot be pre-checked here; the whole-doc
+      // Zod re-parse below rejects it (SubtaskSchema.id is a number). Push a
+      // sentinel so subtaskIds stays index-aligned — unreachable on the ok
+      // path because the parse fails first.
+      subtaskIds.push(Number.NaN);
+    }
+    records.push(record);
+  }
+
+  // structuredClone the raw data so the caller's snapshot is untouched on any
+  // failure path; append the coerced records, then ONE whole-doc re-parse.
+  const rawClone = structuredClone(detected.data) as Record<string, unknown>;
+  const tasksClone = rawClone.tasks;
+  if (!Array.isArray(tasksClone)) {
+    return {
+      ok: false,
+      kind: "invalid-body",
+      detail: 'Ledger is missing its "tasks" collection.',
+    };
+  }
+  const taskClone = tasksClone.find(
+    (t) => (t as { id?: unknown }).id === taskId,
+  ) as { subtasks?: unknown } | undefined;
+  if (!taskClone || !Array.isArray(taskClone.subtasks)) {
+    return { ok: false, kind: "task-not-found", taskId };
+  }
+  taskClone.subtasks.push(...records);
+
+  const parsed = reparse(detected.kind, rawClone);
+  if (!parsed.ok)
+    return { ok: false, kind: "schema-error", zodError: parsed.zodError };
+  return {
+    ok: true,
+    detected: rebuildDetected(detected.kind, parsed.data),
+    taskId,
+    subtaskIds,
+    records,
+  };
+}
+
+/** Result of a subtask removal. */
+export type RemoveSubtaskResult =
+  | { ok: true; detected: KnownDetected; taskId: string; subtaskId: number }
+  | { ok: false; kind: "task-not-found"; taskId: string }
+  | { ok: false; kind: "subtask-not-found"; taskId: string; subtaskId: number }
+  | { ok: false; kind: "schema-error"; zodError: ZodError };
+
+/**
+ * Remove one subtask by numeric id from a Task (ID-90 U5).
+ *
+ * Removing the last subtask leaves `subtasks: []` — a legal atomic-Task state
+ * (TaskSchema.subtasks has no `.min(1)`). The mutated document is re-parsed
+ * defensively, matching removeRecord's typed-snapshot contract.
+ */
+export function removeSubtask(
+  detected: KnownDetected,
+  taskId: string,
+  subtaskId: number,
+): RemoveSubtaskResult {
+  if (detected.kind !== "task-list") {
+    return { ok: false, kind: "task-not-found", taskId };
+  }
+  const task = detected.data.tasks.find((t) => t.id === taskId);
+  if (!task) {
+    return { ok: false, kind: "task-not-found", taskId };
+  }
+  if (!task.subtasks.some((s) => s.id === subtaskId)) {
+    return { ok: false, kind: "subtask-not-found", taskId, subtaskId };
+  }
+
+  const rawClone = structuredClone(detected.data) as Record<string, unknown>;
+  const tasksClone = rawClone.tasks as Record<string, unknown>[];
+  const taskClone = tasksClone.find((t) => t.id === taskId) as {
+    subtasks: { id: number }[];
+  };
+  taskClone.subtasks = taskClone.subtasks.filter((s) => s.id !== subtaskId);
+
+  const parsed = reparse(detected.kind, rawClone);
+  if (!parsed.ok)
+    return { ok: false, kind: "schema-error", zodError: parsed.zodError };
+  return {
+    ok: true,
+    detected: rebuildDetected(detected.kind, parsed.data),
+    taskId,
+    subtaskId,
+  };
+}
