@@ -25,6 +25,12 @@
  *     → 200 { ok: true, mirrorDir, written, deleted, newMtime }
  *     → 409 if baseMtime supplied and stale
  *     → 500 on regen failure
+ *   POST /api/ledger/record/:taskId/subtask          (ID-90 U5)
+ *     body: { subtasks: object[], baseMtime: string }
+ *     → 201 { ok: true, newMtime, taskId, subtaskIds, warnings? }
+ *   DELETE /api/ledger/record/:taskId/subtask/:subId (ID-90 U5)
+ *     body: { baseMtime: string }
+ *     → 200 { ok: true, newMtime, taskId, subtaskId, warnings? }
  *
  * mtime collision (§5.4 / PRODUCT inv 37):
  *   - `baseMtime` is the file mtime the viewer last loaded. Sent with
@@ -88,7 +94,14 @@ import {
   scopedSerialise,
   scopedSpliceSerialise,
 } from "./scoped-serialise";
-import { insertRecord, removeRecord } from "./record-mutate";
+import {
+  insertRecord,
+  removeRecord,
+  insertSubtasks,
+  removeSubtask,
+  withCreateDefaults,
+  nextId,
+} from "./record-mutate";
 import {
   checkBudgetForPatches,
   checkBudgetForCreate,
@@ -884,7 +897,28 @@ async function handlePostRecord(
     );
   }
 
-  const result = insertRecord(canonical.detected, body.record);
+  // ID-90 U5: server-side create defaults (ported withCreateDefaults
+  // semantics — structural defaults merged UNDER the supplied body, supplied
+  // fields win) + auto-id allocation when `record.id` is absent (per-record
+  // nextId max+1, PRODUCT invariant 37). The defaulted record is what flows
+  // through the oracle, the budget gate AND the scoped splice, so the
+  // written bytes carry the defaults.
+  const createKind = createRecordKindFor(canonical.detected.kind);
+  let record = withCreateDefaults(
+    createKind,
+    body.record as Record<string, unknown>,
+  );
+  if (record.id === undefined) {
+    const collectionKey =
+      canonical.detected.kind === "task-list"
+        ? ("tasks" as const)
+        : canonical.detected.kind === "roadmap"
+          ? ("themes" as const)
+          : ("items" as const);
+    record = { ...record, id: nextId(canonical.detected, collectionKey) };
+  }
+
+  const result = insertRecord(canonical.detected, record);
   if (!result.ok) {
     if (result.kind === "duplicate-id") {
       return jsonResponse(
@@ -911,10 +945,7 @@ async function handlePostRecord(
   // ID-90 U2 budget gate — create mode (every budgeted field is freshly
   // authored): first over-budget field is fatal (invariant 25). `force`
   // arrives as a body field in U10 (record 12).
-  const budget = checkBudgetForCreate(
-    createRecordKindFor(canonical.detected.kind),
-    body.record,
-  );
+  const budget = checkBudgetForCreate(createKind, record);
   if (!budget.ok) {
     return jsonResponse(
       {
@@ -946,7 +977,7 @@ async function handlePostRecord(
         : canonical.detected.kind === "roadmap"
           ? "themes"
           : "items",
-    record: body.record,
+    record,
   });
   if (!spliced.ok) {
     return jsonResponse(
@@ -1203,6 +1234,480 @@ async function handleDeleteRecord(
     ok: true,
     newMtime,
     recordId,
+    mirrorDir: regen.mirrorDir,
+    mirrorsWritten: regen.written,
+    mirrorsDeleted: regen.deleted,
+    ...(gateVerdict.warnings.length > 0
+      ? { warnings: gateVerdict.warnings }
+      : {}),
+  });
+}
+
+/**
+ * POST /api/ledger/record/:taskId/subtask — bulk subtask CREATE (ID-90 U5).
+ *
+ * Body: { baseMtime: string, subtasks: <subtask record objects>[] }
+ *   → 201 { ok: true, newMtime, taskId, subtaskIds, warnings? }
+ *   → 409 { error: 'mtime-mismatch' | 'duplicate-id' }
+ *   → 404 { error: 'record-not-found' }  parent task absent
+ *   → 422 { error: 'schema-error' | 'budget-exceeded' | ... }
+ *   → 400 invalid body / mtime / empty batch
+ *
+ * Serves add-subtask (a batch of one) and add-subtasks (bulk). Fold-left
+ * auto-id allocation + create defaults live in insertSubtasks (PRODUCT
+ * invariant 37); per-record budget checks run in create mode with the
+ * `subtask <parent>.<id>` label, atomically — any over-budget record
+ * rejects the WHOLE batch with nothing written (invariant 25). Lands on
+ * the bare /api/ledger/... form; record 11 adds the :slug segment.
+ *
+ * The written bytes come from N scoped insert splices folded over the
+ * parsed-ORIGINAL rawText (ONE write), and the pre-write gate chain
+ * asserts the `add-many` id-delta on the exact bytes about to land
+ * (invariants 22 + 28).
+ */
+async function handlePostSubtasks(
+  ctx: RequestContext,
+  taskId: string,
+  request: Request,
+): Promise<Response> {
+  let body: { baseMtime?: unknown; subtasks?: unknown };
+  try {
+    body = (await request.json()) as { baseMtime?: unknown; subtasks?: unknown };
+  } catch (err) {
+    return jsonResponse(
+      { ok: false, error: "invalid-json", detail: (err as Error).message },
+      { status: 400 },
+    );
+  }
+  if (typeof body.baseMtime !== "string" || body.baseMtime === "") {
+    return jsonResponse(
+      { ok: false, error: "missing-baseMtime" },
+      { status: 400 },
+    );
+  }
+  if (!Array.isArray(body.subtasks)) {
+    return jsonResponse(
+      { ok: false, error: "missing-subtasks" },
+      { status: 400 },
+    );
+  }
+
+  let canonical;
+  try {
+    canonical = await readCanonical(ctx.ledgerPath);
+  } catch (err) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "ledger-read-failed",
+        detail: (err as Error).message,
+      },
+      { status: 500 },
+    );
+  }
+  if (canonical.detected.kind === "unknown") {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "unknown-document-name",
+        documentName: canonical.detected.documentName,
+      },
+      { status: 422 },
+    );
+  }
+
+  // §5.4 mtime check — BEFORE mutation.
+  const baseMtimeMs = Date.parse(body.baseMtime);
+  if (!Number.isFinite(baseMtimeMs)) {
+    return jsonResponse(
+      { ok: false, error: "invalid-baseMtime", detail: body.baseMtime },
+      { status: 400 },
+    );
+  }
+  if (Date.parse(canonical.mtimeIso) > baseMtimeMs) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "mtime-mismatch",
+        currentMtime: canonical.mtimeIso,
+        hint: "ledger changed underneath you — reload from disk and re-apply your edit",
+      },
+      { status: 409 },
+    );
+  }
+
+  // ID-90 U5 oracle: fold-left create defaults + per-record max+1 auto-id +
+  // duplicate-id pre-check + ONE whole-doc Zod re-parse (invariant 37).
+  const result = insertSubtasks(canonical.detected, taskId, body.subtasks);
+  if (!result.ok) {
+    if (result.kind === "task-not-found") {
+      return jsonResponse(
+        { ok: false, error: "record-not-found", recordId: result.taskId },
+        { status: 404 },
+      );
+    }
+    if (result.kind === "duplicate-id") {
+      return jsonResponse(
+        { ok: false, error: "duplicate-id", subtaskId: result.subtaskId },
+        { status: 409 },
+      );
+    }
+    if (result.kind === "schema-error") {
+      return jsonResponse(
+        { ok: false, error: "schema-error", issues: result.zodError.issues },
+        { status: 422 },
+      );
+    }
+    return jsonResponse(
+      { ok: false, error: result.kind, detail: result.detail },
+      { status: 400 },
+    );
+  }
+
+  // ID-90 U2 budget gate — create mode per record, ATOMIC across the batch
+  // (invariant 25 bulk mode): the first over-budget record rejects the whole
+  // batch with nothing written. `parentId` labels the detail line
+  // `subtask <taskId>.<subId>` (ID-35.27).
+  const budgetWarnings: string[] = [];
+  for (const record of result.records) {
+    const budget = checkBudgetForCreate("subtask", record, {}, taskId);
+    budgetWarnings.push(...budget.warnings);
+    if (!budget.ok) {
+      return jsonResponse(
+        {
+          ok: false,
+          error: budget.error,
+          detail: budget.detail,
+          ...(budgetWarnings.length > 0 ? { warnings: budgetWarnings } : {}),
+        },
+        { status: 422 },
+      );
+    }
+  }
+
+  // ID-90 U3: pre-write id-set of the parent task's subtasks[] — a bulk
+  // subtask CREATE is an `add-many` delta (the U5 seam record 7 prepared).
+  const recordSetDescriptor = {
+    collection: "subtasks" as const,
+    taskId,
+  };
+  const beforeIds = beforeCollectionIds(canonical.detected, recordSetDescriptor);
+
+  // ID-90 U1: N insert ops folded over the parsed-ORIGINAL rawText → ONE
+  // final text written ONCE; every untouched record keeps its exact bytes.
+  // insertSubtasks above stays the validation oracle; a splice failure after
+  // the oracle passed is an internal inconsistency → 500.
+  let serialised = canonical.rawText;
+  for (const record of result.records) {
+    const spliced = scopedSpliceSerialise(serialised, {
+      kind: "insert",
+      collection: "subtasks",
+      taskId,
+      record,
+    });
+    if (!spliced.ok) {
+      return jsonResponse(
+        {
+          ok: false,
+          error: "serialise-failed",
+          detail: `scoped splice ${spliced.kind}${
+            "detail" in spliced && spliced.detail ? `: ${spliced.detail}` : ""
+          }`,
+        },
+        { status: 500 },
+      );
+    }
+    serialised = spliced.text;
+  }
+
+  // ID-90 U3 pre-write gate chain on the EXACT bytes about to land
+  // (invariants 22 + 28): ONE add-many check covering all +N ids.
+  const gateVerdict = runPreWriteGates(
+    buildPreWriteGates({
+      recordSet: {
+        ledgerLabel: canonical.detected.kind,
+        beforeIds,
+        descriptor: recordSetDescriptor,
+        expectedDelta: { kind: "add-many", ids: result.subtaskIds },
+      },
+      // U4: prior on-disk bytes — the BEFORE side of the net-new delta.
+      clientName: { priorContent: canonical.rawText },
+    }),
+    { content: serialised },
+  );
+  if (!gateVerdict.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: gateVerdict.error,
+        detail: gateVerdict.detail,
+        ...(gateVerdict.warnings.length > 0
+          ? { warnings: gateVerdict.warnings }
+          : {}),
+      },
+      { status: gateVerdict.status },
+    );
+  }
+  const responseWarnings = [...budgetWarnings, ...gateVerdict.warnings];
+
+  try {
+    await atomicWriteFile(ctx.ledgerPath, serialised);
+  } catch (err) {
+    return jsonResponse(
+      { ok: false, error: "write-failed", detail: (err as Error).message },
+      { status: 500 },
+    );
+  }
+
+  // Subtasks render inside the parent Task's mirror — a scoped regen of that
+  // one record is correct + cheap (the 20.23 discipline).
+  let regen;
+  try {
+    regen = await generateRecordMirror(result.detected, ctx.ledgerPath, taskId);
+  } catch (err) {
+    const newMtime = (await stat(ctx.ledgerPath)).mtime.toISOString();
+    return jsonResponse(
+      {
+        ok: false,
+        error: "mirror-regen-failed",
+        detail: (err as Error).message,
+        canonicalWritten: true,
+        newMtime,
+      },
+      { status: 500 },
+    );
+  }
+
+  const newMtime = (await stat(ctx.ledgerPath)).mtime.toISOString();
+  return jsonResponse(
+    {
+      ok: true,
+      newMtime,
+      taskId,
+      subtaskIds: result.subtaskIds,
+      mirrorDir: regen.mirrorDir,
+      mirrorsWritten: regen.written,
+      mirrorsDeleted: regen.deleted,
+      ...(responseWarnings.length > 0 ? { warnings: responseWarnings } : {}),
+    },
+    { status: 201 },
+  );
+}
+
+/**
+ * DELETE /api/ledger/record/:taskId/subtask/:subId — subtask DELETE
+ * (ID-90 U5).
+ *
+ * Body: { baseMtime: string }
+ *   → 200 { ok: true, newMtime, taskId, subtaskId, warnings? }
+ *   → 404 { error: 'record-not-found' }  parent task or subtask absent
+ *   → 409 { error: 'mtime-mismatch' }
+ *   → 422 { error: 'schema-error' }      e.g. removal strands a sibling dep
+ *   → 400 invalid body / mtime / non-integer subId
+ *
+ * The written bytes come from a scoped `remove` splice on the
+ * parsed-ORIGINAL (untouched records keep their exact bytes); the gate
+ * chain asserts the single-id `remove` delta on the exact bytes about to
+ * land. Subtask removal never orphans a mirror file (subtasks render
+ * inside the parent Task's mirror), so a scoped regen of that one record
+ * suffices.
+ */
+async function handleDeleteSubtask(
+  ctx: RequestContext,
+  taskId: string,
+  subIdRaw: string,
+  request: Request,
+): Promise<Response> {
+  let body: { baseMtime?: unknown };
+  try {
+    body = (await request.json()) as { baseMtime?: unknown };
+  } catch (err) {
+    return jsonResponse(
+      { ok: false, error: "invalid-json", detail: (err as Error).message },
+      { status: 400 },
+    );
+  }
+  if (typeof body.baseMtime !== "string" || body.baseMtime === "") {
+    return jsonResponse(
+      { ok: false, error: "missing-baseMtime" },
+      { status: 400 },
+    );
+  }
+  // ID-35.43 subId coercion (CLI parity): the path segment arrives as a
+  // string but `SubtaskSchema.id` is a NUMBER — a numeric string coerces;
+  // anything else is a structured `invalid-id` rather than a confusing 404.
+  const subtaskId = Number(subIdRaw);
+  if (
+    !Number.isInteger(subtaskId) ||
+    subtaskId <= 0 ||
+    subIdRaw.trim() === ""
+  ) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "invalid-id",
+        detail: `subId ${JSON.stringify(subIdRaw)} is not a positive integer; subtask.id must be a number`,
+      },
+      { status: 400 },
+    );
+  }
+
+  let canonical;
+  try {
+    canonical = await readCanonical(ctx.ledgerPath);
+  } catch (err) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "ledger-read-failed",
+        detail: (err as Error).message,
+      },
+      { status: 500 },
+    );
+  }
+  if (canonical.detected.kind === "unknown") {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "unknown-document-name",
+        documentName: canonical.detected.documentName,
+      },
+      { status: 422 },
+    );
+  }
+
+  const baseMtimeMs = Date.parse(body.baseMtime);
+  if (!Number.isFinite(baseMtimeMs)) {
+    return jsonResponse(
+      { ok: false, error: "invalid-baseMtime", detail: body.baseMtime },
+      { status: 400 },
+    );
+  }
+  if (Date.parse(canonical.mtimeIso) > baseMtimeMs) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "mtime-mismatch",
+        currentMtime: canonical.mtimeIso,
+        hint: "ledger changed underneath you — reload from disk and re-apply your edit",
+      },
+      { status: 409 },
+    );
+  }
+
+  const result = removeSubtask(canonical.detected, taskId, subtaskId);
+  if (!result.ok) {
+    if (result.kind === "task-not-found") {
+      return jsonResponse(
+        { ok: false, error: "record-not-found", recordId: result.taskId },
+        { status: 404 },
+      );
+    }
+    if (result.kind === "subtask-not-found") {
+      return jsonResponse(
+        {
+          ok: false,
+          error: "record-not-found",
+          recordId: `${result.taskId}.${result.subtaskId}`,
+        },
+        { status: 404 },
+      );
+    }
+    return jsonResponse(
+      { ok: false, error: "schema-error", issues: result.zodError.issues },
+      { status: 422 },
+    );
+  }
+
+  // ID-90 U3: a subtask DELETE is a `remove` delta on the parent task's
+  // subtasks[] id-set. No budget gate — a deletion authors no content.
+  const recordSetDescriptor = {
+    collection: "subtasks" as const,
+    taskId,
+  };
+  const beforeIds = beforeCollectionIds(canonical.detected, recordSetDescriptor);
+
+  // ID-90 U1: scoped remove splice on the parsed-ORIGINAL — untouched
+  // records keep their exact bytes. removeSubtask above is the presence +
+  // schema oracle; a splice failure after it passed is internal → 500.
+  const spliced = scopedSpliceSerialise(canonical.rawText, {
+    kind: "remove",
+    collection: "subtasks",
+    taskId,
+    recordId: subtaskId,
+  });
+  if (!spliced.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "serialise-failed",
+        detail: `scoped splice ${spliced.kind}${
+          "detail" in spliced && spliced.detail ? `: ${spliced.detail}` : ""
+        }`,
+      },
+      { status: 500 },
+    );
+  }
+
+  // ID-90 U3 pre-write gate chain on the EXACT bytes about to land.
+  const gateVerdict = runPreWriteGates(
+    buildPreWriteGates({
+      recordSet: {
+        ledgerLabel: canonical.detected.kind,
+        beforeIds,
+        descriptor: recordSetDescriptor,
+        expectedDelta: { kind: "remove", id: subtaskId },
+      },
+      clientName: { priorContent: canonical.rawText },
+    }),
+    { content: spliced.text },
+  );
+  if (!gateVerdict.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: gateVerdict.error,
+        detail: gateVerdict.detail,
+        ...(gateVerdict.warnings.length > 0
+          ? { warnings: gateVerdict.warnings }
+          : {}),
+      },
+      { status: gateVerdict.status },
+    );
+  }
+
+  try {
+    await atomicWriteFile(ctx.ledgerPath, spliced.text);
+  } catch (err) {
+    return jsonResponse(
+      { ok: false, error: "write-failed", detail: (err as Error).message },
+      { status: 500 },
+    );
+  }
+
+  let regen;
+  try {
+    regen = await generateRecordMirror(result.detected, ctx.ledgerPath, taskId);
+  } catch (err) {
+    const newMtime = (await stat(ctx.ledgerPath)).mtime.toISOString();
+    return jsonResponse(
+      {
+        ok: false,
+        error: "mirror-regen-failed",
+        detail: (err as Error).message,
+        canonicalWritten: true,
+        newMtime,
+      },
+      { status: 500 },
+    );
+  }
+
+  const newMtime = (await stat(ctx.ledgerPath)).mtime.toISOString();
+  return jsonResponse({
+    ok: true,
+    newMtime,
+    taskId,
+    subtaskId,
     mirrorDir: regen.mirrorDir,
     mirrorsWritten: regen.written,
     mirrorsDeleted: regen.deleted,
@@ -1480,6 +1985,40 @@ function buildFetchHandler(ctx: RequestContext) {
     // POST /api/ledger/transaction — cross-ledger atomic Promote (ID-20.15).
     if (path === "/api/ledger/transaction" && request.method === "POST") {
       return handlePostTransaction(ctx, request);
+    }
+
+    // ID-90 U5 subtask routes — matched BEFORE the generic /:recordId route
+    // below, whose greedy (.+) would otherwise swallow the nested subtask
+    // segments as a record id. Bare /api/ledger/... form; record 11 adds
+    // the :slug segment.
+    // POST /api/ledger/record/:taskId/subtask — bulk subtask CREATE.
+    const subtaskCollectionMatch = path.match(
+      /^\/api\/ledger\/record\/([^/]+)\/subtask$/,
+    );
+    if (subtaskCollectionMatch) {
+      const taskId = decodeURIComponent(subtaskCollectionMatch[1]);
+      if (request.method === "POST") {
+        return handlePostSubtasks(ctx, taskId, request);
+      }
+      return jsonResponse(
+        { ok: false, error: "method-not-allowed" },
+        { status: 405, headers: { allow: "POST" } },
+      );
+    }
+    // DELETE /api/ledger/record/:taskId/subtask/:subId — subtask DELETE.
+    const subtaskItemMatch = path.match(
+      /^\/api\/ledger\/record\/([^/]+)\/subtask\/([^/]+)$/,
+    );
+    if (subtaskItemMatch) {
+      const taskId = decodeURIComponent(subtaskItemMatch[1]);
+      const subId = decodeURIComponent(subtaskItemMatch[2]);
+      if (request.method === "DELETE") {
+        return handleDeleteSubtask(ctx, taskId, subId, request);
+      }
+      return jsonResponse(
+        { ok: false, error: "method-not-allowed" },
+        { status: 405, headers: { allow: "DELETE" } },
+      );
     }
 
     // GET / PATCH / DELETE /api/ledger/record/:recordId

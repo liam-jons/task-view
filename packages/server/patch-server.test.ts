@@ -1603,3 +1603,365 @@ describe("ID-90 U1 — conforming write-path bytes (invariants 18-20)", () => {
     expect(parsed.tasks.map((t) => t.id)).toEqual(["20"]);
   });
 });
+
+// ── ID-90.9 U5/U6: subtask endpoints + create auto-id/defaults + append ───────
+
+describe("POST /api/ledger/record — auto-id + create defaults (ID-90.9 U5)", () => {
+  test("allocates nextId and applies create defaults when the body is minimal", async () => {
+    const ledger = join(testDir, "task-list.json");
+    await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    // Minimal body: no id, no status, no subtasks — defaults fill them and
+    // nextId allocates max(20, 30)+1 = "31".
+    const res = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        record: { title: "Minimal", description: "d", priority: "should" },
+      }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { ok: boolean; recordId: string };
+    expect(body.ok).toBe(true);
+    expect(body.recordId).toBe("31");
+
+    // Create defaults observable in the WRITTEN bytes:
+    const updated = JSON.parse(await readFile(ledger, "utf8")) as {
+      tasks: Record<string, unknown>[];
+    };
+    const created = updated.tasks.find((t) => t.id === "31")!;
+    expect(created.status).toBe("pending");
+    expect(created.dependencies).toEqual([]);
+    expect(created.subtasks).toEqual([]);
+    expect(created.owner).toBeNull();
+    expect(typeof created.updatedAt).toBe("string");
+    expect(Number.isFinite(Date.parse(created.updatedAt as string))).toBe(true);
+  });
+});
+
+describe("POST /api/ledger/record/:taskId/subtask — bulk subtask CREATE (ID-90.9 U5, inv 37)", () => {
+  test("201: fold-left sequential ids, create defaults in the written bytes, untouched records byte-identical", async () => {
+    const ledger = join(testDir, "task-list.json");
+    const original = await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+    await new Promise((r) => setTimeout(r, 5));
+
+    const res = await fetch(`${handle.url}/api/ledger/record/20/subtask`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        subtasks: [
+          { title: "New slice 3", description: "Third slice." },
+          { title: "New slice 4", description: "Fourth slice." },
+        ],
+      }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      ok: boolean;
+      subtaskIds: number[];
+      taskId: string;
+      newMtime: string;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.taskId).toBe("20");
+    // Existing subtask max id is 2 → fold-left allocates 3 then 4.
+    expect(body.subtaskIds).toEqual([3, 4]);
+
+    const text = await readFile(ledger, "utf8");
+    const updated = JSON.parse(text) as {
+      tasks: { id: string; subtasks: Record<string, unknown>[] }[];
+    };
+    const subs = updated.tasks[0].subtasks;
+    expect(subs.map((s) => s.id)).toEqual([1, 2, 3, 4]);
+    // Create defaults observable in the written bytes:
+    const added = subs[2];
+    expect(added.status).toBe("pending");
+    expect(added.dependencies).toEqual([]);
+    expect(added.details).toBe("");
+    expect(added.testStrategy).toBeNull();
+    // Untouched Task 30 block stays byte-identical:
+    const block30 = original.slice(original.indexOf('"id": "30"'));
+    expect(text).toContain(block30);
+  });
+
+  test("an explicit id mid-batch is kept; later auto-ids never collide", async () => {
+    const ledger = join(testDir, "task-list.json");
+    await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record/20/subtask`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        subtasks: [
+          { id: 7, title: "Explicit", description: "d" },
+          { title: "Auto", description: "d" },
+        ],
+      }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { subtaskIds: number[] };
+    expect(body.subtaskIds).toEqual([7, 8]);
+  });
+
+  test("409 duplicate-id for an explicit id colliding with an existing sibling; nothing written", async () => {
+    const ledger = join(testDir, "task-list.json");
+    const original = await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record/20/subtask`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        subtasks: [{ id: 2, title: "Dup", description: "d" }],
+      }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; subtaskId: number };
+    expect(body.error).toBe("duplicate-id");
+    expect(body.subtaskId).toBe(2);
+    expect(await readFile(ledger, "utf8")).toBe(original);
+  });
+
+  test("422 budget-exceeded per record (create mode) with the subtask <parent>.<id> label; nothing written", async () => {
+    const ledger = join(testDir, "task-list.json");
+    const original = await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record/20/subtask`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        subtasks: [
+          { title: "ok", description: "fine" },
+          // subtask.description budget is 250 — 260 chars exceeds it.
+          { title: "over", description: "x".repeat(260) },
+        ],
+      }),
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: string; detail: string };
+    expect(body.error).toBe("budget-exceeded");
+    // ID-35.27 label: `subtask 20.4` (second record allocated id 4).
+    expect(body.detail).toContain("subtask 20.4");
+    expect(await readFile(ledger, "utf8")).toBe(original);
+  });
+
+  test("404 record-not-found for an absent parent task", async () => {
+    const ledger = join(testDir, "task-list.json");
+    await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record/999/subtask`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        subtasks: [{ title: "x", description: "d" }],
+      }),
+    });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("record-not-found");
+  });
+
+  test("409 mtime-mismatch when baseMtime is stale; nothing written", async () => {
+    const ledger = join(testDir, "task-list.json");
+    const original = await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+    const before = await stat(ledger);
+    await utimes(ledger, before.atime, new Date(before.mtime.getTime() + 5000));
+
+    const res = await fetch(`${handle.url}/api/ledger/record/20/subtask`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        subtasks: [{ title: "x", description: "d" }],
+      }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("mtime-mismatch");
+    expect(await readFile(ledger, "utf8")).toBe(original);
+  });
+
+  test("400 missing-baseMtime / missing-subtasks / empty batch", async () => {
+    const ledger = join(testDir, "task-list.json");
+    await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const noMtime = await fetch(`${handle.url}/api/ledger/record/20/subtask`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ subtasks: [{ title: "x", description: "d" }] }),
+    });
+    expect(noMtime.status).toBe(400);
+    expect(((await noMtime.json()) as { error: string }).error).toBe(
+      "missing-baseMtime",
+    );
+
+    const noSubtasks = await fetch(
+      `${handle.url}/api/ledger/record/20/subtask`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ baseMtime }),
+      },
+    );
+    expect(noSubtasks.status).toBe(400);
+    expect(((await noSubtasks.json()) as { error: string }).error).toBe(
+      "missing-subtasks",
+    );
+
+    const empty = await fetch(`${handle.url}/api/ledger/record/20/subtask`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseMtime, subtasks: [] }),
+    });
+    expect(empty.status).toBe(400);
+    expect(((await empty.json()) as { error: string }).error).toBe(
+      "invalid-body",
+    );
+  });
+});
+
+describe("DELETE /api/ledger/record/:taskId/subtask/:subId — subtask DELETE (ID-90.9 U5)", () => {
+  test("200: removes the subtask; untouched records stay byte-identical", async () => {
+    const ledger = join(testDir, "task-list.json");
+    const original = await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+    await new Promise((r) => setTimeout(r, 5));
+
+    // Subtask 2 depends on 1, so 2 is the dependency-safe removal.
+    const res = await fetch(`${handle.url}/api/ledger/record/20/subtask/2`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseMtime }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ok: boolean;
+      taskId: string;
+      subtaskId: number;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.taskId).toBe("20");
+    expect(body.subtaskId).toBe(2);
+
+    const text = await readFile(ledger, "utf8");
+    const updated = JSON.parse(text) as {
+      tasks: { subtasks: { id: number }[] }[];
+    };
+    expect(updated.tasks[0].subtasks.map((s) => s.id)).toEqual([1]);
+    // Untouched Task 30 block stays byte-identical:
+    const block30 = original.slice(original.indexOf('"id": "30"'));
+    expect(text).toContain(block30);
+  });
+
+  test("404 record-not-found for an absent subId; nothing written", async () => {
+    const ledger = join(testDir, "task-list.json");
+    const original = await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record/20/subtask/99`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseMtime }),
+    });
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { error: string }).error).toBe(
+      "record-not-found",
+    );
+    expect(await readFile(ledger, "utf8")).toBe(original);
+  });
+
+  test("400 invalid-id for a non-integer subId", async () => {
+    const ledger = join(testDir, "task-list.json");
+    await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record/20/subtask/abc`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseMtime }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("invalid-id");
+  });
+
+  test("409 mtime-mismatch when baseMtime is stale; nothing written", async () => {
+    const ledger = join(testDir, "task-list.json");
+    const original = await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+    const before = await stat(ledger);
+    await utimes(ledger, before.atime, new Date(before.mtime.getTime() + 5000));
+
+    const res = await fetch(`${handle.url}/api/ledger/record/20/subtask/2`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseMtime }),
+    });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toBe(
+      "mtime-mismatch",
+    );
+    expect(await readFile(ledger, "utf8")).toBe(original);
+  });
+});
+
+describe("PATCH /api/ledger/record/:recordId — appendText op (ID-90.9 U6, inv 39)", () => {
+  test("append-journal: prior details bytes preserved verbatim, block appended", async () => {
+    const ledger = join(testDir, "task-list.json");
+    await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+    await new Promise((r) => setTimeout(r, 5));
+
+    const block =
+      "\n\n<info added on 2026-06-07T00:00:00.000Z>\nShipped the slice.\n</info added on 2026-06-07T00:00:00.000Z>";
+    const res = await fetch(`${handle.url}/api/ledger/record/20`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        patches: [
+          {
+            fieldPath: ["tasks", "20", "subtasks", "1", "details"],
+            appendText: block,
+          },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+
+    const updated = JSON.parse(await readFile(ledger, "utf8")) as {
+      tasks: { subtasks: { details: string }[] }[];
+    };
+    // Prior value preserved VERBATIM as the prefix; block appended after.
+    expect(updated.tasks[0].subtasks[0].details).toBe(
+      `Details for slice 1.${block}`,
+    );
+  });
+});
