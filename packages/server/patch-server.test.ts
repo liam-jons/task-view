@@ -35,6 +35,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startPatchServer, type PatchServerHandle } from "./patch-server";
+import { escapeSerialise } from "./scoped-serialise";
 
 let testDir: string;
 let handle: PatchServerHandle | null;
@@ -1450,5 +1451,155 @@ describe("GET / — reverse appears-in-themes backlinks ({20.30})", () => {
     const html = await res.text();
     expect(html).toContain('data-frontmatter-row="appears_in_themes"');
     expect(html).toContain('href="/?ledger=roadmap&amp;record=10"');
+  });
+});
+
+// ── ID-90 U1: conforming serialisation on every write path (inv 18-20) ────────
+//
+// The server's written bytes must follow the on-disk ledger convention:
+// non-ASCII as \uXXXX escapes, on-disk key order (never Zod-reparse reorder),
+// a single trailing newline — and a single-field PATCH must produce a minimal
+// scoped diff (the whole-file re-emit class is structurally impossible).
+
+describe("ID-90 U1 — conforming write-path bytes (invariants 18-20)", () => {
+  // Pure-ASCII source discipline: glyphs assembled from escapes.
+  const EM_DASH = "—";
+  const ARROW = "→";
+  const RAW_NON_ASCII = new RegExp("[\\u0080-\\uffff]");
+
+  /** An em-dash-bearing task-list, written CONFORMINGLY (escaped + newline). */
+  function makeEscapedTaskListObject() {
+    const obj = makeTaskListLedgerObject();
+    obj.document_purpose = `Ledger fixture ${EM_DASH} byte discipline.`;
+    obj.tasks[0].description = `Outer task description ${EM_DASH} alpha.`;
+    obj.tasks[1].description = `Outer description for 30 ${ARROW} beta.`;
+    return obj;
+  }
+
+  async function writeConformingTaskList(path: string): Promise<string> {
+    const content = escapeSerialise(makeEscapedTaskListObject());
+    await writeFile(path, content, "utf8");
+    return content;
+  }
+
+  function changedLines(original: string, next: string): number[] {
+    const a = original.split("\n");
+    const b = next.split("\n");
+    expect(b.length).toBe(a.length);
+    return a
+      .map((line, i) => (line === b[i] ? null : i))
+      .filter((i): i is number => i !== null);
+  }
+
+  test("single-field PATCH writes a minimal scoped diff with escapes + trailing newline", async () => {
+    const ledger = join(testDir, "task-list.json");
+    const original = await writeConformingTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record/20`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        patches: [
+          { fieldPath: ["tasks", "20", "status"], newValue: "done" },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+
+    const written = await readFile(ledger, "utf8");
+    // Exactly ONE line changed in the whole file (invariant 19).
+    const changed = changedLines(original, written);
+    expect(changed).toHaveLength(1);
+    expect(written.split("\n")[changed[0]]).toContain('"status": "done"');
+    // Conforming bytes (invariant 18): escapes survive, no raw non-ASCII,
+    // single trailing newline, untouched Task 30 block byte-identical.
+    expect(RAW_NON_ASCII.test(written)).toBe(false);
+    expect(written).toContain("\\u2014");
+    expect(written).toContain("\\u2192");
+    expect(written.endsWith("}\n")).toBe(true);
+    expect(written.endsWith("}\n\n")).toBe(false);
+    const block30 = original.slice(original.indexOf('"id": "30"'));
+    expect(written).toContain(block30);
+  });
+
+  test("multi-field PATCH folds scoped serialisation — N changed lines for N patches", async () => {
+    const ledger = join(testDir, "task-list.json");
+    const original = await writeConformingTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record/20`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        patches: [
+          { fieldPath: ["tasks", "20", "status"], newValue: "done" },
+          {
+            fieldPath: ["tasks", "20", "subtasks", "2", "status"],
+            newValue: "in_progress",
+          },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+
+    const written = await readFile(ledger, "utf8");
+    expect(changedLines(original, written)).toHaveLength(2);
+    expect(written.endsWith("}\n")).toBe(true);
+  });
+
+  test("POST record create splices — untouched records keep their exact bytes", async () => {
+    const ledger = join(testDir, "task-list.json");
+    const original = await writeConformingTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const newRecord = {
+      ...makeNewTaskRecord("40"),
+      description: `A freshly-created task ${EM_DASH} spliced.`,
+    };
+    const res = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseMtime, record: newRecord }),
+    });
+    expect(res.status).toBe(201);
+
+    const written = await readFile(ledger, "utf8");
+    // Task 20's block is byte-identical (from its id line to Task 30's).
+    const start20 = original.indexOf('"id": "20"');
+    const start30 = original.indexOf('"id": "30"');
+    expect(written).toContain(original.slice(start20, start30));
+    // New record present, conforming bytes throughout.
+    expect(written).toContain('"id": "40"');
+    expect(RAW_NON_ASCII.test(written)).toBe(false);
+    expect(written).toContain("\\u2014");
+    expect(written.endsWith("}\n")).toBe(true);
+  });
+
+  test("DELETE record re-emits the whole file conformingly (escapes + newline)", async () => {
+    const ledger = join(testDir, "task-list.json");
+    await writeConformingTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record/30`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseMtime }),
+    });
+    expect(res.status).toBe(200);
+
+    const written = await readFile(ledger, "utf8");
+    expect(RAW_NON_ASCII.test(written)).toBe(false);
+    expect(written).toContain("\\u2014"); // remaining records keep escapes
+    expect(written.endsWith("}\n")).toBe(true);
+    expect(written.endsWith("}\n\n")).toBe(false);
+    const parsed = JSON.parse(written) as { tasks: { id: string }[] };
+    expect(parsed.tasks.map((t) => t.id)).toEqual(["20"]);
   });
 });

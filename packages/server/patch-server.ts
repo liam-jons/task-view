@@ -83,6 +83,11 @@ import {
   type FieldPatch,
 } from "./patch-apply";
 import { atomicWriteFile } from "./atomic-write";
+import {
+  escapeSerialise,
+  scopedSerialise,
+  scopedSpliceSerialise,
+} from "./scoped-serialise";
 import { insertRecord, removeRecord } from "./record-mutate";
 import { promoteTransaction } from "./ledger-transaction";
 import { scanForLedgers } from "./path-resolution";
@@ -194,15 +199,15 @@ function computeMirrorFilename(
   return computeRecordFilename("backlog", { id: recordId });
 }
 
-/**
- * Serialise the parsed ledger back to JSON with the same indent as the
- * existing ledgers (2-space, per the canonical KH ledger files).
- */
-function serialiseLedger(
-  detected: Exclude<DetectSchemaResult, { kind: "unknown" }>,
-): string {
-  return JSON.stringify(detected.data, null, 2);
-}
+// ID-90 U1: the former `serialiseLedger` (`JSON.stringify(detected.data,
+// null, 2)`) is DELETED. It re-emitted the Zod-reparsed document — key-order
+// normalisation + raw UTF-8 — which turned a single-field edit into a
+// whole-file diff (PRODUCT invariant 19 / RESEARCH §1.3). Written bytes now
+// come from the conforming serialisers in scoped-serialise.ts:
+//   - PATCH  → scopedSerialise folded left over the parsed-ORIGINAL rawText
+//   - POST   → scopedSpliceSerialise (record splice on the parsed-original)
+//   - DELETE → escapeSerialise(result.detected.data) (whole-file conforming,
+//              byte-compatible post-OQ-LS-2)
 
 /**
  * GET / — SSR-rendered viewer (Subtask 20.17).
@@ -642,14 +647,36 @@ async function handlePatchRecord(
     );
   }
 
-  // Serialise + atomic write.
-  // Reconstruct a typed `detected` so generateMirrors sees the right
-  // discriminant + parsed shape.
+  // ID-90 U1: written bytes come from the parsed-ORIGINAL, not the
+  // Zod-reparsed snapshot. `applyPatches` above stays the validation oracle;
+  // here we fold `scopedSerialise` left over the original rawText so every
+  // untouched record keeps its exact on-disk bytes (invariants 18-19). A fold
+  // failure after the oracle passed is an internal inconsistency → 500.
+  let serialised = canonical.rawText;
+  for (const patch of patches) {
+    const scoped = scopedSerialise(serialised, patch);
+    if (!scoped.ok) {
+      return jsonResponse(
+        {
+          ok: false,
+          error: "serialise-failed",
+          detail: `scoped serialisation ${scoped.kind}${
+            "detail" in scoped && scoped.detail ? `: ${scoped.detail}` : ""
+          }`,
+        },
+        { status: 500 },
+      );
+    }
+    serialised = scoped.text;
+  }
+
+  // Reconstruct a typed `detected` so generateRecordMirror sees the right
+  // discriminant + parsed shape (mirrors are markdown — derived from the
+  // parsed snapshot, not the canonical bytes).
   const serialisedDetected = {
     kind: canonical.detected.kind,
     data: applyResult.parsed,
   } as Exclude<DetectSchemaResult, { kind: "unknown" }>;
-  const serialised = serialiseLedger(serialisedDetected);
 
   try {
     await atomicWriteFile(ctx.ledgerPath, serialised);
@@ -810,9 +837,36 @@ async function handlePostRecord(
     );
   }
 
-  const serialised = serialiseLedger(result.detected);
+  // ID-90 U1: splice the new record into the parsed-ORIGINAL rawText so every
+  // existing record keeps its exact on-disk bytes (invariants 18-19).
+  // `insertRecord` above stays the validation oracle (duplicate-id +
+  // document-level schema invariants); a splice failure after the oracle
+  // passed is an internal inconsistency → 500.
+  const spliced = scopedSpliceSerialise(canonical.rawText, {
+    kind: "insert",
+    collection:
+      canonical.detected.kind === "task-list"
+        ? "tasks"
+        : canonical.detected.kind === "roadmap"
+          ? "themes"
+          : "items",
+    record: body.record,
+  });
+  if (!spliced.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "serialise-failed",
+        detail: `scoped splice ${spliced.kind}${
+          "detail" in spliced && spliced.detail ? `: ${spliced.detail}` : ""
+        }`,
+      },
+      { status: 500 },
+    );
+  }
+
   try {
-    await atomicWriteFile(ctx.ledgerPath, serialised);
+    await atomicWriteFile(ctx.ledgerPath, spliced.text);
   } catch (err) {
     return jsonResponse(
       { ok: false, error: "write-failed", detail: (err as Error).message },
@@ -952,7 +1006,10 @@ async function handleDeleteRecord(
     return jsonResponse({ ok: false, error: result.kind }, { status: 422 });
   }
 
-  const serialised = serialiseLedger(result.detected);
+  // ID-90 U1: DELETE is a whole-file conforming re-emit of the Zod-parsed
+  // post-removal document — matches the CLI's whole-file deletes and is
+  // byte-compatible with the scoped path post-OQ-LS-2 (invariant 20).
+  const serialised = escapeSerialise(result.detected.data);
   try {
     await atomicWriteFile(ctx.ledgerPath, serialised);
   } catch (err) {
