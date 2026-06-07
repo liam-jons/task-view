@@ -1801,7 +1801,13 @@ async function handleDeleteSubtask(
  */
 async function resolveTransactionSiblings(
   ledgerPath: string,
-): Promise<{ taskListPath: string; backlogPath: string } | null> {
+): Promise<{
+  taskListPath: string;
+  backlogPath: string;
+  /** ID-90 U7: roadmap sibling path when present in the dir — required only
+   * when the capability-theme third leg is requested. */
+  roadmapPath: string | null;
+} | null> {
   const dir = dirname(ledgerPath);
   const scan = await scanForLedgers(dir);
   const byName: Record<string, string> = {};
@@ -1819,7 +1825,11 @@ async function resolveTransactionSiblings(
     // error message actionable).
     return null;
   }
-  return { taskListPath, backlogPath };
+  return {
+    taskListPath,
+    backlogPath,
+    roadmapPath: byName["Knowledge Hub Roadmap"] ?? null,
+  };
 }
 
 /**
@@ -1835,13 +1845,15 @@ async function resolveTransactionSiblings(
  *     taskRecord: <full Task object>, // task to insert into task-list
  *     taskListBaseMtime: string,      // client's last-seen task-list mtime
  *     backlogBaseMtime: string,       // client's last-seen backlog mtime
+ *     capabilityThemeId?: string,     // ID-90 U7: bind to a roadmap theme
+ *     roadmapBaseMtime?: string,      // ID-90 U7: required with capabilityThemeId
  *   }
  *
  * Responses:
  *   → 200 { ok: true, newTaskId, removedBacklogId, taskListMtime, backlogMtime, ... }
  *   → 409 { error: 'mtime-mismatch' | 'duplicate-id' }
  *   → 404 { error: 'backlog-item-not-found' }
- *   → 422 { error: 'schema-error', issues } | { error: 'unknown-document-name' | ... }
+ *   → 422 { error: 'schema-error', issues } | { error: 'unknown-document-name' | 'unknown-theme' | ... }
  *   → 400 invalid body / mtime
  *   → 500 { error: 'no-sibling-ledger' | 'stage-failed' | 'commit-failed' }
  *
@@ -1858,6 +1870,9 @@ async function handlePostTransaction(
     taskRecord?: unknown;
     taskListBaseMtime?: unknown;
     backlogBaseMtime?: unknown;
+    /** ID-90 U7: optional capability-theme third leg. */
+    capabilityThemeId?: unknown;
+    roadmapBaseMtime?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -1907,6 +1922,29 @@ async function handlePostTransaction(
       { status: 400 },
     );
   }
+  // ID-90 U7: optional capability-theme third leg — when bound, the client
+  // must also supply its last-seen roadmap mtime (the same per-document
+  // collision contract the other two legs carry).
+  if (body.capabilityThemeId !== undefined) {
+    if (
+      typeof body.capabilityThemeId !== "string" ||
+      body.capabilityThemeId === ""
+    ) {
+      return jsonResponse(
+        { ok: false, error: "invalid-capabilityThemeId" },
+        { status: 400 },
+      );
+    }
+    if (
+      typeof body.roadmapBaseMtime !== "string" ||
+      body.roadmapBaseMtime === ""
+    ) {
+      return jsonResponse(
+        { ok: false, error: "missing-roadmapBaseMtime" },
+        { status: 400 },
+      );
+    }
+  }
 
   const siblings = await resolveTransactionSiblings(ctx.ledgerPath);
   if (!siblings) {
@@ -1922,6 +1960,20 @@ async function handlePostTransaction(
     );
   }
 
+  // ID-90 U7: the third leg additionally needs the roadmap sibling.
+  if (body.capabilityThemeId !== undefined && siblings.roadmapPath === null) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "no-sibling-ledger",
+        detail:
+          "Promote with capabilityThemeId requires a 'Knowledge Hub Roadmap' " +
+          "ledger in the launched ledger's directory.",
+      },
+      { status: 500 },
+    );
+  }
+
   const result = await promoteTransaction({
     taskListPath: siblings.taskListPath,
     backlogPath: siblings.backlogPath,
@@ -1929,6 +1981,15 @@ async function handlePostTransaction(
     backlogBaseMtime: body.backlogBaseMtime,
     sourceBacklogId: body.sourceBacklogId,
     taskRecord: body.taskRecord,
+    ...(body.capabilityThemeId !== undefined && siblings.roadmapPath !== null
+      ? {
+          capabilityTheme: {
+            roadmapPath: siblings.roadmapPath,
+            roadmapBaseMtime: body.roadmapBaseMtime as string,
+            themeId: body.capabilityThemeId as string,
+          },
+        }
+      : {}),
   });
 
   if (!result.ok) {
@@ -1951,6 +2012,13 @@ async function handlePostTransaction(
     backlogMtime: result.backlogMtime,
     mirrorsWritten: result.mirrorsWritten,
     mirrorsDeleted: result.mirrorsDeleted,
+    // ID-90 U7: present when the capability-theme leg was bound.
+    ...(result.boundCapabilityTheme !== undefined
+      ? {
+          boundCapabilityTheme: result.boundCapabilityTheme,
+          roadmapMtime: result.roadmapMtime,
+        }
+      : {}),
     // Gate soft warnings (ID-90 U2/U3); the full U10 envelope extends this.
     ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
   });

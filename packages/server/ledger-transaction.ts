@@ -49,6 +49,25 @@
  * This is the best guarantee a userland 2-file commit can offer without a
  * write-ahead journal; the fault-injection test covers the pre-commit
  * window, which is where a kill realistically occurs.
+ *
+ * ── ID-90 U7: optional capability-theme THIRD leg ──────────────────────────
+ *
+ * `capabilityTheme?: {roadmapPath, roadmapBaseMtime, themeId}` extends the
+ * transaction with a roadmap link leg: `task.capability_theme` is bound on
+ * the inserted record and the new task id is pushed onto the named theme's
+ * `linked_tasks[]` (IDEMPOTENT — already-linked stages the unchanged
+ * original text). Everything above generalises from two legs to three:
+ * validate-first (an unknown theme rejects with 422 `unknown-theme` and
+ * NOTHING staged — PRODUCT invariant 40), three staged temps, and the
+ * commit order task-list (ADD) → roadmap (idempotent link) → backlog
+ * (REMOVE) — additive first, removal LAST, preserving the
+ * benign-transient-duplicate property (a kill between renames leaves the
+ * Task present + the backlog item still present, possibly an un-linked
+ * theme — all recoverable; never a lost record). The record-set gate +
+ * client-name guard run per leg at stage time on each leg's exact bytes
+ * (roadmap delta `none`). `faultBetweenCommits` (test-only, sync) fires
+ * after the ADD rename to prove the ordering property; record 13 extends
+ * the seam.
  */
 
 import { renameSync } from "node:fs";
@@ -61,12 +80,18 @@ import {
   abortStagedWrite,
   type StagedWrite,
 } from "./atomic-write";
-import { escapeSerialise, scopedSpliceSerialise } from "./scoped-serialise";
+import {
+  escapeSerialise,
+  scopedSerialise,
+  scopedSpliceSerialise,
+} from "./scoped-serialise";
+import { applyRoadmapPatches } from "./patch-apply";
 import { insertRecord, removeRecord } from "./record-mutate";
 import { checkBudgetForCreate } from "./gates/budget-gate";
 import { beforeCollectionIds } from "./gates/record-set-gate";
 import { buildPreWriteGates, runPreWriteGates } from "./gates/gate-chain";
 import { generateRecordMirror, generateMirrors } from "./mirror-generator";
+import type { Roadmap } from "@task-view/schemas/roadmap";
 import type { ZodError } from "zod";
 
 type KnownDetected = Exclude<DetectSchemaResult, { kind: "unknown" }>;
@@ -78,6 +103,23 @@ type KnownDetected = Exclude<DetectSchemaResult, { kind: "unknown" }>;
  * Production callers never pass this.
  */
 export type PreCommitFault = () => void | Promise<void>;
+
+/**
+ * ID-90 U7: the optional capability-theme third leg. When present, the
+ * promoted Task is bound to a roadmap theme: `task.capability_theme` is set
+ * on the record AND the new task id is pushed onto the named theme's
+ * `linked_tasks[]` (idempotent — a re-run can never duplicate the entry).
+ * Pre-stage validation rejects an unknown theme id with `422 unknown-theme`
+ * BEFORE anything is staged (PRODUCT invariant 40).
+ */
+export interface CapabilityThemeLeg {
+  /** Path to the product-roadmap.json ledger (the LINK side). */
+  roadmapPath: string;
+  /** Client's last-seen roadmap mtime (ISO 8601). */
+  roadmapBaseMtime: string;
+  /** Roadmap theme id the promoted Task binds to. */
+  themeId: string;
+}
 
 export interface PromoteTransactionInput {
   /** Path to the task-list.json ledger (the ADD side). */
@@ -92,6 +134,8 @@ export interface PromoteTransactionInput {
   sourceBacklogId: string;
   /** Full Task record body to insert into task-list. */
   taskRecord: unknown;
+  /** ID-90 U7: optional capability-theme third leg (roadmap link). */
+  capabilityTheme?: CapabilityThemeLeg;
   /**
    * ID-90 U2: downgrade a budget rejection on the promoted Task to a
    * `(forced) budget-exceeded:` warning and proceed (PRODUCT invariant 26 —
@@ -101,6 +145,16 @@ export interface PromoteTransactionInput {
   force?: boolean;
   /** Test-only: injected fault fired at the pre-commit point. */
   faultBeforeCommit?: PreCommitFault;
+  /**
+   * Test-only (ID-90 U7; record 13 extends): SYNC fault fired BETWEEN the
+   * commit renames — after the ADD-side rename, before the link/REMOVE-side
+   * renames. Lets the fault-injection suite prove the additive-first /
+   * removal-last ordering: a kill there leaves AT WORST a benign transient
+   * duplicate (Task present + backlog item still present), never a lost
+   * record. Deliberately synchronous — the seam must not introduce an
+   * awaited yield between the adjacent renames.
+   */
+  faultBetweenCommits?: () => void;
 }
 
 export type PromoteTransactionResult =
@@ -114,6 +168,13 @@ export type PromoteTransactionResult =
       mirrorsDeleted: string[];
       /** Gate soft warnings (e.g. forced budget downgrade — ID-90 U2). */
       warnings: string[];
+      /** ID-90 U7: post-commit roadmap mtime — present when the
+       * capability-theme leg was bound. */
+      roadmapMtime?: string;
+      /** ID-90 U7: the bound theme id — present when the leg was bound, so
+       * callers can confirm the roadmap-side link landed (or no-op'd —
+       * idempotent). */
+      boundCapabilityTheme?: string;
     }
   | {
       ok: false;
@@ -201,8 +262,9 @@ function mtimeStale(baseMtime: string, currentMtime: string): boolean {
 //   - REMOVE leg → escapeSerialise(removeResult.detected.data) (whole-file
 //                  conforming, byte-compatible post-OQ-LS-2 — matches the
 //                  CLI's whole-file deletes)
-//   - roadmap link leg (third leg — lands with the transaction extension)
-//                  → MUST use scopedSerialise over the roadmap's rawText.
+//   - roadmap link leg (U7 third leg — landed at record 10)
+//                  → scopedSerialise over the roadmap's rawText (idempotent
+//                    no-op stages the unchanged original text verbatim).
 
 /**
  * Execute a Promote transaction: insert `taskRecord` into the task-list
@@ -234,10 +296,52 @@ export async function promoteTransaction(
     };
   }
 
+  // ── ID-90 U7: capability-theme third leg — validate-first (invariant 40).
+  let taskRecord = input.taskRecord;
+  if (input.capabilityTheme) {
+    if (!Number.isFinite(Date.parse(input.capabilityTheme.roadmapBaseMtime))) {
+      return {
+        ok: false,
+        status: 400,
+        error: "invalid-baseMtime",
+        detail: "roadmapBaseMtime",
+      };
+    }
+    if (
+      taskRecord === null ||
+      typeof taskRecord !== "object" ||
+      Array.isArray(taskRecord)
+    ) {
+      return {
+        ok: false,
+        status: 422,
+        error: "invalid-task-json",
+        detail: "taskRecord must be a JSON object for capability-theme binding",
+      };
+    }
+    // Bind BEFORE the insertRecord oracle so the `capability_theme`
+    // back-link field round-trips through Zod like any caller-supplied
+    // field (KH ledger-cli promote parity). Shallow copy — the caller's
+    // object is never mutated.
+    taskRecord = {
+      ...(taskRecord as Record<string, unknown>),
+      capability_theme: input.capabilityTheme.themeId,
+    };
+  }
+
   const taskListLoad = await loadLedger(input.taskListPath, "task-list");
   if ("error" in taskListLoad) return taskListLoad.error;
   const backlogLoad = await loadLedger(input.backlogPath, "backlog");
   if ("error" in backlogLoad) return backlogLoad.error;
+  // U7: the roadmap is only loaded + validated when the caller opts into
+  // capability-theme binding (preserves the two-ledger residual-window
+  // discipline when the leg is absent).
+  let roadmapLoad: LoadedLedger | null = null;
+  if (input.capabilityTheme) {
+    const loaded = await loadLedger(input.capabilityTheme.roadmapPath, "roadmap");
+    if ("error" in loaded) return loaded.error;
+    roadmapLoad = loaded;
+  }
 
   // mtime collision on EITHER side → 409 (PRODUCT inv 37 semantics).
   if (mtimeStale(input.taskListBaseMtime, taskListLoad.mtimeIso)) {
@@ -256,9 +360,42 @@ export async function promoteTransaction(
       detail: `backlog changed underneath you (current ${backlogLoad.mtimeIso})`,
     };
   }
+  if (
+    input.capabilityTheme &&
+    roadmapLoad &&
+    mtimeStale(input.capabilityTheme.roadmapBaseMtime, roadmapLoad.mtimeIso)
+  ) {
+    return {
+      ok: false,
+      status: 409,
+      error: "mtime-mismatch",
+      detail: `roadmap changed underneath you (current ${roadmapLoad.mtimeIso})`,
+    };
+  }
+
+  // U7 pre-stage validation: an unknown theme id rejects the WHOLE
+  // transaction with 422 `unknown-theme` — NOTHING staged, nothing written
+  // (PRODUCT invariant 40).
+  if (
+    input.capabilityTheme &&
+    roadmapLoad &&
+    roadmapLoad.detected.kind === "roadmap"
+  ) {
+    const themeExists = roadmapLoad.detected.data.themes.some(
+      (t) => t.id === input.capabilityTheme!.themeId,
+    );
+    if (!themeExists) {
+      return {
+        ok: false,
+        status: 422,
+        error: "unknown-theme",
+        detail: `capability theme ${input.capabilityTheme.themeId}: no theme with that id in roadmap`,
+      };
+    }
+  }
 
   // Apply both mutations in-memory + re-parse against schemas.
-  const insertResult = insertRecord(taskListLoad.detected, input.taskRecord);
+  const insertResult = insertRecord(taskListLoad.detected, taskRecord);
   if (!insertResult.ok) {
     if (insertResult.kind === "duplicate-id") {
       return {
@@ -312,7 +449,7 @@ export async function promoteTransaction(
   // field of the promoted Task is freshly authored; first over-budget field
   // is fatal — invariant 25). `force` downgrades to a
   // `(forced) budget-exceeded:` warning (invariant 26).
-  const budget = checkBudgetForCreate("task", input.taskRecord, {
+  const budget = checkBudgetForCreate("task", taskRecord, {
     force: input.force === true,
   });
   if (!budget.ok) {
@@ -332,7 +469,7 @@ export async function promoteTransaction(
   const splicedTaskList = scopedSpliceSerialise(taskListLoad.rawText, {
     kind: "insert",
     collection: "tasks",
-    record: input.taskRecord,
+    record: taskRecord,
   });
   if (!splicedTaskList.ok) {
     return {
@@ -350,11 +487,79 @@ export async function promoteTransaction(
   // REMOVE leg: whole-file conforming re-emit of the post-removal backlog.
   const backlogContent = escapeSerialise(removeResult.detected.data);
 
+  // U7 LINK leg: the change is a FieldPatch on ONE theme's linked_tasks[]
+  // (NOT a record splice) — `scopedSerialise` over the roadmap's
+  // parsed-ORIGINAL rawText. The push is IDEMPOTENT: an already-linked
+  // theme stages the UNCHANGED original text (a no-op rewrite — KH
+  // ledger-cli parity), so a re-run can never duplicate the entry.
+  let roadmapContent: string | null = null;
+  let roadmapLinkedData: Roadmap | null = null; // post-link snapshot (mirror regen)
+  if (
+    input.capabilityTheme &&
+    roadmapLoad &&
+    roadmapLoad.detected.kind === "roadmap"
+  ) {
+    const themeId = input.capabilityTheme.themeId;
+    // Theme presence was validated in Phase 1.
+    const theme = roadmapLoad.detected.data.themes.find(
+      (t) => t.id === themeId,
+    );
+    const newTaskIdStr = String(insertResult.recordId);
+    if (theme && theme.linked_tasks.includes(newTaskIdStr)) {
+      roadmapContent = roadmapLoad.rawText;
+    } else {
+      const nextLinked = [...(theme ? theme.linked_tasks : []), newTaskIdStr];
+      const linkPatch = {
+        fieldPath: ["themes", themeId, "linked_tasks"],
+        newValue: nextLinked,
+      };
+      // Validation oracle (parallel to insertRecord/removeRecord on the
+      // sibling legs): apply the patch to a CLONE of the typed snapshot and
+      // Zod re-parse the whole document. The bytes WRITTEN come from the
+      // parsed-original scopedSerialise below, never from this snapshot.
+      const oracle = applyRoadmapPatches(
+        structuredClone(roadmapLoad.detected.data),
+        [linkPatch],
+      );
+      if (!oracle.ok) {
+        if (oracle.kind === "schema-error") {
+          return {
+            ok: false,
+            status: 422,
+            error: "schema-error",
+            issues: oracle.zodError.issues,
+          };
+        }
+        return {
+          ok: false,
+          status: 500,
+          error: "serialise-failed",
+          detail: `roadmap link oracle ${oracle.kind}${
+            "detail" in oracle && oracle.detail ? `: ${oracle.detail}` : ""
+          }`,
+        };
+      }
+      roadmapLinkedData = oracle.parsed;
+      const rmScoped = scopedSerialise(roadmapLoad.rawText, linkPatch);
+      if (!rmScoped.ok) {
+        return {
+          ok: false,
+          status: 500,
+          error: "serialise-failed",
+          detail: `roadmap scoped serialise ${rmScoped.kind}${
+            "detail" in rmScoped && rmScoped.detail ? `: ${rmScoped.detail}` : ""
+          }`,
+        };
+      }
+      roadmapContent = rmScoped.text;
+    }
+  }
+
   // ID-90 U3 pre-write gate chain, PER LEG at stage time on the EXACT bytes
   // about to land (invariants 22–23): task-list `+1` (the promoted Task),
-  // backlog `−1` (the source item), roadmap `∅` (the capability-theme third
-  // leg lands with the U7 transaction extension). A violation on EITHER leg
-  // rejects the whole transaction — nothing staged, nothing written.
+  // backlog `−1` (the source item), roadmap `∅` (U7 capability-theme link —
+  // the theme id-set is unchanged). A violation on ANY leg rejects the
+  // whole transaction — nothing staged, nothing written.
   const taskListVerdict = runPreWriteGates(
     buildPreWriteGates({
       recordSet: {
@@ -401,18 +606,61 @@ export async function promoteTransaction(
       detail: backlogVerdict.detail,
     };
   }
-  warnings.push(...taskListVerdict.warnings, ...backlogVerdict.warnings);
+  // U7: the LINK leg runs the same gate chain at stage time on its exact
+  // bytes — record-set delta `none` (the theme id-set is unchanged; only
+  // one theme's linked_tasks[] grew) + the client-name guard with the
+  // roadmap's prior bytes (invariants 22-23, 28).
+  let roadmapVerdictWarnings: string[] = [];
+  if (roadmapLoad && roadmapContent !== null) {
+    const roadmapVerdict = runPreWriteGates(
+      buildPreWriteGates({
+        recordSet: {
+          ledgerLabel: "roadmap",
+          beforeIds: beforeCollectionIds(roadmapLoad.detected, {
+            collection: "themes",
+          }),
+          descriptor: { collection: "themes" },
+          expectedDelta: { kind: "none" },
+        },
+        // U4: prior on-disk bytes for THIS leg's document.
+        clientName: { priorContent: roadmapLoad.rawText },
+      }),
+      { content: roadmapContent },
+    );
+    if (!roadmapVerdict.ok) {
+      return {
+        ok: false,
+        status: roadmapVerdict.status,
+        error: roadmapVerdict.error,
+        detail: roadmapVerdict.detail,
+      };
+    }
+    roadmapVerdictWarnings = roadmapVerdict.warnings;
+  }
+  warnings.push(
+    ...taskListVerdict.warnings,
+    ...backlogVerdict.warnings,
+    ...roadmapVerdictWarnings,
+  );
 
-  // ── Phase 2: stage both (durable temps; originals untouched) ─────────────
+  // ── Phase 2: stage all bound legs (durable temps; originals untouched) ───
   let stagedTaskList: StagedWrite | null = null;
   let stagedBacklog: StagedWrite | null = null;
+  let stagedRoadmap: StagedWrite | null = null;
   try {
     stagedTaskList = await stageAtomicWrite(input.taskListPath, newTaskContent);
     stagedBacklog = await stageAtomicWrite(input.backlogPath, backlogContent);
+    if (input.capabilityTheme && roadmapContent !== null) {
+      stagedRoadmap = await stageAtomicWrite(
+        input.capabilityTheme.roadmapPath,
+        roadmapContent,
+      );
+    }
   } catch (err) {
-    // Staging failed — discard any partial temp; both originals are pristine.
+    // Staging failed — discard any partial temp; all originals are pristine.
     if (stagedTaskList) await abortStagedWrite(stagedTaskList);
     if (stagedBacklog) await abortStagedWrite(stagedBacklog);
+    if (stagedRoadmap) await abortStagedWrite(stagedRoadmap);
     return {
       ok: false,
       status: 500,
@@ -429,20 +677,28 @@ export async function promoteTransaction(
       await input.faultBeforeCommit();
     } catch (err) {
       // Mimic a process kill: abort the staged temps + propagate so the
-      // caller (and the test) observes the abort with both originals intact.
+      // caller (and the test) observes the abort with all originals intact.
       await abortStagedWrite(stagedTaskList);
       await abortStagedWrite(stagedBacklog);
+      if (stagedRoadmap) await abortStagedWrite(stagedRoadmap);
       throw err;
     }
   }
 
-  // ── Phase 3: commit both. Renames are adjacent — NO await between them so
-  // the two-rename residual window stays sub-microsecond. ADD side commits
-  // FIRST so a kill between renames yields a transient duplicate (Task
-  // present + backlog item still present), never a lost update. ────────────
+  // ── Phase 3: commit all bound legs. Renames are adjacent — NO await
+  // between them so the residual window stays sub-microsecond. Order (U7 —
+  // additive first, removal LAST): task-list ADD → roadmap idempotent link →
+  // backlog REMOVE. A kill anywhere between renames yields AT WORST a
+  // transient duplicate (Task present + backlog item still present — and
+  // possibly an un-linked theme, recoverable by a re-run), never a lost
+  // update. The link + removal renames are SYNC so no microtask/scheduler
+  // yield can stretch the window after the first (async) rename resolves.
+  // `faultBetweenCommits` (test-only, sync) fires after the ADD rename. ────
   try {
     await commitStagedWrite(stagedTaskList); // ADD side first
-    commitStagedWriteSync(stagedBacklog); // REMOVE side — sync to avoid a yield
+    if (input.faultBetweenCommits) input.faultBetweenCommits();
+    if (stagedRoadmap) commitStagedWriteSync(stagedRoadmap); // link leg — sync
+    commitStagedWriteSync(stagedBacklog); // REMOVE side LAST — sync
   } catch (err) {
     // A rename failure here is the unrecoverable residual window. Surface a
     // 500 with enough detail for the operator to reconcile. We do NOT
@@ -475,6 +731,17 @@ export async function promoteTransaction(
     );
     mirrorsWritten.push(...backlogRegen.written);
     mirrorsDeleted.push(...backlogRegen.deleted);
+    // U7: the linked theme's mirror changed too (its linked_tasks[] line) —
+    // scoped single-record regen. Skipped on the idempotent no-op (the
+    // theme's mirror is already current).
+    if (input.capabilityTheme && roadmapLinkedData) {
+      const themeMirror = await generateRecordMirror(
+        { kind: "roadmap", data: roadmapLinkedData },
+        input.capabilityTheme.roadmapPath,
+        input.capabilityTheme.themeId,
+      );
+      mirrorsWritten.push(...themeMirror.written);
+    }
   } catch {
     // Mirror regen is derived state; a failure here does not invalidate the
     // committed canonicals. The client can re-issue a regen request.
@@ -482,6 +749,9 @@ export async function promoteTransaction(
 
   const taskListMtime = (await stat(input.taskListPath)).mtime.toISOString();
   const backlogMtime = (await stat(input.backlogPath)).mtime.toISOString();
+  const roadmapMtime = input.capabilityTheme
+    ? (await stat(input.capabilityTheme.roadmapPath)).mtime.toISOString()
+    : undefined;
 
   return {
     ok: true,
@@ -492,6 +762,12 @@ export async function promoteTransaction(
     mirrorsWritten,
     mirrorsDeleted,
     warnings,
+    ...(input.capabilityTheme
+      ? {
+          roadmapMtime,
+          boundCapabilityTheme: input.capabilityTheme.themeId,
+        }
+      : {}),
   };
 }
 

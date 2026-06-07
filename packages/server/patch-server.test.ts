@@ -1965,3 +1965,163 @@ describe("PATCH /api/ledger/record/:recordId — appendText op (ID-90.9 U6, inv 
     );
   });
 });
+
+// ── ID-90 U7: POST /api/ledger/transaction — capability-theme third leg ──────
+
+describe("POST /api/ledger/transaction — capability-theme third leg (ID-90 U7)", () => {
+  async function setupThreeLedgers(): Promise<{
+    taskListPath: string;
+    backlogPath: string;
+    roadmapPath: string;
+    roadmapOriginal: string;
+  }> {
+    const taskListPath = join(testDir, "task-list.json");
+    const backlogPath = join(testDir, "product-backlog.json");
+    const roadmapPath = join(testDir, "product-roadmap.json");
+    await writeFixtureTaskList(taskListPath);
+    await writeFixtureBacklog(backlogPath);
+    const roadmapOriginal = await writeFixtureRoadmap(roadmapPath);
+    return { taskListPath, backlogPath, roadmapPath, roadmapOriginal };
+  }
+
+  test("promote with capabilityThemeId binds the Task AND pushes linked_tasks[]", async () => {
+    const { taskListPath, backlogPath, roadmapPath } = await setupThreeLedgers();
+    handle = startPatchServer({ ledgerPath: backlogPath });
+
+    const res = await fetch(`${handle.url}/api/ledger/transaction`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        op: "promote",
+        sourceBacklogId: "101",
+        taskRecord: makeNewTaskRecord("42"),
+        taskListBaseMtime: await getLedgerMtime(taskListPath),
+        backlogBaseMtime: await getLedgerMtime(backlogPath),
+        capabilityThemeId: "10",
+        roadmapBaseMtime: await getLedgerMtime(roadmapPath),
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ok: boolean;
+      newTaskId: string;
+      boundCapabilityTheme?: string;
+      roadmapMtime?: string;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.newTaskId).toBe("42");
+    expect(body.boundCapabilityTheme).toBe("10");
+    expect(typeof body.roadmapMtime).toBe("string");
+
+    const roadmap = JSON.parse(await readFile(roadmapPath, "utf8")) as {
+      themes: { linked_tasks: string[] }[];
+    };
+    expect(roadmap.themes[0].linked_tasks).toEqual(["20", "42"]);
+    const taskList = JSON.parse(await readFile(taskListPath, "utf8")) as {
+      tasks: { id: string; capability_theme?: string }[];
+    };
+    expect(
+      taskList.tasks.find((t) => t.id === "42")?.capability_theme,
+    ).toBe("10");
+  });
+
+  test("unknown theme id → 422 unknown-theme, none of the three files mutated", async () => {
+    const { taskListPath, backlogPath, roadmapPath, roadmapOriginal } =
+      await setupThreeLedgers();
+    handle = startPatchServer({ ledgerPath: backlogPath });
+    const taskOriginal = await readFile(taskListPath, "utf8");
+    const backlogOriginal = await readFile(backlogPath, "utf8");
+
+    const res = await fetch(`${handle.url}/api/ledger/transaction`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        op: "promote",
+        sourceBacklogId: "101",
+        taskRecord: makeNewTaskRecord("42"),
+        taskListBaseMtime: await getLedgerMtime(taskListPath),
+        backlogBaseMtime: await getLedgerMtime(backlogPath),
+        capabilityThemeId: "99",
+        roadmapBaseMtime: await getLedgerMtime(roadmapPath),
+      }),
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("unknown-theme");
+    expect(await readFile(taskListPath, "utf8")).toBe(taskOriginal);
+    expect(await readFile(backlogPath, "utf8")).toBe(backlogOriginal);
+    expect(await readFile(roadmapPath, "utf8")).toBe(roadmapOriginal);
+  });
+
+  test("capabilityThemeId without roadmapBaseMtime → 400 missing-roadmapBaseMtime", async () => {
+    const { taskListPath, backlogPath } = await setupThreeLedgers();
+    handle = startPatchServer({ ledgerPath: backlogPath });
+
+    const res = await fetch(`${handle.url}/api/ledger/transaction`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        op: "promote",
+        sourceBacklogId: "101",
+        taskRecord: makeNewTaskRecord("42"),
+        taskListBaseMtime: await getLedgerMtime(taskListPath),
+        backlogBaseMtime: await getLedgerMtime(backlogPath),
+        capabilityThemeId: "10",
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("missing-roadmapBaseMtime");
+  });
+
+  test("capabilityThemeId with NO roadmap sibling in the dir → 500 no-sibling-ledger", async () => {
+    const taskListPath = join(testDir, "task-list.json");
+    const backlogPath = join(testDir, "product-backlog.json");
+    await writeFixtureTaskList(taskListPath);
+    await writeFixtureBacklog(backlogPath);
+    handle = startPatchServer({ ledgerPath: backlogPath });
+
+    const res = await fetch(`${handle.url}/api/ledger/transaction`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        op: "promote",
+        sourceBacklogId: "101",
+        taskRecord: makeNewTaskRecord("42"),
+        taskListBaseMtime: await getLedgerMtime(taskListPath),
+        backlogBaseMtime: await getLedgerMtime(backlogPath),
+        capabilityThemeId: "10",
+        roadmapBaseMtime: new Date().toISOString(),
+      }),
+    });
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("no-sibling-ledger");
+  });
+
+  test("promote WITHOUT capabilityThemeId still works two-leg (roadmap sibling untouched)", async () => {
+    const { taskListPath, backlogPath, roadmapPath, roadmapOriginal } =
+      await setupThreeLedgers();
+    handle = startPatchServer({ ledgerPath: backlogPath });
+
+    const res = await fetch(`${handle.url}/api/ledger/transaction`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        op: "promote",
+        sourceBacklogId: "101",
+        taskRecord: makeNewTaskRecord("42"),
+        taskListBaseMtime: await getLedgerMtime(taskListPath),
+        backlogBaseMtime: await getLedgerMtime(backlogPath),
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ok: boolean;
+      boundCapabilityTheme?: string;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.boundCapabilityTheme).toBeUndefined();
+    expect(await readFile(roadmapPath, "utf8")).toBe(roadmapOriginal);
+  });
+});
