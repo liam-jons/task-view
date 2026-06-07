@@ -5,7 +5,7 @@
  * not-found rejection, document-level invariant re-parse (backlog unique-id
  * superRefine), and snapshot immutability (input is never mutated).
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setSystemTime, test } from "bun:test";
 import { detectSchema, type DetectSchemaResult } from "./detect-schema";
 import { insertRecord, removeRecord } from "./record-mutate";
 
@@ -283,13 +283,18 @@ describe("withCreateDefaults — structural defaults under the record (ledger-cl
   });
 
   test("task: updatedAt auto-stamps to the write timestamp when absent", () => {
-    const before = Date.now();
-    const r = withCreateDefaults("task", { title: "x" });
-    const stamped = Date.parse(r.updatedAt as string);
-    expect(Number.isFinite(stamped)).toBe(true);
-    expect(stamped).toBeGreaterThanOrEqual(before - 1000);
-    expect(r.status).toBe("pending");
-    expect(r.subtasks).toEqual([]);
+    // Pinned-time convention (S324 annotation via check-90-9): freeze the
+    // clock and assert the EXACT ISO stamp — no back-tolerance window.
+    const PINNED_ISO = "2026-06-07T12:00:00.000Z";
+    setSystemTime(new Date(PINNED_ISO));
+    try {
+      const r = withCreateDefaults("task", { title: "x" });
+      expect(r.updatedAt).toBe(PINNED_ISO);
+      expect(r.status).toBe("pending");
+      expect(r.subtasks).toEqual([]);
+    } finally {
+      setSystemTime(); // restore the real clock
+    }
   });
 
   test("task: a supplied updatedAt is kept", () => {
