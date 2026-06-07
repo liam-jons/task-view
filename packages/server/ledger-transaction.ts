@@ -63,6 +63,9 @@ import {
 } from "./atomic-write";
 import { escapeSerialise, scopedSpliceSerialise } from "./scoped-serialise";
 import { insertRecord, removeRecord } from "./record-mutate";
+import { checkBudgetForCreate } from "./gates/budget-gate";
+import { beforeCollectionIds } from "./gates/record-set-gate";
+import { buildPreWriteGates, runPreWriteGates } from "./gates/gate-chain";
 import { generateRecordMirror, generateMirrors } from "./mirror-generator";
 import type { ZodError } from "zod";
 
@@ -89,6 +92,13 @@ export interface PromoteTransactionInput {
   sourceBacklogId: string;
   /** Full Task record body to insert into task-list. */
   taskRecord: unknown;
+  /**
+   * ID-90 U2: downgrade a budget rejection on the promoted Task to a
+   * `(forced) budget-exceeded:` warning and proceed (PRODUCT invariant 26 —
+   * strictly per-invocation). Arrives via the U10 request envelope
+   * (record 12); default false.
+   */
+  force?: boolean;
   /** Test-only: injected fault fired at the pre-commit point. */
   faultBeforeCommit?: PreCommitFault;
 }
@@ -102,6 +112,8 @@ export type PromoteTransactionResult =
       removedBacklogId: string;
       mirrorsWritten: string[];
       mirrorsDeleted: string[];
+      /** Gate soft warnings (e.g. forced budget downgrade — ID-90 U2). */
+      warnings: string[];
     }
   | {
       ok: false;
@@ -296,6 +308,23 @@ export async function promoteTransaction(
     return { ok: false, status: 422, error: removeResult.kind };
   }
 
+  // ID-90 U2 budget gate — promote task leg, create mode (every budgeted
+  // field of the promoted Task is freshly authored; first over-budget field
+  // is fatal — invariant 25). `force` downgrades to a
+  // `(forced) budget-exceeded:` warning (invariant 26).
+  const budget = checkBudgetForCreate("task", input.taskRecord, {
+    force: input.force === true,
+  });
+  if (!budget.ok) {
+    return {
+      ok: false,
+      status: 422,
+      error: budget.error,
+      detail: budget.detail,
+    };
+  }
+  const warnings = [...budget.warnings];
+
   // ADD leg: splice the new Task into the parsed-ORIGINAL task-list text.
   // `insertRecord` above stays the validation oracle (duplicate-id +
   // document-level schema invariants); a splice failure after the oracle
@@ -320,6 +349,55 @@ export async function promoteTransaction(
   const newTaskContent = splicedTaskList.text;
   // REMOVE leg: whole-file conforming re-emit of the post-removal backlog.
   const backlogContent = escapeSerialise(removeResult.detected.data);
+
+  // ID-90 U3 pre-write gate chain, PER LEG at stage time on the EXACT bytes
+  // about to land (invariants 22–23): task-list `+1` (the promoted Task),
+  // backlog `−1` (the source item), roadmap `∅` (the capability-theme third
+  // leg lands with the U7 transaction extension). A violation on EITHER leg
+  // rejects the whole transaction — nothing staged, nothing written.
+  const taskListVerdict = runPreWriteGates(
+    buildPreWriteGates({
+      recordSet: {
+        ledgerLabel: "task-list",
+        beforeIds: beforeCollectionIds(taskListLoad.detected, {
+          collection: "tasks",
+        }),
+        descriptor: { collection: "tasks" },
+        expectedDelta: { kind: "add", id: insertResult.recordId },
+      },
+    }),
+    { content: newTaskContent },
+  );
+  if (!taskListVerdict.ok) {
+    return {
+      ok: false,
+      status: taskListVerdict.status,
+      error: taskListVerdict.error,
+      detail: taskListVerdict.detail,
+    };
+  }
+  const backlogVerdict = runPreWriteGates(
+    buildPreWriteGates({
+      recordSet: {
+        ledgerLabel: "backlog",
+        beforeIds: beforeCollectionIds(backlogLoad.detected, {
+          collection: "items",
+        }),
+        descriptor: { collection: "items" },
+        expectedDelta: { kind: "remove", id: removeResult.recordId },
+      },
+    }),
+    { content: backlogContent },
+  );
+  if (!backlogVerdict.ok) {
+    return {
+      ok: false,
+      status: backlogVerdict.status,
+      error: backlogVerdict.error,
+      detail: backlogVerdict.detail,
+    };
+  }
+  warnings.push(...taskListVerdict.warnings, ...backlogVerdict.warnings);
 
   // ── Phase 2: stage both (durable temps; originals untouched) ─────────────
   let stagedTaskList: StagedWrite | null = null;
@@ -409,6 +487,7 @@ export async function promoteTransaction(
     removedBacklogId: removeResult.recordId,
     mirrorsWritten,
     mirrorsDeleted,
+    warnings,
   };
 }
 

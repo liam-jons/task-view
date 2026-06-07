@@ -89,6 +89,16 @@ import {
   scopedSpliceSerialise,
 } from "./scoped-serialise";
 import { insertRecord, removeRecord } from "./record-mutate";
+import {
+  checkBudgetForPatches,
+  checkBudgetForCreate,
+  createRecordKindFor,
+} from "./gates/budget-gate";
+import {
+  beforeCollectionIds,
+  topLevelCollectionFor,
+} from "./gates/record-set-gate";
+import { buildPreWriteGates, runPreWriteGates } from "./gates/gate-chain";
 import { promoteTransaction } from "./ledger-transaction";
 import { scanForLedgers } from "./path-resolution";
 import { LOOPBACK_HOSTNAME, resolveServerHostname } from "./loopback-bind";
@@ -647,6 +657,33 @@ async function handlePatchRecord(
     );
   }
 
+  // ID-90 U2 budget gate — post-mutation / pre-serialisation. Each patched
+  // field is a mutated field (can hard-reject); untouched over-budget fields
+  // soft-warn (PRODUCT invariants 25–27). `force` arrives as a body field in
+  // U10 (record 12); until then the per-request default (false) applies.
+  const budget = checkBudgetForPatches(
+    canonical.detected.kind,
+    applyResult.parsed,
+    patches,
+  );
+  if (!budget.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: budget.error,
+        detail: budget.detail,
+        ...(budget.warnings.length > 0 ? { warnings: budget.warnings } : {}),
+      },
+      { status: 422 },
+    );
+  }
+
+  // ID-90 U3: capture the pre-write id-set from the typed pre-mutation
+  // document — a field PATCH must preserve the record set exactly
+  // (expectedDelta `none`, invariant 22).
+  const recordSetDescriptor = topLevelCollectionFor(canonical.detected.kind);
+  const beforeIds = beforeCollectionIds(canonical.detected, recordSetDescriptor);
+
   // ID-90 U1: written bytes come from the parsed-ORIGINAL, not the
   // Zod-reparsed snapshot. `applyPatches` above stays the validation oracle;
   // here we fold `scopedSerialise` left over the original rawText so every
@@ -677,6 +714,35 @@ async function handlePatchRecord(
     kind: canonical.detected.kind,
     data: applyResult.parsed,
   } as Exclude<DetectSchemaResult, { kind: "unknown" }>;
+
+  // ID-90 U3 pre-write gate chain — post-serialisation / pre-atomicWriteFile,
+  // asserting on the EXACT bytes about to land (invariant 22). Record 8's
+  // client-name guard joins this chain via buildPreWriteGates.
+  const gateVerdict = runPreWriteGates(
+    buildPreWriteGates({
+      recordSet: {
+        ledgerLabel: canonical.detected.kind,
+        beforeIds,
+        descriptor: recordSetDescriptor,
+        expectedDelta: { kind: "none" },
+      },
+    }),
+    { content: serialised },
+  );
+  if (!gateVerdict.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: gateVerdict.error,
+        detail: gateVerdict.detail,
+        ...(gateVerdict.warnings.length > 0
+          ? { warnings: gateVerdict.warnings }
+          : {}),
+      },
+      { status: gateVerdict.status },
+    );
+  }
+  const responseWarnings = [...budget.warnings, ...gateVerdict.warnings];
 
   try {
     await atomicWriteFile(ctx.ledgerPath, serialised);
@@ -725,6 +791,9 @@ async function handlePatchRecord(
     mirrorDir: regen.mirrorDir,
     mirrorsWritten: regen.written,
     mirrorsDeleted: regen.deleted,
+    // Gate soft warnings (budget untouched-field / forced downgrades). The
+    // full U10 warnings envelope (disciplineWarnings etc.) extends this.
+    ...(responseWarnings.length > 0 ? { warnings: responseWarnings } : {}),
   });
 }
 
@@ -837,6 +906,31 @@ async function handlePostRecord(
     );
   }
 
+  // ID-90 U2 budget gate — create mode (every budgeted field is freshly
+  // authored): first over-budget field is fatal (invariant 25). `force`
+  // arrives as a body field in U10 (record 12).
+  const budget = checkBudgetForCreate(
+    createRecordKindFor(canonical.detected.kind),
+    body.record,
+  );
+  if (!budget.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: budget.error,
+        detail: budget.detail,
+        ...(budget.warnings.length > 0 ? { warnings: budget.warnings } : {}),
+      },
+      { status: 422 },
+    );
+  }
+
+  // ID-90 U3: capture the pre-write id-set from the typed PRE-mutation
+  // document (insertRecord clones — `canonical.detected` is untouched). A
+  // record CREATE is an `add` delta on the top-level collection.
+  const recordSetDescriptor = topLevelCollectionFor(canonical.detected.kind);
+  const beforeIds = beforeCollectionIds(canonical.detected, recordSetDescriptor);
+
   // ID-90 U1: splice the new record into the parsed-ORIGINAL rawText so every
   // existing record keeps its exact on-disk bytes (invariants 18-19).
   // `insertRecord` above stays the validation oracle (duplicate-id +
@@ -864,6 +958,33 @@ async function handlePostRecord(
       { status: 500 },
     );
   }
+
+  // ID-90 U3 pre-write gate chain on the EXACT spliced bytes (invariant 22).
+  const gateVerdict = runPreWriteGates(
+    buildPreWriteGates({
+      recordSet: {
+        ledgerLabel: canonical.detected.kind,
+        beforeIds,
+        descriptor: recordSetDescriptor,
+        expectedDelta: { kind: "add", id: result.recordId },
+      },
+    }),
+    { content: spliced.text },
+  );
+  if (!gateVerdict.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: gateVerdict.error,
+        detail: gateVerdict.detail,
+        ...(gateVerdict.warnings.length > 0
+          ? { warnings: gateVerdict.warnings }
+          : {}),
+      },
+      { status: gateVerdict.status },
+    );
+  }
+  const responseWarnings = [...budget.warnings, ...gateVerdict.warnings];
 
   try {
     await atomicWriteFile(ctx.ledgerPath, spliced.text);
@@ -907,6 +1028,7 @@ async function handlePostRecord(
       mirrorDir: regen.mirrorDir,
       mirrorsWritten: regen.written,
       mirrorsDeleted: regen.deleted,
+      ...(responseWarnings.length > 0 ? { warnings: responseWarnings } : {}),
     },
     { status: 201 },
   );
@@ -1006,10 +1128,43 @@ async function handleDeleteRecord(
     return jsonResponse({ ok: false, error: result.kind }, { status: 422 });
   }
 
+  // ID-90 U3: a DELETE is a `remove` delta on the top-level collection. No
+  // budget gate — a deletion authors no content. beforeIds come from the
+  // typed PRE-mutation document (removeRecord clones).
+  const recordSetDescriptor = topLevelCollectionFor(canonical.detected.kind);
+  const beforeIds = beforeCollectionIds(canonical.detected, recordSetDescriptor);
+
   // ID-90 U1: DELETE is a whole-file conforming re-emit of the Zod-parsed
   // post-removal document — matches the CLI's whole-file deletes and is
   // byte-compatible with the scoped path post-OQ-LS-2 (invariant 20).
   const serialised = escapeSerialise(result.detected.data);
+
+  // ID-90 U3 pre-write gate chain on the EXACT re-emitted bytes (invariant 22).
+  const gateVerdict = runPreWriteGates(
+    buildPreWriteGates({
+      recordSet: {
+        ledgerLabel: canonical.detected.kind,
+        beforeIds,
+        descriptor: recordSetDescriptor,
+        expectedDelta: { kind: "remove", id: recordId },
+      },
+    }),
+    { content: serialised },
+  );
+  if (!gateVerdict.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: gateVerdict.error,
+        detail: gateVerdict.detail,
+        ...(gateVerdict.warnings.length > 0
+          ? { warnings: gateVerdict.warnings }
+          : {}),
+      },
+      { status: gateVerdict.status },
+    );
+  }
+
   try {
     await atomicWriteFile(ctx.ledgerPath, serialised);
   } catch (err) {
@@ -1045,6 +1200,9 @@ async function handleDeleteRecord(
     mirrorDir: regen.mirrorDir,
     mirrorsWritten: regen.written,
     mirrorsDeleted: regen.deleted,
+    ...(gateVerdict.warnings.length > 0
+      ? { warnings: gateVerdict.warnings }
+      : {}),
   });
 }
 
@@ -1208,6 +1366,8 @@ async function handlePostTransaction(
     backlogMtime: result.backlogMtime,
     mirrorsWritten: result.mirrorsWritten,
     mirrorsDeleted: result.mirrorsDeleted,
+    // Gate soft warnings (ID-90 U2/U3); the full U10 envelope extends this.
+    ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
   });
 }
 
