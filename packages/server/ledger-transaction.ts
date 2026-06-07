@@ -143,6 +143,13 @@ export interface PromoteTransactionInput {
    * (record 12); default false.
    */
   force?: boolean;
+  /**
+   * ID-90 U9 (PRODUCT invariant 34): arm the client-name guard's fail-loud
+   * posture on EVERY leg — an unset `KH_CLIENT_NAME_DENYLIST` env is the
+   * same loud config error an invalid one already is. Threaded from the
+   * daemon's `--require-denylist` flag via the patch-server context.
+   */
+  requireDenylist?: boolean;
   /** Test-only: injected fault fired at the pre-commit point. */
   faultBeforeCommit?: PreCommitFault;
   /**
@@ -571,7 +578,10 @@ export async function promoteTransaction(
         expectedDelta: { kind: "add", id: insertResult.recordId },
       },
       // U4: prior on-disk bytes for THIS leg's document.
-      clientName: { priorContent: taskListLoad.rawText },
+      clientName: {
+        priorContent: taskListLoad.rawText,
+        requireDenylist: input.requireDenylist,
+      },
     }),
     { content: newTaskContent },
   );
@@ -594,7 +604,10 @@ export async function promoteTransaction(
         expectedDelta: { kind: "remove", id: removeResult.recordId },
       },
       // U4: prior on-disk bytes for THIS leg's document.
-      clientName: { priorContent: backlogLoad.rawText },
+      clientName: {
+        priorContent: backlogLoad.rawText,
+        requireDenylist: input.requireDenylist,
+      },
     }),
     { content: backlogContent },
   );
@@ -623,7 +636,10 @@ export async function promoteTransaction(
           expectedDelta: { kind: "none" },
         },
         // U4: prior on-disk bytes for THIS leg's document.
-        clientName: { priorContent: roadmapLoad.rawText },
+        clientName: {
+          priorContent: roadmapLoad.rawText,
+          requireDenylist: input.requireDenylist,
+        },
       }),
       { content: roadmapContent },
     );

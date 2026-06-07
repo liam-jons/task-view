@@ -140,6 +140,14 @@ export interface PatchServerOptions {
   port?: number;
   /** Optional hostname override — must be a loopback variant (§5.8). */
   hostname?: string;
+  /**
+   * ID-90 U9 `--require-denylist` (PRODUCT invariant 34): arm record 8's
+   * client-name guard fail-loud posture — an UNSET `KH_CLIENT_NAME_DENYLIST`
+   * env becomes the same loud 500 `client-name-guard-config` error an
+   * invalid one already is, on EVERY mutating path. Default false (unset →
+   * guard inactive locally).
+   */
+  requireDenylist?: boolean;
 }
 
 export interface PatchServerHandle {
@@ -154,6 +162,9 @@ export interface PatchServerHandle {
 
 interface RequestContext {
   ledgerPath: string;
+  /** ID-90 U9: invariant-34 arming, threaded into every pre-write gate
+   * chain (and each transaction leg). */
+  requireDenylist: boolean;
 }
 
 async function readCanonical(ledgerPath: string): Promise<{
@@ -782,7 +793,10 @@ async function handlePatchRecord(
         expectedDelta: { kind: "none" },
       },
       // U4: prior on-disk bytes — the BEFORE side of the net-new delta.
-      clientName: { priorContent: canonical.rawText },
+      clientName: {
+        priorContent: canonical.rawText,
+        requireDenylist: ctx.requireDenylist,
+      },
     }),
     { content: serialised },
   );
@@ -1060,7 +1074,10 @@ async function handlePostRecord(
         expectedDelta: { kind: "add", id: result.recordId },
       },
       // U4: prior on-disk bytes — the BEFORE side of the net-new delta.
-      clientName: { priorContent: canonical.rawText },
+      clientName: {
+        priorContent: canonical.rawText,
+        requireDenylist: ctx.requireDenylist,
+      },
     }),
     { content: spliced.text },
   );
@@ -1258,7 +1275,10 @@ async function handleDeleteRecord(
         expectedDelta: { kind: "remove", id: recordId },
       },
       // U4: prior on-disk bytes — the BEFORE side of the net-new delta.
-      clientName: { priorContent: canonical.rawText },
+      clientName: {
+        priorContent: canonical.rawText,
+        requireDenylist: ctx.requireDenylist,
+      },
     }),
     { content: serialised },
   );
@@ -1505,7 +1525,10 @@ async function handlePostSubtasks(
         expectedDelta: { kind: "add-many", ids: result.subtaskIds },
       },
       // U4: prior on-disk bytes — the BEFORE side of the net-new delta.
-      clientName: { priorContent: canonical.rawText },
+      clientName: {
+        priorContent: canonical.rawText,
+        requireDenylist: ctx.requireDenylist,
+      },
     }),
     { content: serialised },
   );
@@ -1732,7 +1755,10 @@ async function handleDeleteSubtask(
         descriptor: recordSetDescriptor,
         expectedDelta: { kind: "remove", id: subtaskId },
       },
-      clientName: { priorContent: canonical.rawText },
+      clientName: {
+        priorContent: canonical.rawText,
+        requireDenylist: ctx.requireDenylist,
+      },
     }),
     { content: spliced.text },
   );
@@ -1981,6 +2007,8 @@ async function handlePostTransaction(
     backlogBaseMtime: body.backlogBaseMtime,
     sourceBacklogId: body.sourceBacklogId,
     taskRecord: body.taskRecord,
+    // ID-90 U9: invariant-34 arming rides every transaction leg too.
+    requireDenylist: ctx.requireDenylist,
     ...(body.capabilityThemeId !== undefined && siblings.roadmapPath !== null
       ? {
           capabilityTheme: {
@@ -2215,7 +2243,10 @@ export function startPatchServer(opts: PatchServerOptions): PatchServerHandle {
   // Bun.serve behaviour.
   const port = opts.port ?? 0;
 
-  const ctx: RequestContext = { ledgerPath: opts.ledgerPath };
+  const ctx: RequestContext = {
+    ledgerPath: opts.ledgerPath,
+    requireDenylist: opts.requireDenylist === true,
+  };
   const fetchHandler = buildFetchHandler(ctx);
 
   const server = Bun.serve({
