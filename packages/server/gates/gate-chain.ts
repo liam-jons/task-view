@@ -7,11 +7,14 @@
  * explicit — an array of named gates executed in order — so later records
  * register additional gates in ONE place instead of editing every handler:
  *
- *   - U3 record-set gate (this record) — registered via
+ *   - U3 record-set gate (record 7) — registered via
  *     {@link buildPreWriteGates}.
- *   - U4 client-name guard (record 8) — APPENDS its gate inside
- *     {@link buildPreWriteGates} (post-serialisation / pre-write, reads
- *     `options.allowClientName`, may verdict a config error).
+ *   - U4 client-name guard (record 8) — APPENDED inside
+ *     {@link buildPreWriteGates} after the record-set gate
+ *     (post-serialisation / pre-write, reads `options.allowClientName`,
+ *     may verdict a config error). The net-new delta (invariant 31) needs
+ *     the prior on-disk bytes, threaded per write as
+ *     `PreWriteGateParams.clientName.priorContent`.
  *
  * Semantics:
  *   - Gates run in registration order.
@@ -26,6 +29,7 @@
  * measures field values, not bytes. See gates/budget-gate.ts.
  */
 
+import { clientNameGuard } from "./client-name-guard";
 import {
   checkRecordSet,
   type CollectionDescriptor,
@@ -104,21 +108,40 @@ export function recordSetGate(params: RecordSetGateParams): PreWriteGate {
   };
 }
 
+/** Per-write parameters for the U4 client-name guard (record 8). */
+export interface ClientNameGateParams {
+  /** Prior on-disk canonical bytes (`rawText` at load) — the BEFORE side of
+   * the net-new delta (invariant 31). */
+  priorContent: string;
+  /** Record-11 `--require-denylist` seam (invariant 34). Default false. */
+  requireDenylist?: boolean;
+}
+
 /** Everything a mutating handler supplies to assemble its pre-write chain. */
 export interface PreWriteGateParams {
   /** U3 record-set preservation — every mutating write supplies these. */
   recordSet: RecordSetGateParams;
+  /** U4 client-name guard — every mutating write supplies the prior bytes
+   * (invariant 28: no ungated byte route). */
+  clientName: ClientNameGateParams;
 }
 
 /**
  * Assemble the standard pre-write gate chain for one ledger write.
  *
- * THE registration point: record 8 appends its client-name guard here
- * (after the record-set gate) and every mutating handler picks it up
- * without further edits.
+ * THE registration point: gates registered here ride EVERY mutating write
+ * path (PATCH / POST / DELETE / each transaction leg) without further
+ * handler edits.
  */
 export function buildPreWriteGates(params: PreWriteGateParams): PreWriteGate[] {
-  return [recordSetGate(params.recordSet)];
+  return [
+    recordSetGate(params.recordSet),
+    clientNameGuard({
+      documentLabel: params.recordSet.ledgerLabel,
+      priorContent: params.clientName.priorContent,
+      requireDenylist: params.clientName.requireDenylist,
+    }),
+  ];
 }
 
 /**

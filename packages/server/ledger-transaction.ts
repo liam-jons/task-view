@@ -365,6 +365,8 @@ export async function promoteTransaction(
         descriptor: { collection: "tasks" },
         expectedDelta: { kind: "add", id: insertResult.recordId },
       },
+      // U4: prior on-disk bytes for THIS leg's document.
+      clientName: { priorContent: taskListLoad.rawText },
     }),
     { content: newTaskContent },
   );
@@ -386,6 +388,8 @@ export async function promoteTransaction(
         descriptor: { collection: "items" },
         expectedDelta: { kind: "remove", id: removeResult.recordId },
       },
+      // U4: prior on-disk bytes for THIS leg's document.
+      clientName: { priorContent: backlogLoad.rawText },
     }),
     { content: backlogContent },
   );

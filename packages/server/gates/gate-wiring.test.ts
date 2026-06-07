@@ -182,7 +182,7 @@ describe("runPreWriteGates — ordered chain, short-circuit, warning accumulatio
     }
   });
 
-  test("buildPreWriteGates returns the record-set gate (record 8 appends its guard here)", () => {
+  test("buildPreWriteGates returns record-set + client-name-guard (record 8 registered)", () => {
     const gates = buildPreWriteGates({
       recordSet: {
         ledgerLabel: "task-list",
@@ -190,8 +190,9 @@ describe("runPreWriteGates — ordered chain, short-circuit, warning accumulatio
         descriptor: { collection: "tasks" },
         expectedDelta: { kind: "none" },
       },
+      clientName: { priorContent: "{}" },
     });
-    expect(gates.map((g) => g.name)).toEqual(["record-set"]);
+    expect(gates.map((g) => g.name)).toEqual(["record-set", "client-name-guard"]);
     // The built gate runs against the EXACT bytes handed to the chain: a
     // dropped record in the content is a record-set-violation.
     const verdict = runPreWriteGates(gates, {
@@ -416,5 +417,97 @@ describe("promoteTransaction wiring — budget (task leg, create mode) + record-
       items: { id: string }[];
     };
     expect(backlog.items).toEqual([]);
+  });
+});
+
+// ── 5. HTTP wiring — client-name guard (U4, invariants 28 + 31–32 + 35) ──────
+//
+// Synthetic denylist only (AC-I) — "Zorblian Widgets Ltd" is invented.
+
+describe("PATCH wiring — client-name guard", () => {
+  const SYNTH_DENYLIST = JSON.stringify({
+    tokens: [
+      { value: "Zorblian Widgets Ltd", case_insensitive: true, class: "client" },
+    ],
+  });
+  let savedDenylist: string | undefined;
+
+  beforeEach(() => {
+    savedDenylist = process.env.KH_CLIENT_NAME_DENYLIST;
+    process.env.KH_CLIENT_NAME_DENYLIST = SYNTH_DENYLIST;
+  });
+
+  afterEach(() => {
+    if (savedDenylist === undefined) delete process.env.KH_CLIENT_NAME_DENYLIST;
+    else process.env.KH_CLIENT_NAME_DENYLIST = savedDenylist;
+  });
+
+  test("net-new token in the patched bytes → 422 client-name-guard, REDACTED body, NOTHING written", async () => {
+    const s = await startServerWith(makeTaskListDoc());
+    const res = await fetch(`${s.url}/api/ledger/record/20`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime: s.baseMtime,
+        patches: [
+          {
+            fieldPath: ["tasks", "20", "description"],
+            newValue: "met Zorblian Widgets Ltd on Tuesday",
+          },
+        ],
+      }),
+    });
+    expect(res.status).toBe(422);
+    const text = await res.text();
+    const body = JSON.parse(text) as { error: string; detail: string };
+    expect(body.error).toBe("client-name-guard");
+    expect(body.detail).toContain("+1");
+    // Invariant 32: the response body never echoes the matched token.
+    expect(text.toLowerCase()).not.toContain("zorblian");
+    // Nothing written.
+    expect(await readFile(s.ledgerPath, "utf8")).toBe(s.originalBytes);
+  });
+
+  test("sanitising edit (count decreases) passes and writes (invariant 31)", async () => {
+    const s = await startServerWith(
+      makeTaskListDoc({ description: "legacy note about Zorblian Widgets Ltd" }),
+    );
+    const res = await fetch(`${s.url}/api/ledger/record/20`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime: s.baseMtime,
+        patches: [
+          { fieldPath: ["tasks", "20", "description"], newValue: "de-identified note" },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const written = JSON.parse(await readFile(s.ledgerPath, "utf8")) as {
+      tasks: { description: string }[];
+    };
+    expect(written.tasks[0].description).toBe("de-identified note");
+  });
+
+  test("set-but-invalid (comma-shaped) denylist → 500 client-name-guard-config, NOTHING written (invariant 35)", async () => {
+    process.env.KH_CLIENT_NAME_DENYLIST = "ZorbCo,QuuxCo";
+    const s = await startServerWith(makeTaskListDoc());
+    const res = await fetch(`${s.url}/api/ledger/record/20`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime: s.baseMtime,
+        patches: [
+          { fieldPath: ["tasks", "20", "status"], newValue: "in_progress" },
+        ],
+      }),
+    });
+    expect(res.status).toBe(500);
+    const text = await res.text();
+    const body = JSON.parse(text) as { error: string };
+    expect(body.error).toBe("client-name-guard-config");
+    // The raw misconfigured value is never echoed.
+    expect(text).not.toContain("ZorbCo");
+    expect(await readFile(s.ledgerPath, "utf8")).toBe(s.originalBytes);
   });
 });

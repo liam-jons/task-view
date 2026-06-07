@@ -726,6 +726,8 @@ async function handlePatchRecord(
         descriptor: recordSetDescriptor,
         expectedDelta: { kind: "none" },
       },
+      // U4: prior on-disk bytes — the BEFORE side of the net-new delta.
+      clientName: { priorContent: canonical.rawText },
     }),
     { content: serialised },
   );
@@ -968,6 +970,8 @@ async function handlePostRecord(
         descriptor: recordSetDescriptor,
         expectedDelta: { kind: "add", id: result.recordId },
       },
+      // U4: prior on-disk bytes — the BEFORE side of the net-new delta.
+      clientName: { priorContent: canonical.rawText },
     }),
     { content: spliced.text },
   );
@@ -1148,6 +1152,8 @@ async function handleDeleteRecord(
         descriptor: recordSetDescriptor,
         expectedDelta: { kind: "remove", id: recordId },
       },
+      // U4: prior on-disk bytes — the BEFORE side of the net-new delta.
+      clientName: { priorContent: canonical.rawText },
     }),
     { content: serialised },
   );
