@@ -50,7 +50,7 @@
 
 import { detectSchema } from "./detect-schema";
 import { UmbrellasSchema } from "@task-view/schemas/umbrellas";
-import type { FieldPatch } from "./patch-apply";
+import { applyValueToLeaf, type FieldPatch } from "./patch-apply";
 
 // ── document-kind discrimination ─────────────────────────────────────────────────
 
@@ -284,8 +284,18 @@ export function scopedSerialise(
   }
 
   // Apply the leaf mutation to the parsed-ORIGINAL in place (on-disk key order
-  // preserved); untouched records keep their exact bytes.
-  walked.target.container[walked.target.key] = patch.newValue;
+  // preserved); untouched records keep their exact bytes. The shared
+  // applyValueToLeaf helper (patch-apply.ts) handles BOTH ops — newValue
+  // replacement and ID-90 U6 appendText concatenation at apply time — so the
+  // typed-oracle and parsed-original paths can never drift (invariant 39).
+  const applyErr = applyValueToLeaf(
+    walked.target.container,
+    walked.target.key,
+    patch,
+  );
+  if (applyErr) {
+    return { ok: false, kind: "walk-error", detail: applyErr };
+  }
 
   // Hard-fail schema violations before emitting any bytes. detectScopedKind
   // runs the matching Zod `.parse()` and throws ZodError on violation.

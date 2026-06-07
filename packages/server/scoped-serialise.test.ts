@@ -792,3 +792,84 @@ describe("live KH ledgers (KH_LEDGER_DIR) — no-op round-trip (invariant 20)", 
     },
   );
 });
+
+// ── ID-90 U6: appendText op at apply time (PRODUCT invariant 39) ──────────────
+
+describe("scopedSerialise — appendText op (ID-90 U6, invariant 39)", () => {
+  const JOURNAL_BLOCK =
+    "\n\n<info added on 2026-06-07T00:00:00.000Z>\nShipped " +
+    EM_DASH +
+    " slice.\n</info added on 2026-06-07T00:00:00.000Z>";
+
+  test("append-journal: prior details bytes are preserved VERBATIM with the block appended", () => {
+    const original = taskListFixtureText();
+    const r = scopedSerialise(original, {
+      fieldPath: ["tasks", "900", "subtasks", "1", "details"],
+      appendText: JOURNAL_BLOCK,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    // The on-disk JSON encoding of the PRIOR details value — escaped em-dash
+    // + section sign — must survive byte-for-byte as a PREFIX of the new
+    // details value (no re-escape, no normalisation; invariant 39).
+    const priorDetailsEncoded =
+      '"details": "Details with an em-dash \\u2014 and a section \\u00a71.';
+    expect(original).toContain(priorDetailsEncoded + '"');
+    expect(r.text).toContain(priorDetailsEncoded + "\\n\\n<info added on ");
+
+    // Exactly one line changed (the details line); JSON-encoding keeps the
+    // multi-line block on the single details line via \n escapes.
+    const changed = changedLineIndices(original, r.text);
+    expect(changed).toHaveLength(1);
+    const newLine = r.text.split("\n")[changed[0]];
+    expect(newLine).toContain("\\u2014 slice.");
+    expect(newLine).toContain("</info added on 2026-06-07T00:00:00.000Z>");
+
+    // Untouched Task 901 block stays byte-identical.
+    const block901 = original.slice(original.indexOf('"id": "901"'));
+    expect(r.text).toContain(block901);
+    // No raw non-ASCII anywhere (the appended em-dash got escaped).
+    expect(RAW_NON_ASCII.test(r.text)).toBe(false);
+  });
+
+  test("the appended result equals prior + appendText exactly (parsed value)", () => {
+    const original = taskListFixtureText();
+    const priorValue = (taskListFixtureDoc().tasks[0].subtasks[0] as { details: string }).details;
+    const r = scopedSerialise(original, {
+      fieldPath: ["tasks", "900", "subtasks", "1", "details"],
+      appendText: JOURNAL_BLOCK,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const parsed = JSON.parse(r.text) as {
+      tasks: { subtasks: { details: string }[] }[];
+    };
+    expect(parsed.tasks[0].subtasks[0].details).toBe(priorValue + JOURNAL_BLOCK);
+  });
+
+  test("appendText onto a null leaf (backlog notes) becomes the appended text", () => {
+    const original = escapeSerialise(backlogFixtureDoc());
+    const r = scopedSerialise(original, {
+      fieldPath: ["items", "101", "notes"],
+      appendText: "First note.",
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const parsed = JSON.parse(r.text) as { items: { notes: string }[] }[] & {
+      items: { notes: string }[];
+    };
+    expect(parsed.items[0].notes).toBe("First note.");
+  });
+
+  test("appendText onto a non-string leaf is a walk-error and emits NO text", () => {
+    const original = taskListFixtureText();
+    const r = scopedSerialise(original, {
+      fieldPath: ["tasks", "900", "dependencies"],
+      appendText: "nope",
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.kind).toBe("walk-error");
+  });
+});

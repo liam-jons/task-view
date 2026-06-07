@@ -689,3 +689,103 @@ describe("applyPatches — dispatcher", () => {
     ).toThrow();
   });
 });
+
+// ── ID-90 U6: first-class append op (PRODUCT invariants 39 + 43, OQ-4) ────────
+
+describe("applyTaskListPatches — appendText op (ID-90 U6)", () => {
+  test("appends to subtask details, preserving the prior value verbatim", () => {
+    const data = makeTaskList();
+    const block = "\n\n<info added on 2026-06-07T00:00:00.000Z>\nShipped.\n</info added on 2026-06-07T00:00:00.000Z>";
+    const result = applyTaskListPatches(data, [
+      {
+        fieldPath: ["tasks", "20", "subtasks", "1", "details"],
+        appendText: block,
+      },
+    ]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const sub = result.parsed.tasks[0].subtasks[0];
+      expect(sub.details).toBe(`Details for slice 1.${block}`);
+      expect(sub.details.startsWith("Details for slice 1.")).toBe(true);
+    }
+  });
+
+  test("appends to a task-level string field", () => {
+    const data = makeTaskList();
+    const result = applyTaskListPatches(data, [
+      { fieldPath: ["tasks", "20", "description"], appendText: " More." },
+    ]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.parsed.tasks[0].description).toBe(
+        "Outer task description. More.",
+      );
+    }
+  });
+
+  test("appendText onto a null leaf yields the appended text alone", () => {
+    const data = makeTaskList();
+    // status_note is null in the fixture.
+    const result = applyTaskListPatches(data, [
+      { fieldPath: ["tasks", "20", "status_note"], appendText: "First note." },
+    ]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.parsed.tasks[0].status_note).toBe("First note.");
+    }
+  });
+
+  test("appendText onto a non-string leaf is a walk-error (nothing applied)", () => {
+    const data = makeTaskList();
+    const result = applyTaskListPatches(data, [
+      { fieldPath: ["tasks", "20", "dependencies"], appendText: "nope" },
+    ]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.kind).toBe("walk-error");
+  });
+
+  test("mixed batch: newValue + appendText apply in one single-parse pass", () => {
+    const data = makeTaskList();
+    const result = applyTaskListPatches(data, [
+      { fieldPath: ["tasks", "20", "status"], newValue: "done" },
+      {
+        fieldPath: ["tasks", "20", "subtasks", "2", "details"],
+        appendText: " Appended.",
+      },
+    ]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.parsed.tasks[0].status).toBe("done");
+      expect(result.parsed.tasks[0].subtasks[1].details).toBe(
+        "Details for slice 2. Appended.",
+      );
+    }
+  });
+});
+
+describe("applyRoadmapPatches / applyBacklogPatches — appendText op (--append forms)", () => {
+  test("update-roadmap --append: concatenates onto theme notes", () => {
+    const data = makeRoadmap();
+    const result = applyRoadmapPatches(data, [
+      { fieldPath: ["themes", "1", "notes"], appendText: " Appended note." },
+    ]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.parsed.themes[0].notes).toBe(
+        "Initial notes. Appended note.",
+      );
+    }
+  });
+
+  test("update-backlog --append: null notes leaf becomes the appended text", () => {
+    const data = makeBacklog();
+    const itemId = data.items[0].id;
+    const result = applyBacklogPatches(data, [
+      { fieldPath: ["items", itemId, "notes"], appendText: "Fresh note." },
+    ]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.parsed.items[0].notes).toBe("Fresh note.");
+    }
+  });
+});

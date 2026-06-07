@@ -77,10 +77,54 @@ const BACKLOG_ITEM_KNOWN_FIELDS = new Set(Object.keys(BacklogItemSchema.shape));
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
-/** A single patch: walk fieldPath into the canonical structure, replace leaf with newValue. */
-export interface FieldPatch {
-  fieldPath: string[];
-  newValue: unknown;
+/**
+ * A single patch: walk fieldPath into the canonical structure, then either
+ *   - replace the leaf with `newValue` (the original ID-20.8 op), or
+ *   - CONCATENATE `appendText` onto the leaf's prior string value at apply
+ *     time (ID-90 U6 — first-class append, OQ-4 ratified).
+ *
+ * The append op resolves the prior value AT APPLY TIME (inside the handler's
+ * read-mutate-write cycle), so the prior bytes are preserved verbatim with
+ * the new text appended (PRODUCT invariant 39) and a concurrent writer's
+ * interleaved append is never dropped (invariant 43 — the re-read base is
+ * fresh). A `null`/absent prior leaf yields `appendText` alone (e.g. the
+ * `--append` forms of update-backlog/update-roadmap on a null `notes`).
+ * A non-string, non-null prior leaf is a walk-error.
+ */
+export type FieldPatch =
+  | { fieldPath: string[]; newValue: unknown }
+  | { fieldPath: string[]; appendText: string };
+
+/**
+ * Apply one {@link FieldPatch}'s value operation to a resolved leaf
+ * (`container[key]`). Shared by the typed walkers below AND the
+ * parsed-original application in scoped-serialise.ts, so the two paths can
+ * never drift on append semantics (ID-90 U6).
+ *
+ * Returns null on success, or an error detail string when the op cannot
+ * apply (appendText onto a non-string, non-null leaf).
+ */
+export function applyValueToLeaf(
+  container: Record<string, unknown>,
+  key: string,
+  patch: FieldPatch,
+): null | string {
+  if ("appendText" in patch) {
+    const prior = container[key];
+    if (prior === undefined || prior === null) {
+      container[key] = patch.appendText;
+      return null;
+    }
+    if (typeof prior !== "string") {
+      return `Field "${key}" holds a non-string value (${typeof prior}); appendText requires a string (or null/absent) leaf.`;
+    }
+    // Invariant 39: the prior value is preserved VERBATIM; the new text is
+    // concatenated at apply time — never client-side read-concatenate.
+    container[key] = prior + patch.appendText;
+    return null;
+  }
+  container[key] = patch.newValue;
+  return null;
 }
 
 /**
@@ -165,7 +209,12 @@ function applyTaskListPatch(
         detail: `Field "${field}" is not a known field on Task records. Known fields: ${[...TASK_KNOWN_FIELDS].join(", ")}.`,
       };
     }
-    (task as Record<string, unknown>)[field] = patch.newValue;
+    const applyErr = applyValueToLeaf(
+      task as unknown as Record<string, unknown>,
+      field,
+      patch,
+    );
+    if (applyErr) return { fieldPath: patch.fieldPath, detail: applyErr };
     return null;
   }
 
@@ -215,7 +264,12 @@ function applyTaskListPatch(
       detail: `Field "${subField}" is not a known field on Subtask records. Known fields: ${[...SUBTASK_KNOWN_FIELDS].join(", ")}.`,
     };
   }
-  (subtask as Record<string, unknown>)[subField] = patch.newValue;
+  const applyErr = applyValueToLeaf(
+    subtask as unknown as Record<string, unknown>,
+    subField,
+    patch,
+  );
+  if (applyErr) return { fieldPath: patch.fieldPath, detail: applyErr };
   return null;
 }
 
@@ -276,7 +330,12 @@ function applyRoadmapPatch(
       detail: `Field "${field}" is not a known field on RoadmapTheme records. Known fields: ${[...ROADMAP_THEME_KNOWN_FIELDS].join(", ")}.`,
     };
   }
-  (theme as Record<string, unknown>)[field] = patch.newValue;
+  const applyErr = applyValueToLeaf(
+    theme as unknown as Record<string, unknown>,
+    field,
+    patch,
+  );
+  if (applyErr) return { fieldPath: patch.fieldPath, detail: applyErr };
   return null;
 }
 
@@ -328,7 +387,12 @@ function applyBacklogPatch(
       detail: `Field "${field}" is not a known field on BacklogItem records. Known fields: ${[...BACKLOG_ITEM_KNOWN_FIELDS].join(", ")}.`,
     };
   }
-  (item as Record<string, unknown>)[field] = patch.newValue;
+  const applyErr = applyValueToLeaf(
+    item as unknown as Record<string, unknown>,
+    field,
+    patch,
+  );
+  if (applyErr) return { fieldPath: patch.fieldPath, detail: applyErr };
   return null;
 }
 
