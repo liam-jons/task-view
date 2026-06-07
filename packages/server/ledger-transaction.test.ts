@@ -305,6 +305,64 @@ describe("promoteTransaction — validation-first (no bytes touched on rejection
   });
 });
 
+// ── check-90-12: schema-invalid sibling → structured error, not a throw ───────
+//
+// A sibling ledger with a KNOWN document_name but a schema-invalid body makes
+// detectSchema throw ZodError (detect-schema.ts deliberately does not swallow
+// — PRODUCT inv 48). loadLedger must catch that and return a structured
+// failure; uncaught, the rejection escaped handlePostTransaction as an
+// ECONNRESET instead of a structured error response. Synthetic fixtures only
+// (Zorblian family).
+
+describe("promoteTransaction — schema-invalid sibling surfaces structured error (check-90-12)", () => {
+  test("backlog with known document_name but broken body → structured error, no throw, nothing written", async () => {
+    const s = await setup();
+    // Valid JSON, known document_name, schema-invalid body. Embeds a
+    // distinctive synthetic token to assert the error detail stays
+    // redaction-safe (summary only — never the verbatim Zod issues).
+    const broken = {
+      document_name: "Product Backlog",
+      document_purpose: "Synthetic broken backlog for Zorblian Widgets Ltd.",
+      related_documents: [],
+      items: [
+        {
+          id: 101, // number, not string — schema-invalid
+          description: ["Zorblian Widgets Ltd"], // array, not string
+        },
+      ],
+    };
+    const brokenText = JSON.stringify(broken, null, 2);
+    await writeFile(s.backlogPath, brokenText, "utf8");
+    const backlogMtime = (await stat(s.backlogPath)).mtime.toISOString();
+
+    // Must RESOLVE with a structured failure — not reject with ZodError.
+    const result = await promoteTransaction({
+      taskListPath: s.taskListPath,
+      backlogPath: s.backlogPath,
+      taskListBaseMtime: s.taskListMtime,
+      backlogBaseMtime: backlogMtime,
+      sourceBacklogId: "101",
+      taskRecord: makeNewTask("42"),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      // Mirrors the ledger-parse-failed class: the on-disk sibling is
+      // corrupt — a server-state failure, not a bad request.
+      expect(result.status).toBe(500);
+      expect(result.error).toBe("ledger-schema-invalid");
+      // Detail names the file + a redaction-safe summary (issue count +
+      // first issue path) — never the verbatim issues / document content.
+      expect(result.detail).toContain(s.backlogPath);
+      expect(result.detail).toMatch(/\d+ issues?; first at /);
+      expect(result.detail).not.toContain("Zorblian");
+    }
+
+    // Nothing written: task-list untouched, broken backlog left as-is.
+    expect(await readFile(s.taskListPath, "utf8")).toBe(s.taskListContent);
+    expect(await readFile(s.backlogPath, "utf8")).toBe(brokenText);
+  });
+});
+
 // ── ID-90 U1: conforming staged contents (invariants 18-20) ───────────────────
 //
 // The ADD leg splices the new Task into the parsed-ORIGINAL task-list text

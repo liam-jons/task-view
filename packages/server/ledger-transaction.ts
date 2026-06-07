@@ -93,7 +93,7 @@ import { beforeCollectionIds } from "./gates/record-set-gate";
 import { buildPreWriteGates, runPreWriteGates } from "./gates/gate-chain";
 import { generateRecordMirror, generateMirrors } from "./mirror-generator";
 import type { Roadmap } from "@task-view/schemas/roadmap";
-import type { ZodError } from "zod";
+import { ZodError } from "zod";
 
 type KnownDetected = Exclude<DetectSchemaResult, { kind: "unknown" }>;
 
@@ -264,7 +264,32 @@ async function loadLedger(
       },
     };
   }
-  const detected = detectSchema(parsed);
+  let detected: DetectSchemaResult;
+  try {
+    detected = detectSchema(parsed);
+  } catch (err) {
+    // check-90-12: a sibling with a KNOWN document_name but a schema-invalid
+    // body makes detectSchema throw ZodError (detect-schema.ts deliberately
+    // does not swallow — PRODUCT inv 48). Uncaught, that rejection escaped
+    // handlePostTransaction as a connection reset. Mirror the
+    // ledger-parse-failed shape above; redaction-safe summary only (issue
+    // count + first issue path) — never the verbatim issues, which can embed
+    // document content.
+    const summary =
+      err instanceof ZodError
+        ? `${err.issues.length} issue${err.issues.length === 1 ? "" : "s"}; first at ${
+            err.issues[0]?.path.map(String).join(".") || "<root>"
+          }`
+        : (err as Error).message;
+    return {
+      error: {
+        ok: false,
+        status: 500,
+        error: "ledger-schema-invalid",
+        detail: `${path}: schema validation failed (${summary})`,
+      },
+    };
+  }
   if (detected.kind === "unknown") {
     return {
       error: {
