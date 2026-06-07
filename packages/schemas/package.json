@@ -3,12 +3,13 @@
   "version": "0.1.0-task-view-prep",
   "private": true,
   "type": "module",
-  "description": "Vendored Knowledge Hub ledger Zod schemas (task-list / roadmap / backlog / work-status). Frozen copies — see CONTRIBUTING.md for re-vendoring procedure.",
+  "description": "Vendored Knowledge Hub ledger Zod schemas (task-list / roadmap / backlog / work-status) + the relocated ledger-budgets plain-data registry. Frozen copies — see CONTRIBUTING.md for re-vendoring procedure.",
   "exports": {
     "./task-list": "./src/task-list-schema.ts",
     "./roadmap": "./src/roadmap-schema.ts",
     "./backlog": "./src/backlog-schema.ts",
-    "./work-status": "./src/work-status.ts"
+    "./work-status": "./src/work-status.ts",
+    "./ledger-budgets": "./src/ledger-budgets.ts"
   },
   "dependencies": {
     "zod": "^4.4.3"
