@@ -44,11 +44,19 @@ export type RecordSetDelta =
 
 /**
  * A collection descriptor: which id-set inside a parsed ledger document the
- * gate guards. Top-level collections (`tasks` / `themes` / `items`) guard the
- * record-level id-set; `subtasks` guards one task's subtask id-set.
+ * gate guards. Top-level collections (`tasks` / `themes` / `items` /
+ * `umbrellas`) guard the record-level id-set; `subtasks` guards one task's
+ * subtask id-set.
+ *
+ * ID-90.11: `umbrellas` added — the U8 registration left the gate
+ * descriptor without a fourth-kind arm, so every umbrellas membership
+ * PATCH (the ONLY mutation the kind supports, PRODUCT invariants 49–50)
+ * rejected with `record-set-violation: could not locate the items
+ * collection`. The header above always intended "umbrella-PATCH `none`";
+ * this closes that gap.
  */
 export type CollectionDescriptor =
-  | { collection: "tasks" | "themes" | "items" }
+  | { collection: "tasks" | "themes" | "items" | "umbrellas" }
   | { collection: "subtasks"; taskId: string };
 
 /**
@@ -100,6 +108,9 @@ export function beforeCollectionIds(
   }
   if (descriptor.collection === "items" && detected.kind === "backlog") {
     return new Set(detected.data.items.map((it) => it.id));
+  }
+  if (descriptor.collection === "umbrellas" && detected.kind === "umbrellas") {
+    return new Set(detected.data.umbrellas.map((u) => u.id));
   }
   return new Set();
 }
@@ -191,5 +202,9 @@ export function topLevelCollectionFor(
 ): CollectionDescriptor {
   if (kind === "task-list") return { collection: "tasks" };
   if (kind === "roadmap") return { collection: "themes" };
+  // ID-90.11: the fourth kind's id-set lives under the `umbrellas` key —
+  // the pre-U9 fallthrough to `items` made every umbrellas PATCH a
+  // record-set-violation (see CollectionDescriptor note).
+  if (kind === "umbrellas") return { collection: "umbrellas" };
   return { collection: "items" };
 }

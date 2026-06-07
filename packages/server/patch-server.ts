@@ -72,7 +72,11 @@
  */
 
 import { stat } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+
+// The canonical tool version for /api/health — the ROOT package.json
+// `version` field (same source cli.ts uses; Bun's native JSON import).
+import rootPkg from "../../package.json";
 
 import { detectSchema, type DetectSchemaResult } from "./detect-schema";
 import {
@@ -123,8 +127,10 @@ import {
 } from "./render-viewer";
 import {
   documentNameForSlug,
+  LEDGER_SLUGS,
   resolveLedgerPathByName,
   slugForDocumentName,
+  type LedgerSlug,
 } from "./cross-ledger";
 import { decodeLedgerParam } from "@task-view/ui/record-view/url-state";
 import type { KnownDocumentName } from "./detect-schema";
@@ -2134,6 +2140,41 @@ async function handlePostRegen(
 }
 
 /**
+ * GET /api/health — ID-90 U9 daemon identity + document registry (TECH
+ * §Proposed changes U9; the façade's `ensureServer` validates a cached
+ * handle against this endpoint). Scans the launch directory PER REQUEST —
+ * the same per-request discipline `resolveTransactionSiblings` and the
+ * sibling viewer use — so a document added to the directory after boot is
+ * reported without a restart.
+ */
+async function handleGetHealth(ctx: RequestContext): Promise<Response> {
+  const ledgerDir = resolve(dirname(ctx.ledgerPath));
+  const scan = await scanForLedgers(ledgerDir);
+  const entries: Array<{ name: string; path: string }> =
+    scan.kind === "one"
+      ? [{ name: scan.documentName, path: scan.path }]
+      : scan.kind === "multiple"
+        ? scan.paths.map((p) => ({ name: scan.perPathName[p], path: p }))
+        : [];
+  const documents: Array<{
+    slug: LedgerSlug;
+    document_name: string;
+    path: string;
+  }> = [];
+  for (const { name, path } of entries) {
+    const slug = slugForDocumentName(name);
+    if (slug === null) continue; // unknown names never reach here (scan filters)
+    documents.push({ slug, document_name: name, path: resolve(path) });
+  }
+  return jsonResponse({
+    ok: true,
+    version: rootPkg.version,
+    ledgerDir,
+    documents,
+  });
+}
+
+/**
  * Build the per-request dispatcher. Pure function — no closure state
  * other than `ctx`.
  */
@@ -2153,9 +2194,46 @@ function buildFetchHandler(ctx: RequestContext) {
       return handleGetClientBundle(request);
     }
 
+    // GET /api/health — ID-90 U9 daemon identity + document registry.
+    if (path === "/api/health" && request.method === "GET") {
+      return handleGetHealth(ctx);
+    }
+
+    // ID-90 U9 slug routing (TECH §Proposed changes U9 / PRODUCT inv 56):
+    // `/api/ledger/:slug/…` routes the request to the NAMED document in
+    // the launch directory; the slug segment is stripped and the rest of
+    // the dispatcher runs against a context whose ledgerPath is the
+    // resolved sibling. Bare `/api/ledger/*` (no slug segment — the next
+    // segment is `record` / `regen` / `transaction` or nothing) keeps
+    // routing to the LAUNCH document for viewer back-compat. Resolution
+    // scans the directory by canonical document_name per request — same
+    // discipline as resolveTransactionSiblings.
+    let apiPath = path;
+    let effCtx = ctx;
+    const slugMatch = path.match(/^\/api\/ledger\/([^/]+)(\/.*)?$/);
+    if (
+      slugMatch &&
+      (LEDGER_SLUGS as readonly string[]).includes(slugMatch[1])
+    ) {
+      const slug = slugMatch[1] as LedgerSlug;
+      const documentName = documentNameForSlug(slug);
+      const resolvedPath =
+        documentName === null
+          ? null
+          : await resolveLedgerPathByName(ctx.ledgerPath, documentName);
+      if (resolvedPath === null) {
+        return jsonResponse(
+          { ok: false, error: "document-not-found", slug },
+          { status: 404 },
+        );
+      }
+      effCtx = { ...ctx, ledgerPath: resolvedPath };
+      apiPath = `/api/ledger${slugMatch[2] ?? ""}`;
+    }
+
     // GET /api/ledger
-    if (path === "/api/ledger" && request.method === "GET") {
-      return handleGetLedger(ctx);
+    if (apiPath === "/api/ledger" && request.method === "GET") {
+      return handleGetLedger(effCtx);
     }
 
     // ID-90 U9: every CANONICAL-mutating handler body runs under the
@@ -2170,30 +2248,30 @@ function buildFetchHandler(ctx: RequestContext) {
     // POST /api/ledger/record — record-level CREATE (ID-20.15). Exact path
     // (no recordId) — matched BEFORE the /:recordId regex below so the
     // collection-level POST is not swallowed by the per-record route.
-    if (path === "/api/ledger/record" && request.method === "POST") {
-      return withPathLock(ctx.ledgerPath, () =>
-        handlePostRecord(ctx, request),
+    if (apiPath === "/api/ledger/record" && request.method === "POST") {
+      return withPathLock(effCtx.ledgerPath, () =>
+        handlePostRecord(effCtx, request),
       );
     }
 
     // POST /api/ledger/transaction — cross-ledger atomic Promote (ID-20.15).
-    if (path === "/api/ledger/transaction" && request.method === "POST") {
-      return handlePostTransaction(ctx, request);
+    if (apiPath === "/api/ledger/transaction" && request.method === "POST") {
+      return handlePostTransaction(effCtx, request);
     }
 
     // ID-90 U5 subtask routes — matched BEFORE the generic /:recordId route
     // below, whose greedy (.+) would otherwise swallow the nested subtask
-    // segments as a record id. Bare /api/ledger/... form; record 11 adds
-    // the :slug segment.
+    // segments as a record id. U9: both the bare and the slug-routed form
+    // arrive here (the slug segment is already stripped into apiPath).
     // POST /api/ledger/record/:taskId/subtask — bulk subtask CREATE.
-    const subtaskCollectionMatch = path.match(
+    const subtaskCollectionMatch = apiPath.match(
       /^\/api\/ledger\/record\/([^/]+)\/subtask$/,
     );
     if (subtaskCollectionMatch) {
       const taskId = decodeURIComponent(subtaskCollectionMatch[1]);
       if (request.method === "POST") {
-        return withPathLock(ctx.ledgerPath, () =>
-          handlePostSubtasks(ctx, taskId, request),
+        return withPathLock(effCtx.ledgerPath, () =>
+          handlePostSubtasks(effCtx, taskId, request),
         );
       }
       return jsonResponse(
@@ -2202,15 +2280,15 @@ function buildFetchHandler(ctx: RequestContext) {
       );
     }
     // DELETE /api/ledger/record/:taskId/subtask/:subId — subtask DELETE.
-    const subtaskItemMatch = path.match(
+    const subtaskItemMatch = apiPath.match(
       /^\/api\/ledger\/record\/([^/]+)\/subtask\/([^/]+)$/,
     );
     if (subtaskItemMatch) {
       const taskId = decodeURIComponent(subtaskItemMatch[1]);
       const subId = decodeURIComponent(subtaskItemMatch[2]);
       if (request.method === "DELETE") {
-        return withPathLock(ctx.ledgerPath, () =>
-          handleDeleteSubtask(ctx, taskId, subId, request),
+        return withPathLock(effCtx.ledgerPath, () =>
+          handleDeleteSubtask(effCtx, taskId, subId, request),
         );
       }
       return jsonResponse(
@@ -2220,20 +2298,20 @@ function buildFetchHandler(ctx: RequestContext) {
     }
 
     // GET / PATCH / DELETE /api/ledger/record/:recordId
-    const recordMatch = path.match(/^\/api\/ledger\/record\/(.+)$/);
+    const recordMatch = apiPath.match(/^\/api\/ledger\/record\/(.+)$/);
     if (recordMatch) {
       const recordId = decodeURIComponent(recordMatch[1]);
       if (request.method === "GET") {
-        return handleGetRecord(ctx, recordId);
+        return handleGetRecord(effCtx, recordId);
       }
       if (request.method === "PATCH") {
-        return withPathLock(ctx.ledgerPath, () =>
-          handlePatchRecord(ctx, recordId, request),
+        return withPathLock(effCtx.ledgerPath, () =>
+          handlePatchRecord(effCtx, recordId, request),
         );
       }
       if (request.method === "DELETE") {
-        return withPathLock(ctx.ledgerPath, () =>
-          handleDeleteRecord(ctx, recordId, request),
+        return withPathLock(effCtx.ledgerPath, () =>
+          handleDeleteRecord(effCtx, recordId, request),
         );
       }
       return jsonResponse(
@@ -2243,8 +2321,10 @@ function buildFetchHandler(ctx: RequestContext) {
     }
 
     // POST /api/ledger/regen
-    if (path === "/api/ledger/regen" && request.method === "POST") {
-      return withPathLock(ctx.ledgerPath, () => handlePostRegen(ctx, request));
+    if (apiPath === "/api/ledger/regen" && request.method === "POST") {
+      return withPathLock(effCtx.ledgerPath, () =>
+        handlePostRegen(effCtx, request),
+      );
     }
 
     return jsonResponse(

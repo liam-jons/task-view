@@ -15,6 +15,7 @@ import {
   beforeCollectionIds,
   assertRecordSet,
   checkRecordSet,
+  topLevelCollectionFor,
   type RecordSetDelta,
 } from "./record-set-gate";
 import type { DetectSchemaResult } from "../detect-schema";
@@ -353,5 +354,79 @@ describe("checkRecordSet", () => {
     );
     expect(check.ok).toBe(false);
     if (!check.ok) expect(check.detail).toBe("task-list: missing [4]");
+  });
+});
+
+// ── ID-90.11: umbrellas descriptor (the fourth-kind gap U8 left open) ───────
+
+describe("umbrellas collection descriptor (ID-90.11 — PRODUCT inv 49-50)", () => {
+  function umbrellasDoc(ids: string[]) {
+    return {
+      document_name: "umbrellas",
+      document_purpose: "Synthetic.",
+      last_updated: "kh-main-S1 synthetic fixture",
+      related_documents: [],
+      umbrellas: ids.map((id) => ({
+        id,
+        title: `Umbrella ${id}`,
+        substrate_doc: `docs/${id}.md`,
+        task_ids: ["20"],
+        status: "in_progress",
+        phase: "Phase 1",
+      })),
+    };
+  }
+
+  test("topLevelCollectionFor('umbrellas') guards the umbrellas key, not items", () => {
+    expect(topLevelCollectionFor("umbrellas")).toEqual({
+      collection: "umbrellas",
+    });
+  });
+
+  test("collectionIds + beforeCollectionIds extract the umbrella id-set", () => {
+    const doc = umbrellasDoc(["alpha-grouping", "beta-grouping"]);
+    expect(collectionIds(doc, { collection: "umbrellas" })).toEqual(
+      new Set(["alpha-grouping", "beta-grouping"]),
+    );
+    const detected = {
+      kind: "umbrellas",
+      data: doc,
+    } as unknown as KnownDetected;
+    expect(
+      beforeCollectionIds(detected, { collection: "umbrellas" }),
+    ).toEqual(new Set(["alpha-grouping", "beta-grouping"]));
+  });
+
+  test("a membership PATCH (delta none) passes; a dropped umbrella is a violation", () => {
+    const before = new Set<string | number>([
+      "alpha-grouping",
+      "beta-grouping",
+    ]);
+    const good = JSON.stringify(
+      umbrellasDoc(["alpha-grouping", "beta-grouping"]),
+      null,
+      2,
+    );
+    expect(
+      checkRecordSet(
+        "umbrellas",
+        good,
+        before,
+        { collection: "umbrellas" },
+        { kind: "none" },
+      ),
+    ).toEqual({ ok: true });
+
+    const bad = JSON.stringify(umbrellasDoc(["alpha-grouping"]), null, 2);
+    const check = checkRecordSet(
+      "umbrellas",
+      bad,
+      before,
+      { collection: "umbrellas" },
+      { kind: "none" },
+    );
+    expect(check.ok).toBe(false);
+    if (!check.ok)
+      expect(check.detail).toBe("umbrellas: missing [beta-grouping]");
   });
 });
