@@ -287,3 +287,151 @@ describe("mutation mutex — transaction + PATCH overlapping on task-list", () =
     }
   });
 });
+
+// ── ID-90.13 U11: auto-id race + interleaved appends (inv 38 create half +
+// inv 39). The mutex serialises the writers; the 409-retry loop (the K2
+// façade behaviour) re-reads fresh state — auto-ids re-derive against the
+// FRESH id-set and journal appends re-apply onto the FRESH details value, so
+// neither a duplicate id nor a lost block can ever land. ────────────────────
+
+/** K2-style optimistic-concurrency retry: re-fetch currentMtime from each
+ * 409 and re-issue until 2xx. */
+async function withRetry(
+  send: (baseMtime: string) => Promise<Response>,
+  initialBase: string,
+  expectStatus: number,
+): Promise<Response> {
+  let base = initialBase;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const res = await send(base);
+    if (res.status === expectStatus) return res;
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; currentMtime: string };
+    expect(body.error).toBe("mtime-mismatch");
+    base = body.currentMtime;
+  }
+  throw new Error("writer exhausted retries");
+}
+
+describe("auto-id race — concurrent id-less creates never duplicate an id (inv 38)", () => {
+  test("4 concurrent id-less subtask POSTs with retry: all land, ids all DISTINCT", async () => {
+    const ledger = join(testDir, "task-list.json");
+    const doc = makeTaskListLedger(["1"]);
+    // Seed one existing subtask so auto-id must start ABOVE an occupied id.
+    (doc.tasks[0].subtasks as unknown[]).push({
+      id: 1,
+      title: "Existing slice",
+      description: "Occupies id 1.",
+      details: "",
+      status: "pending",
+      dependencies: [],
+      testStrategy: null,
+    });
+    await writeFile(ledger, JSON.stringify(doc, null, 2), "utf8");
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await mtimeOf(ledger);
+    const url = handle.url;
+
+    // Four writers, ALL id-less, ALL from the same stale read. Without the
+    // fresh-id-set re-derive each retry would re-allocate the same max+1
+    // and a duplicate subtask id would land.
+    const allocated: number[][] = [];
+    await Promise.all(
+      ["a", "b", "c", "d"].map(async (tag) => {
+        const res = await withRetry(
+          (base) =>
+            fetch(`${url}/api/ledger/record/1/subtask`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                baseMtime: base,
+                regenMirrors: false,
+                subtasks: [
+                  {
+                    title: `Concurrent slice ${tag}`,
+                    description: `Writer ${tag}.`,
+                  },
+                ],
+              }),
+            }),
+          baseMtime,
+          201,
+        );
+        const body = (await res.json()) as { subtaskIds: number[] };
+        allocated.push(body.subtaskIds);
+      }),
+    );
+
+    // Every writer landed exactly one subtask with a UNIQUE id.
+    const ids = allocated.flat();
+    expect(ids).toHaveLength(4);
+    expect(new Set(ids).size).toBe(4);
+    expect(ids).not.toContain(1); // never collides with the occupied id
+
+    // The document agrees: 5 subtasks, all ids distinct.
+    const parsed = JSON.parse(await readFile(ledger, "utf8")) as {
+      tasks: Array<{ subtasks: Array<{ id: number }> }>;
+    };
+    const finalIds = parsed.tasks[0].subtasks.map((s) => s.id);
+    expect(finalIds).toHaveLength(5);
+    expect(new Set(finalIds).size).toBe(5);
+  });
+});
+
+describe("interleaved journal appends — BOTH blocks present (inv 39)", () => {
+  test("two concurrent appendText writers on the SAME subtask details: both blocks land", async () => {
+    const ledger = join(testDir, "task-list.json");
+    const doc = makeTaskListLedger(["1"]);
+    (doc.tasks[0].subtasks as unknown[]).push({
+      id: 1,
+      title: "Journal target",
+      description: "Receives concurrent appends.",
+      details: "Initial details.",
+      status: "pending",
+      dependencies: [],
+      testStrategy: null,
+    });
+    await writeFile(ledger, JSON.stringify(doc, null, 2), "utf8");
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await mtimeOf(ledger);
+    const url = handle.url;
+
+    // Both appends start from the SAME stale read. The loser's retry MUST
+    // re-append onto the FRESH details value (inv 39) — a re-apply onto the
+    // stale value would silently erase the winner's block.
+    const BLOCK_A = "\nblock A appended by writer one.";
+    const BLOCK_B = "\nblock B appended by writer two.";
+    function append(block: string) {
+      return withRetry(
+        (base) =>
+          fetch(`${url}/api/ledger/record/1`, {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              baseMtime: base,
+              regenMirrors: false,
+              patches: [
+                {
+                  fieldPath: ["tasks", "1", "subtasks", "1", "details"],
+                  appendText: block,
+                },
+              ],
+            }),
+          }),
+        baseMtime,
+        200,
+      );
+    }
+
+    await Promise.all([append(BLOCK_A), append(BLOCK_B)]);
+
+    const parsed = JSON.parse(await readFile(ledger, "utf8")) as {
+      tasks: Array<{ subtasks: Array<{ details: string }> }>;
+    };
+    const details = parsed.tasks[0].subtasks[0].details;
+    // BOTH blocks present, the prior value preserved verbatim underneath.
+    expect(details.startsWith("Initial details.")).toBe(true);
+    expect(details).toContain("block A appended by writer one.");
+    expect(details).toContain("block B appended by writer two.");
+  });
+});
