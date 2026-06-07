@@ -51,6 +51,11 @@ export interface TaskViewServerOptions {
   port?: number | string;
   /** Optional loopback hostname override (validated by patch-server). */
   hostname?: string;
+  /** ID-90 U9 `--require-denylist` (PRODUCT invariant 34): arm the
+   * client-name guard's fail-loud posture on every mutating path. */
+  requireDenylist?: boolean;
+  /** ID-90 U9 `--idle-exit` seam: per-request activity callback. */
+  onRequest?: () => void;
 }
 
 export interface TaskViewServerHandle {
@@ -96,6 +101,8 @@ function bindWithRetry(
     ledgerPath: string;
     requestedPort: number | undefined;
     hostname: string | undefined;
+    requireDenylist: boolean | undefined;
+    onRequest: (() => void) | undefined;
   },
 ): PatchServerHandle {
   let lastError: unknown;
@@ -106,6 +113,8 @@ function bindWithRetry(
         ledgerPath: options.ledgerPath,
         port: portForAttempt,
         hostname: options.hostname,
+        requireDenylist: options.requireDenylist,
+        onRequest: options.onRequest,
       });
     } catch (err) {
       lastError = err;
@@ -207,6 +216,8 @@ export async function startTaskViewServer(
     ledgerPath: opts.ledgerPath,
     requestedPort: port,
     hostname: opts.hostname,
+    requireDenylist: opts.requireDenylist,
+    onRequest: opts.onRequest,
   });
 
   // ── Public handle ────────────────────────────────────────────────────────

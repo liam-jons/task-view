@@ -23,7 +23,7 @@
  */
 import { parseArgs } from "node:util";
 import { existsSync } from "node:fs";
-import { extname } from "node:path";
+import { dirname, extname, resolve } from "node:path";
 import { ZodError } from "zod";
 import { detectSchema, KNOWN_DOCUMENT_NAMES } from "@task-view/server/detect-schema";
 import { generateMirrors } from "@task-view/server/mirror-generator";
@@ -34,6 +34,13 @@ import {
 } from "@task-view/server/path-resolution";
 import { openBrowser } from "@task-view/server/browser";
 import { startTaskViewServer } from "@task-view/server/ledger";
+import {
+  buildPortFilePayload,
+  writePortFile,
+  createIdleMonitor,
+  pickLaunchDocument,
+  type IdleMonitor,
+} from "@task-view/server/daemon-lifecycle";
 import { formatVersion } from "./cli";
 
 // ── Runtime gate ─────────────────────────────────────────────────────────────
@@ -52,6 +59,14 @@ type ParsedArgs = {
   check: boolean;
   help: boolean;
   version: boolean;
+  /** ID-90 U9: serve ALL known documents in this directory (daemon mode). */
+  serveDir: string | undefined;
+  /** ID-90 U9: atomic {port, pid, version, ledgerDir} handle path. */
+  portFile: string | undefined;
+  /** ID-90 U9: exit after N minutes without a request (fractions allowed). */
+  idleExit: string | undefined;
+  /** ID-90 U9: arm the inv-34 fail-loud denylist posture. */
+  requireDenylist: boolean;
 };
 
 function parseCliArgs(argv: string[]): ParsedArgs {
@@ -63,6 +78,11 @@ function parseCliArgs(argv: string[]): ParsedArgs {
       check: { type: "boolean", default: false },
       help: { type: "boolean", default: false },
       version: { type: "boolean", default: false, short: "v" },
+      // ID-90 U9 daemon lifecycle flags (TECH §Proposed changes U9).
+      "serve-dir": { type: "string" },
+      "port-file": { type: "string" },
+      "idle-exit": { type: "string" },
+      "require-denylist": { type: "boolean", default: false },
     },
     allowPositionals: true,
     // strict: unknown options will throw, which we surface via parseArgs's
@@ -76,6 +96,13 @@ function parseCliArgs(argv: string[]): ParsedArgs {
     check: Boolean(values.check),
     help: Boolean(values.help),
     version: Boolean(values.version),
+    serveDir:
+      typeof values["serve-dir"] === "string" ? values["serve-dir"] : undefined,
+    portFile:
+      typeof values["port-file"] === "string" ? values["port-file"] : undefined,
+    idleExit:
+      typeof values["idle-exit"] === "string" ? values["idle-exit"] : undefined,
+    requireDenylist: Boolean(values["require-denylist"]),
   };
 }
 
@@ -88,9 +115,18 @@ function printHelp(): void {
       "  task-view --version, -v",
       "",
       "Flags:",
-      "  --no-browser   Do not auto-open the browser; print the URL only.",
-      "  --port <N>     Bind the requested port (default: OS-assigned random).",
-      "  --check        Run one-shot mirror-regen sanity pass; exit non-zero on drift.",
+      "  --no-browser         Do not auto-open the browser; print the URL only.",
+      "  --port <N>           Bind the requested port (default: OS-assigned random).",
+      "  --check              Run one-shot mirror-regen sanity pass; exit non-zero on drift.",
+      "  --serve-dir <dir>    Daemon mode (ID-90 U9): serve ALL known documents in",
+      "                       <dir> via /api/ledger/:slug/… routes. Mutually exclusive",
+      "                       with a positional path.",
+      "  --port-file <path>   Write an atomic {port, pid, version, ledgerDir} handle",
+      "                       once listening.",
+      "  --idle-exit <mins>   Exit after <mins> minutes without a request",
+      "                       (fractions allowed; must be > 0).",
+      "  --require-denylist   Fail loudly on EVERY mutation when the client-name",
+      "                       denylist env is unset (CI posture, invariant 34).",
       "",
       "Without a path argument, task-view scans the current working directory",
       "for `document_name`-bearing JSON files (task-list.json, product-roadmap.json,",
@@ -356,12 +392,48 @@ async function main(): Promise<number> {
     return 0;
   }
 
+  // ID-90 U9 flag validation — fail BEFORE any port bind (the inv-54
+  // never-hang posture starts at spawn).
+  if (parsed.serveDir !== undefined && parsed.positional !== undefined) {
+    console.error(
+      "task-view: --serve-dir and a positional path are mutually exclusive — " +
+        "the daemon serves every known document in the directory.",
+    );
+    return 64; // EX_USAGE
+  }
+  let idleExitMs: number | null = null;
+  if (parsed.idleExit !== undefined) {
+    const minutes = Number(parsed.idleExit);
+    if (!Number.isFinite(minutes) || minutes <= 0) {
+      console.error(
+        `task-view: --idle-exit must be a positive number of minutes; got "${parsed.idleExit}".`,
+      );
+      return 64; // EX_USAGE
+    }
+    idleExitMs = minutes * 60_000;
+  }
+
   // Resolve the launch target. A positional `.md` mirror path resolves to
   // its sibling ledger + a preselected record id (Subtask 20.21 / PRODUCT
   // inv 6); a ledger JSON path (or CWD-inferred path) carries no record.
+  // ID-90 U9 `--serve-dir`: scan the directory and pick the deterministic
+  // launch document — slug routes serve the rest.
   let ledgerPath: string;
   let recordId: string | null = null;
-  if (parsed.positional !== undefined) {
+  if (parsed.serveDir !== undefined) {
+    const scan = await scanForLedgers(parsed.serveDir);
+    const picked = pickLaunchDocument(scan);
+    if (picked === null) {
+      console.error(
+        `task-view: --serve-dir ${parsed.serveDir} holds no known ledger JSON.\n` +
+          `Expected at least one document_name of: ${KNOWN_DOCUMENT_NAMES.map(
+            (n) => `"${n}"`,
+          ).join(", ")}.`,
+      );
+      return 1;
+    }
+    ledgerPath = picked.path;
+  } else if (parsed.positional !== undefined) {
     const target = await resolveLaunchTarget(parsed.positional);
     if (!target) {
       return 1;
@@ -397,15 +469,61 @@ async function main(): Promise<number> {
   }
 
   // Start the server (with port retry + browser-close detection).
+  // ID-90 U9: the idle monitor is created AFTER the bind (it needs the
+  // handle to stop), but the per-request activity callback must be wired
+  // at bind time — a mutable ref bridges the gap.
+  let idleMonitor: IdleMonitor | null = null;
   let handle;
   try {
     handle = await startTaskViewServer({
       ledgerPath,
       port: parsed.port,
+      requireDenylist: parsed.requireDenylist,
+      onRequest: () => idleMonitor?.touch(),
     });
   } catch (err) {
     console.error(`task-view: ${(err as Error).message}`);
     return 1;
+  }
+
+  // ID-90 U9 `--idle-exit`: exit after N minutes without a request. The
+  // monitor's poll timer is unref'ed, so it never blocks a normal stop.
+  if (idleExitMs !== null) {
+    idleMonitor = createIdleMonitor({
+      idleAfterMs: idleExitMs,
+      onIdle: () => {
+        console.error(
+          `task-view: idle for ${idleExitMs! / 60_000} minute(s) — exiting.`,
+        );
+        void handle.stop(true);
+      },
+    });
+  }
+
+  // ID-90 U9 `--port-file`: atomic {port, pid, version, ledgerDir} handle,
+  // written once listening so a reader (the façade's ensureServer) can
+  // never observe a torn or premature handle. A write failure is FATAL —
+  // a daemon whose handle cannot be discovered is a zombie (invariant 54:
+  // fail loudly, never hang).
+  if (parsed.portFile !== undefined) {
+    const ledgerDir = resolve(
+      parsed.serveDir !== undefined ? parsed.serveDir : dirname(ledgerPath),
+    );
+    try {
+      await writePortFile(
+        parsed.portFile,
+        buildPortFilePayload({ port: handle.port, ledgerDir }),
+      );
+    } catch (err) {
+      console.error(
+        `task-view: failed to write --port-file ${parsed.portFile}: ${
+          (err as Error).message
+        }`,
+      );
+      idleMonitor?.stop();
+      await handle.stop(true);
+      return 1;
+    }
   }
 
   // Build the launch URL — when a `.md` mirror resolved to a record id,
@@ -436,8 +554,9 @@ async function main(): Promise<number> {
   process.on("SIGTERM", () => onSignal("SIGTERM"));
 
   // Block on the exit promise (resolved by the SIGINT / SIGTERM handler
-  // calling handle.stop()).
+  // calling handle.stop(), or by the idle monitor's onIdle).
   await handle.waitForExit();
+  idleMonitor?.stop();
   return 0;
 }
 

@@ -14,6 +14,7 @@
     "./mirror-generator": "./mirror-generator.ts",
     "./path-resolution": "./path-resolution.ts",
     "./ledger": "./ledger.ts",
+    "./daemon-lifecycle": "./daemon-lifecycle.ts",
     "./patch-server": "./patch-server.ts",
     "./record-mutate": "./record-mutate.ts",
     "./ledger-transaction": "./ledger-transaction.ts",

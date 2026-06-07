@@ -155,6 +155,11 @@ export interface PatchServerOptions {
    * guard inactive locally).
    */
   requireDenylist?: boolean;
+  /**
+   * ID-90 U9 `--idle-exit` seam: invoked at the top of EVERY request so the
+   * daemon's idle monitor can reset its window. Must be cheap + non-throwing.
+   */
+  onRequest?: () => void;
 }
 
 export interface PatchServerHandle {
@@ -172,6 +177,8 @@ interface RequestContext {
   /** ID-90 U9: invariant-34 arming, threaded into every pre-write gate
    * chain (and each transaction leg). */
   requireDenylist: boolean;
+  /** ID-90 U9: per-request activity callback (idle-exit window reset). */
+  onRequest?: () => void;
 }
 
 async function readCanonical(ledgerPath: string): Promise<{
@@ -2180,6 +2187,9 @@ async function handleGetHealth(ctx: RequestContext): Promise<Response> {
  */
 function buildFetchHandler(ctx: RequestContext) {
   return async function fetchHandler(request: Request): Promise<Response> {
+    // ID-90 U9: every request counts as activity for the idle-exit window.
+    ctx.onRequest?.();
+
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -2358,6 +2368,7 @@ export function startPatchServer(opts: PatchServerOptions): PatchServerHandle {
   const ctx: RequestContext = {
     ledgerPath: opts.ledgerPath,
     requireDenylist: opts.requireDenylist === true,
+    onRequest: opts.onRequest,
   };
   const fetchHandler = buildFetchHandler(ctx);
 
