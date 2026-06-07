@@ -61,6 +61,7 @@ import {
   abortStagedWrite,
   type StagedWrite,
 } from "./atomic-write";
+import { escapeSerialise, scopedSpliceSerialise } from "./scoped-serialise";
 import { insertRecord, removeRecord } from "./record-mutate";
 import { generateRecordMirror, generateMirrors } from "./mirror-generator";
 import type { ZodError } from "zod";
@@ -113,6 +114,8 @@ export type PromoteTransactionResult =
 interface LoadedLedger {
   detected: KnownDetected;
   mtimeIso: string;
+  /** The ORIGINAL on-disk text — the scoped-splice basis (ID-90 U1). */
+  rawText: string;
 }
 
 async function loadLedger(
@@ -167,7 +170,7 @@ async function loadLedger(
     };
   }
   const mtimeIso = (await stat(path)).mtime.toISOString();
-  return { detected, mtimeIso };
+  return { detected, mtimeIso, rawText };
 }
 
 function mtimeStale(baseMtime: string, currentMtime: string): boolean {
@@ -177,9 +180,17 @@ function mtimeStale(baseMtime: string, currentMtime: string): boolean {
   return currentMs > baseMs;
 }
 
-function serialise(detected: KnownDetected): string {
-  return JSON.stringify(detected.data, null, 2);
-}
+// ID-90 U1: the former local `serialise()` (`JSON.stringify(detected.data,
+// null, 2)`) is DELETED — it re-emitted the Zod-reparsed document (key
+// reorder + raw UTF-8). Staged contents are now conforming (invariants
+// 18-20):
+//   - ADD leg    → scopedSpliceSerialise over the task-list's parsed-ORIGINAL
+//                  rawText (untouched records keep their exact bytes)
+//   - REMOVE leg → escapeSerialise(removeResult.detected.data) (whole-file
+//                  conforming, byte-compatible post-OQ-LS-2 — matches the
+//                  CLI's whole-file deletes)
+//   - roadmap link leg (third leg — lands with the transaction extension)
+//                  → MUST use scopedSerialise over the roadmap's rawText.
 
 /**
  * Execute a Promote transaction: insert `taskRecord` into the task-list
@@ -285,8 +296,30 @@ export async function promoteTransaction(
     return { ok: false, status: 422, error: removeResult.kind };
   }
 
-  const newTaskContent = serialise(insertResult.detected);
-  const backlogContent = serialise(removeResult.detected);
+  // ADD leg: splice the new Task into the parsed-ORIGINAL task-list text.
+  // `insertRecord` above stays the validation oracle (duplicate-id +
+  // document-level schema invariants); a splice failure after the oracle
+  // passed is an internal inconsistency.
+  const splicedTaskList = scopedSpliceSerialise(taskListLoad.rawText, {
+    kind: "insert",
+    collection: "tasks",
+    record: input.taskRecord,
+  });
+  if (!splicedTaskList.ok) {
+    return {
+      ok: false,
+      status: 500,
+      error: "serialise-failed",
+      detail: `scoped splice ${splicedTaskList.kind}${
+        "detail" in splicedTaskList && splicedTaskList.detail
+          ? `: ${splicedTaskList.detail}`
+          : ""
+      }`,
+    };
+  }
+  const newTaskContent = splicedTaskList.text;
+  // REMOVE leg: whole-file conforming re-emit of the post-removal backlog.
+  const backlogContent = escapeSerialise(removeResult.detected.data);
 
   // ── Phase 2: stage both (durable temps; originals untouched) ─────────────
   let stagedTaskList: StagedWrite | null = null;

@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { promoteTransaction } from "./ledger-transaction";
+import { escapeSerialise } from "./scoped-serialise";
 
 let testDir: string;
 
@@ -299,6 +300,118 @@ describe("promoteTransaction — validation-first (no bytes touched on rejection
       expect(result.status).toBe(422);
       expect(result.error).toBe("schema-error");
     }
+    expect(await readFile(s.taskListPath, "utf8")).toBe(s.taskListContent);
+    expect(await readFile(s.backlogPath, "utf8")).toBe(s.backlogContent);
+  });
+});
+
+// ── ID-90 U1: conforming staged contents (invariants 18-20) ───────────────────
+//
+// The ADD leg splices the new Task into the parsed-ORIGINAL task-list text
+// (untouched records keep their exact bytes); the REMOVE leg re-emits the
+// backlog whole-file conformingly via escapeSerialise. Both staged contents
+// carry \uXXXX escapes and a single trailing newline.
+
+describe("promoteTransaction — ID-90 U1 conforming staged contents", () => {
+  const EM_DASH = "—";
+  const RAW_NON_ASCII = new RegExp("[\\u0080-\\uffff]");
+
+  async function setupConforming(): Promise<{
+    taskListPath: string;
+    backlogPath: string;
+    taskListContent: string;
+    backlogContent: string;
+    taskListMtime: string;
+    backlogMtime: string;
+  }> {
+    const taskListPath = join(testDir, "task-list.json");
+    const backlogPath = join(testDir, "product-backlog.json");
+    const taskListObj = makeTaskList();
+    taskListObj.tasks[0].description = `Body ${EM_DASH} with an em-dash.`;
+    const backlogObj = makeBacklog();
+    backlogObj.items.push({
+      ...backlogObj.items[0],
+      id: "102",
+      description: `A second item ${EM_DASH} stays behind.`,
+    });
+    const taskListContent = escapeSerialise(taskListObj);
+    const backlogContent = escapeSerialise(backlogObj);
+    await writeFile(taskListPath, taskListContent, "utf8");
+    await writeFile(backlogPath, backlogContent, "utf8");
+    return {
+      taskListPath,
+      backlogPath,
+      taskListContent,
+      backlogContent,
+      taskListMtime: (await stat(taskListPath)).mtime.toISOString(),
+      backlogMtime: (await stat(backlogPath)).mtime.toISOString(),
+    };
+  }
+
+  test("ADD leg splices: existing Task bytes preserved, escapes + trailing newline", async () => {
+    const s = await setupConforming();
+    const result = await promoteTransaction({
+      taskListPath: s.taskListPath,
+      backlogPath: s.backlogPath,
+      taskListBaseMtime: s.taskListMtime,
+      backlogBaseMtime: s.backlogMtime,
+      sourceBacklogId: "101",
+      taskRecord: makeNewTask("42"),
+    });
+    expect(result.ok).toBe(true);
+
+    const written = await readFile(s.taskListPath, "utf8");
+    // Existing Task 20's block keeps its exact bytes (id line up to its
+    // closing brace — the brace itself gains a comma from the splice).
+    const start20 = s.taskListContent.indexOf('"id": "20"');
+    const end20 = s.taskListContent.indexOf('"commit_refs": []', start20);
+    expect(written).toContain(s.taskListContent.slice(start20, end20));
+    // Conforming bytes throughout (invariant 18).
+    expect(RAW_NON_ASCII.test(written)).toBe(false);
+    expect(written).toContain("\\u2014");
+    expect(written.endsWith("}\n")).toBe(true);
+    expect(written.endsWith("}\n\n")).toBe(false);
+    expect(written).toContain('"id": "42"');
+  });
+
+  test("REMOVE leg re-emits the backlog whole-file conformingly", async () => {
+    const s = await setupConforming();
+    const result = await promoteTransaction({
+      taskListPath: s.taskListPath,
+      backlogPath: s.backlogPath,
+      taskListBaseMtime: s.taskListMtime,
+      backlogBaseMtime: s.backlogMtime,
+      sourceBacklogId: "101",
+      taskRecord: makeNewTask("42"),
+    });
+    expect(result.ok).toBe(true);
+
+    const written = await readFile(s.backlogPath, "utf8");
+    expect(RAW_NON_ASCII.test(written)).toBe(false);
+    expect(written).toContain("\\u2014"); // surviving item keeps its escape
+    expect(written.endsWith("}\n")).toBe(true);
+    expect(written.endsWith("}\n\n")).toBe(false);
+    const parsed = JSON.parse(written) as { items: { id: string }[] };
+    expect(parsed.items.map((it) => it.id)).toEqual(["102"]);
+  });
+
+  test("fault injection on conforming fixtures still leaves both files byte-identical", async () => {
+    const s = await setupConforming();
+    const boom = new Error("injected pre-commit fault");
+    await expect(
+      promoteTransaction({
+        taskListPath: s.taskListPath,
+        backlogPath: s.backlogPath,
+        taskListBaseMtime: s.taskListMtime,
+        backlogBaseMtime: s.backlogMtime,
+        sourceBacklogId: "101",
+        taskRecord: makeNewTask("42"),
+        faultBeforeCommit: () => {
+          throw boom;
+        },
+      }),
+    ).rejects.toBe(boom);
+
     expect(await readFile(s.taskListPath, "utf8")).toBe(s.taskListContent);
     expect(await readFile(s.backlogPath, "utf8")).toBe(s.backlogContent);
   });
