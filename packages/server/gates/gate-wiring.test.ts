@@ -394,8 +394,17 @@ describe("promoteTransaction wiring — budget (task leg, create mode) + record-
     });
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.warnings).toHaveLength(1);
-      expect(result.warnings[0]).toStartWith("(forced) budget-exceeded:");
+      // ID-90.12 U10: the envelope now ALSO carries the {35.30}-scoped
+      // discipline line for the over-budget promoted Task (invariant 41),
+      // alongside the forced downgrade.
+      expect(
+        result.warnings.some((w) =>
+          w.startsWith("(forced) budget-exceeded:"),
+        ),
+      ).toBe(true);
+      expect(
+        result.warnings.some((w) => w.startsWith('Task "42" description is')),
+      ).toBe(true);
     }
     const taskList = JSON.parse(await readFile(s.taskListPath, "utf8")) as {
       tasks: { id: string }[];

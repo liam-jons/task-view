@@ -2198,6 +2198,11 @@ async function handlePostTransaction(
       { status: 400 },
     );
   }
+  // ID-90.12 U10: per-request overrides ride as body fields (T-3).
+  const opt = mutationOptionsOrError(body as Record<string, unknown>);
+  if (!opt.ok) return opt.response;
+  const options = opt.options;
+
   // ID-90 U7: optional capability-theme third leg — when bound, the client
   // must also supply its last-seen roadmap mtime (the same per-document
   // collision contract the other two legs carry).
@@ -2268,6 +2273,12 @@ async function handlePostTransaction(
       backlogBaseMtime: body.backlogBaseMtime as string,
       sourceBacklogId: body.sourceBacklogId as string,
       taskRecord: body.taskRecord,
+      // ID-90.12 U10: the per-request override fields (T-3 — invariants
+      // 16, 26, 33; nothing stored between requests).
+      dryRun: options.dryRun,
+      force: options.force,
+      allowClientName: options.allowClientName,
+      regenMirrors: options.regenMirrors,
       // ID-90 U9: invariant-34 arming rides every transaction leg too.
       requireDenylist: ctx.requireDenylist,
       ...(body.capabilityThemeId !== undefined && siblings.roadmapPath !== null
@@ -2302,6 +2313,11 @@ async function handlePostTransaction(
     backlogMtime: result.backlogMtime,
     mirrorsWritten: result.mirrorsWritten,
     mirrorsDeleted: result.mirrorsDeleted,
+    // ID-90.12 U10: dry-run marker (invariant 16) + suppressed-regen report.
+    ...(result.dryRun === true ? { dryRun: true } : {}),
+    ...(result.mirrorRegen !== undefined
+      ? { mirrorRegen: result.mirrorRegen }
+      : {}),
     // ID-90 U7: present when the capability-theme leg was bound.
     ...(result.boundCapabilityTheme !== undefined
       ? {
@@ -2309,7 +2325,8 @@ async function handlePostTransaction(
           roadmapMtime: result.roadmapMtime,
         }
       : {}),
-    // Gate soft warnings (ID-90 U2/U3); the full U10 envelope extends this.
+    // U10 warnings envelope: discipline + budget + guard-override
+    // warnings (invariant 41).
     ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
   });
 }

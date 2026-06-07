@@ -616,3 +616,314 @@ describe("present-but-non-boolean override fields", () => {
     expect(after.bytes.equals(before.bytes)).toBe(true);
   });
 });
+
+// ── Transaction endpoint (three-leg promote) — U10 envelope ──────────────────
+
+import { readdir } from "node:fs/promises";
+
+function makeBacklogDoc() {
+  return {
+    document_name: "Product Backlog",
+    document_purpose: "Synthetic test backlog.",
+    related_documents: [],
+    items: [
+      {
+        id: "101",
+        description: "A synthetic item ready to promote.",
+        type: "feature",
+        status: "ready",
+        effort_estimate: "2-3h",
+        priority: "high",
+        track: "platform",
+        dependencies: [],
+        session_refs: [],
+        commit_refs: [],
+        cross_doc_links: [],
+        notes: null,
+      },
+      {
+        id: "102",
+        description: "A second synthetic item.",
+        type: "feature",
+        status: "ready",
+        effort_estimate: "1h",
+        priority: "medium",
+        track: "platform",
+        dependencies: [],
+        session_refs: [],
+        commit_refs: [],
+        cross_doc_links: [],
+        notes: null,
+      },
+    ],
+  };
+}
+
+function makeRoadmapDoc() {
+  return {
+    document_name: "Knowledge Hub Roadmap",
+    document_purpose: "Synthetic test roadmap.",
+    date: "2026-06-01",
+    status: "Active",
+    forward_looking_only: true,
+    related_documents: [],
+    last_updated: "synthetic-session-s0 fixture seed",
+    themes: [
+      {
+        id: "3",
+        title: "Synthetic theme",
+        status: "in_progress",
+        time_horizon: "now",
+        description: "Theme body.",
+        notes: null,
+        linked_tasks: [],
+        linked_backlog: [],
+        session_refs: [],
+        commit_refs: [],
+        cross_doc_links: [],
+      },
+    ],
+  };
+}
+
+function makeNewTask(id: string, overrides: Partial<Record<string, unknown>> = {}) {
+  return makeTask(id, { subtasks: [], ...overrides });
+}
+
+async function writeTransactionLedgers(): Promise<{
+  taskListPath: string;
+  backlogPath: string;
+  roadmapPath: string;
+}> {
+  return {
+    taskListPath: await writeLedger(makeTaskListDoc(), "task-list.json"),
+    backlogPath: await writeLedger(makeBacklogDoc(), "product-backlog.json"),
+    roadmapPath: await writeLedger(makeRoadmapDoc(), "product-roadmap.json"),
+  };
+}
+
+async function tempsIn(dir: string): Promise<string[]> {
+  return (await readdir(dir)).filter((f) => f.includes(".tmp."));
+}
+
+describe("transaction (promote) — U10 envelope", () => {
+  test("dryRun: full three-leg gates, would-be payload, NOTHING staged or renamed (temps absent)", async () => {
+    const paths = await writeTransactionLedgers();
+    const url = await startServer(paths.taskListPath);
+    const before = {
+      taskList: await snapshotFile(paths.taskListPath),
+      backlog: await snapshotFile(paths.backlogPath),
+      roadmap: await snapshotFile(paths.roadmapPath),
+    };
+
+    const res = await fetch(`${url}/api/ledger/transaction`, {
+      method: "POST",
+      body: JSON.stringify({
+        op: "promote",
+        sourceBacklogId: "101",
+        taskRecord: makeNewTask("99"),
+        taskListBaseMtime: await mtimeOf(paths.taskListPath),
+        backlogBaseMtime: await mtimeOf(paths.backlogPath),
+        capabilityThemeId: "3",
+        roadmapBaseMtime: await mtimeOf(paths.roadmapPath),
+        dryRun: true,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.ok).toBe(true);
+    expect(body.dryRun).toBe(true);
+    expect(body.newTaskId).toBe("99");
+    expect(body.removedBacklogId).toBe("101");
+    expect(body.boundCapabilityTheme).toBe("3");
+
+    // Byte-paranoia across ALL THREE legs.
+    for (const [name, snap] of Object.entries(before)) {
+      const path =
+        name === "taskList"
+          ? paths.taskListPath
+          : name === "backlog"
+            ? paths.backlogPath
+            : paths.roadmapPath;
+      const after = await snapshotFile(path);
+      expect(after.bytes.equals(snap.bytes)).toBe(true);
+      expect(after.mtimeMs).toBe(snap.mtimeMs);
+    }
+    // Stage NOTHING, rename NOTHING: no orphaned temps in the dir.
+    expect(await tempsIn(testDir)).toEqual([]);
+    // No mirror artefacts on any leg.
+    expect(existsSync(join(testDir, "tasks"))).toBe(false);
+    expect(existsSync(join(testDir, "backlog"))).toBe(false);
+    expect(existsSync(join(testDir, "roadmap"))).toBe(false);
+  });
+
+  test("a dryRun promote that violates a gate STILL rejects (gates never bypassed)", async () => {
+    const paths = await writeTransactionLedgers();
+    const url = await startServer(paths.taskListPath);
+
+    const res = await fetch(`${url}/api/ledger/transaction`, {
+      method: "POST",
+      body: JSON.stringify({
+        op: "promote",
+        sourceBacklogId: "101",
+        taskRecord: makeNewTask("99", { description: OVER_1500 }),
+        taskListBaseMtime: await mtimeOf(paths.taskListPath),
+        backlogBaseMtime: await mtimeOf(paths.backlogPath),
+        dryRun: true,
+      }),
+    });
+    expect(res.status).toBe(422);
+    expect(((await res.json()) as Record<string, unknown>).error).toBe(
+      "budget-exceeded",
+    );
+    expect(await tempsIn(testDir)).toEqual([]);
+  });
+
+  test("force acts per-request: forced over-budget promote lands with discipline + forced warnings; the next unforced rejects", async () => {
+    const paths = await writeTransactionLedgers();
+    const url = await startServer(paths.taskListPath);
+
+    const forced = await fetch(`${url}/api/ledger/transaction`, {
+      method: "POST",
+      body: JSON.stringify({
+        op: "promote",
+        sourceBacklogId: "101",
+        taskRecord: makeNewTask("99", { description: OVER_1500 }),
+        taskListBaseMtime: await mtimeOf(paths.taskListPath),
+        backlogBaseMtime: await mtimeOf(paths.backlogPath),
+        force: true,
+      }),
+    });
+    expect(forced.status).toBe(200);
+    const forcedBody = (await forced.json()) as {
+      ok: boolean;
+      warnings?: string[];
+    };
+    expect(forcedBody.ok).toBe(true);
+    expect(
+      forcedBody.warnings?.some((w) =>
+        w.startsWith("(forced) budget-exceeded:"),
+      ),
+    ).toBe(true);
+    // U10 invariant 41: discipline warnings {35.30}-scoped to the NEW task.
+    expect(
+      forcedBody.warnings?.some((w) => w.startsWith('Task "99" description is')),
+    ).toBe(true);
+
+    // Per-request only: the next unforced over-budget promote rejects.
+    const unforced = await fetch(`${url}/api/ledger/transaction`, {
+      method: "POST",
+      body: JSON.stringify({
+        op: "promote",
+        sourceBacklogId: "102",
+        taskRecord: makeNewTask("100", { description: OVER_1500 }),
+        taskListBaseMtime: await mtimeOf(paths.taskListPath),
+        backlogBaseMtime: await mtimeOf(paths.backlogPath),
+      }),
+    });
+    expect(unforced.status).toBe(422);
+    expect(((await unforced.json()) as Record<string, unknown>).error).toBe(
+      "budget-exceeded",
+    );
+  });
+
+  test("allowClientName acts per-request on the transaction legs", async () => {
+    process.env[ENV_KEY] = SYNTH_DENYLIST;
+    const paths = await writeTransactionLedgers();
+    const url = await startServer(paths.taskListPath);
+
+    const rejected = await fetch(`${url}/api/ledger/transaction`, {
+      method: "POST",
+      body: JSON.stringify({
+        op: "promote",
+        sourceBacklogId: "101",
+        taskRecord: makeNewTask("99", {
+          description: "Carries a ZorbCo reference.",
+        }),
+        taskListBaseMtime: await mtimeOf(paths.taskListPath),
+        backlogBaseMtime: await mtimeOf(paths.backlogPath),
+      }),
+    });
+    expect(rejected.status).toBe(422);
+    expect(((await rejected.json()) as Record<string, unknown>).error).toBe(
+      "client-name-guard",
+    );
+
+    const allowed = await fetch(`${url}/api/ledger/transaction`, {
+      method: "POST",
+      body: JSON.stringify({
+        op: "promote",
+        sourceBacklogId: "101",
+        taskRecord: makeNewTask("99", {
+          description: "Carries a ZorbCo reference.",
+        }),
+        taskListBaseMtime: await mtimeOf(paths.taskListPath),
+        backlogBaseMtime: await mtimeOf(paths.backlogPath),
+        allowClientName: true,
+      }),
+    });
+    expect(allowed.status).toBe(200);
+    const allowedBody = (await allowed.json()) as {
+      ok: boolean;
+      warnings?: string[];
+    };
+    expect(allowedBody.ok).toBe(true);
+    const override = allowedBody.warnings?.find((w) =>
+      w.startsWith("client-name-guard:"),
+    );
+    expect(override).toBeDefined();
+    expect(override).not.toContain("ZorbCo");
+  });
+
+  test("regenMirrors:false — commit lands, regen skipped and reported suppressed", async () => {
+    const paths = await writeTransactionLedgers();
+    const url = await startServer(paths.taskListPath);
+
+    const res = await fetch(`${url}/api/ledger/transaction`, {
+      method: "POST",
+      body: JSON.stringify({
+        op: "promote",
+        sourceBacklogId: "101",
+        taskRecord: makeNewTask("99"),
+        taskListBaseMtime: await mtimeOf(paths.taskListPath),
+        backlogBaseMtime: await mtimeOf(paths.backlogPath),
+        regenMirrors: false,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.ok).toBe(true);
+    expect(body.mirrorRegen).toBe("suppressed");
+    expect(body.mirrorsWritten).toEqual([]);
+    expect(body.mirrorsDeleted).toEqual([]);
+    // Canonicals committed…
+    const taskList = await readFile(paths.taskListPath, "utf8");
+    expect(taskList).toContain('"99"');
+    const backlog = await readFile(paths.backlogPath, "utf8");
+    expect(backlog).not.toContain('"101"');
+    // …but no mirror artefacts.
+    expect(existsSync(join(testDir, "tasks"))).toBe(false);
+    expect(existsSync(join(testDir, "backlog"))).toBe(false);
+  });
+
+  test("present-but-non-boolean override field on the transaction body → 400 invalid-option", async () => {
+    const paths = await writeTransactionLedgers();
+    const url = await startServer(paths.taskListPath);
+
+    const res = await fetch(`${url}/api/ledger/transaction`, {
+      method: "POST",
+      body: JSON.stringify({
+        op: "promote",
+        sourceBacklogId: "101",
+        taskRecord: makeNewTask("99"),
+        taskListBaseMtime: await mtimeOf(paths.taskListPath),
+        backlogBaseMtime: await mtimeOf(paths.backlogPath),
+        force: "yes",
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as Record<string, unknown>).error).toBe(
+      "invalid-option",
+    );
+  });
+});

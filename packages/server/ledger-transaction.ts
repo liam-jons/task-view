@@ -87,6 +87,7 @@ import {
 } from "./scoped-serialise";
 import { applyRoadmapPatches } from "./patch-apply";
 import { insertRecord, removeRecord } from "./record-mutate";
+import { disciplineWarnings } from "./discipline-warnings";
 import { checkBudgetForCreate } from "./gates/budget-gate";
 import { beforeCollectionIds } from "./gates/record-set-gate";
 import { buildPreWriteGates, runPreWriteGates } from "./gates/gate-chain";
@@ -144,6 +145,24 @@ export interface PromoteTransactionInput {
    */
   force?: boolean;
   /**
+   * ID-90.12 U10 (PRODUCT invariant 33): downgrade a client-name-guard
+   * rejection on ANY leg to a redacted warning and allow the write.
+   * Strictly per-invocation — arrives via the request body; never stored.
+   */
+  allowClientName?: boolean;
+  /**
+   * ID-90.12 U10 (PRODUCT invariant 16): run the FULL three-leg validation
+   * + gate chain and return the would-be result — stage NOTHING, rename
+   * NOTHING (no temps), regen NOTHING, change NO mtime.
+   */
+  dryRun?: boolean;
+  /**
+   * ID-90.12 U10: default true. `false` skips the post-commit mirror regen
+   * and REPORTS it (`mirrorRegen: "suppressed"` — the K2 mapping's
+   * `mirrorStaleReason: 'suppressed'` source).
+   */
+  regenMirrors?: boolean;
+  /**
    * ID-90 U9 (PRODUCT invariant 34): arm the client-name guard's fail-loud
    * posture on EVERY leg — an unset `KH_CLIENT_NAME_DENYLIST` env is the
    * same loud config error an invalid one already is. Threaded from the
@@ -173,8 +192,15 @@ export type PromoteTransactionResult =
       removedBacklogId: string;
       mirrorsWritten: string[];
       mirrorsDeleted: string[];
-      /** Gate soft warnings (e.g. forced budget downgrade — ID-90 U2). */
+      /** Gate soft warnings (e.g. forced budget downgrade — ID-90 U2) +
+       * U10 discipline / guard-override warnings (invariant 41). */
       warnings: string[];
+      /** ID-90.12 U10: present (true) when this was a dry run — nothing
+       * staged, nothing renamed, no mirrors touched (invariant 16). */
+      dryRun?: true;
+      /** ID-90.12 U10: present when `regenMirrors: false` skipped the
+       * post-commit regen (K2 maps to `mirrorStaleReason: 'suppressed'`). */
+      mirrorRegen?: "suppressed";
       /** ID-90 U7: post-commit roadmap mtime — present when the
        * capability-theme leg was bound. */
       roadmapMtime?: string;
@@ -467,7 +493,15 @@ export async function promoteTransaction(
       detail: budget.detail,
     };
   }
-  const warnings = [...budget.warnings];
+  // ID-90.12 U10 (invariant 41): ported disciplineWarnings, {35.30}-scoped
+  // to the promoted Task (KH promote parity — the new task id), lead the
+  // warnings envelope; budget soft-warns / forced downgrades follow.
+  const warnings = [
+    ...disciplineWarnings(insertResult.detected, {
+      taskId: String(insertResult.recordId),
+    }),
+    ...budget.warnings,
+  ];
 
   // ADD leg: splice the new Task into the parsed-ORIGINAL task-list text.
   // `insertRecord` above stays the validation oracle (duplicate-id +
@@ -583,7 +617,11 @@ export async function promoteTransaction(
         requireDenylist: input.requireDenylist,
       },
     }),
-    { content: newTaskContent },
+    // U10: the guard-side override arrives per request (invariant 33).
+    {
+      content: newTaskContent,
+      options: { allowClientName: input.allowClientName === true },
+    },
   );
   if (!taskListVerdict.ok) {
     return {
@@ -609,7 +647,11 @@ export async function promoteTransaction(
         requireDenylist: input.requireDenylist,
       },
     }),
-    { content: backlogContent },
+    // U10: the guard-side override arrives per request (invariant 33).
+    {
+      content: backlogContent,
+      options: { allowClientName: input.allowClientName === true },
+    },
   );
   if (!backlogVerdict.ok) {
     return {
@@ -641,7 +683,11 @@ export async function promoteTransaction(
           requireDenylist: input.requireDenylist,
         },
       }),
-      { content: roadmapContent },
+      // U10: the guard-side override arrives per request (invariant 33).
+      {
+        content: roadmapContent,
+        options: { allowClientName: input.allowClientName === true },
+      },
     );
     if (!roadmapVerdict.ok) {
       return {
@@ -658,6 +704,31 @@ export async function promoteTransaction(
     ...backlogVerdict.warnings,
     ...roadmapVerdictWarnings,
   );
+
+  // ── ID-90.12 U10 dryRun (invariant 16): the FULL validation + per-leg
+  // gate chain ran above on each leg's exact would-be bytes. Return the
+  // would-be result and STAGE NOTHING, RENAME NOTHING — no temps are ever
+  // created, no mirror regen runs, no mtime changes. The reported mtimes
+  // are the CURRENT (unchanged) on-disk values. ─────────────────────────────
+  if (input.dryRun === true) {
+    return {
+      ok: true,
+      dryRun: true,
+      taskListMtime: taskListLoad.mtimeIso,
+      backlogMtime: backlogLoad.mtimeIso,
+      newTaskId: insertResult.recordId,
+      removedBacklogId: removeResult.recordId,
+      mirrorsWritten: [],
+      mirrorsDeleted: [],
+      warnings,
+      ...(input.capabilityTheme && roadmapLoad
+        ? {
+            roadmapMtime: roadmapLoad.mtimeIso,
+            boundCapabilityTheme: input.capabilityTheme.themeId,
+          }
+        : {}),
+    };
+  }
 
   // ── Phase 2: stage all bound legs (durable temps; originals untouched) ───
   let stagedTaskList: StagedWrite | null = null;
@@ -731,8 +802,34 @@ export async function promoteTransaction(
   }
 
   // ── Post-commit: regen mirrors (best-effort; canonical already durable).
+  // ID-90.12 U10 regenMirrors:false — skip the regen entirely and REPORT it
+  // on the result (`mirrorRegen: "suppressed"`).
+  const regenSuppressed = input.regenMirrors === false;
   const mirrorsWritten: string[] = [];
   const mirrorsDeleted: string[] = [];
+  if (regenSuppressed) {
+    const taskListMtime = (await stat(input.taskListPath)).mtime.toISOString();
+    const backlogMtime = (await stat(input.backlogPath)).mtime.toISOString();
+    return {
+      ok: true,
+      taskListMtime,
+      backlogMtime,
+      newTaskId: insertResult.recordId,
+      removedBacklogId: removeResult.recordId,
+      mirrorsWritten,
+      mirrorsDeleted,
+      warnings,
+      mirrorRegen: "suppressed",
+      ...(input.capabilityTheme
+        ? {
+            roadmapMtime: (
+              await stat(input.capabilityTheme.roadmapPath)
+            ).mtime.toISOString(),
+            boundCapabilityTheme: input.capabilityTheme.themeId,
+          }
+        : {}),
+    };
+  }
   try {
     const addMirror = await generateRecordMirror(
       insertResult.detected,
