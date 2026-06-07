@@ -113,6 +113,7 @@ import {
 } from "./gates/record-set-gate";
 import { buildPreWriteGates, runPreWriteGates } from "./gates/gate-chain";
 import { promoteTransaction } from "./ledger-transaction";
+import { withPathLock, withPathLocks } from "./path-mutex";
 import { scanForLedgers } from "./path-resolution";
 import { LOOPBACK_HOSTNAME, resolveServerHostname } from "./loopback-bind";
 import {
@@ -2000,25 +2001,37 @@ async function handlePostTransaction(
     );
   }
 
-  const result = await promoteTransaction({
-    taskListPath: siblings.taskListPath,
-    backlogPath: siblings.backlogPath,
-    taskListBaseMtime: body.taskListBaseMtime,
-    backlogBaseMtime: body.backlogBaseMtime,
-    sourceBacklogId: body.sourceBacklogId,
-    taskRecord: body.taskRecord,
-    // ID-90 U9: invariant-34 arming rides every transaction leg too.
-    requireDenylist: ctx.requireDenylist,
-    ...(body.capabilityThemeId !== undefined && siblings.roadmapPath !== null
-      ? {
-          capabilityTheme: {
-            roadmapPath: siblings.roadmapPath,
-            roadmapBaseMtime: body.roadmapBaseMtime as string,
-            themeId: body.capabilityThemeId as string,
-          },
-        }
-      : {}),
-  });
+  // ID-90 U9: the transaction holds the mutation mutex for EVERY canonical
+  // path it touches (two legs, or three with the capability-theme leg).
+  // withPathLocks acquires in fixed lexicographic order of the resolved
+  // paths (deadlock-free by construction — see path-mutex.ts), so a
+  // concurrent single-document writer on any leg serialises against the
+  // whole transaction (PRODUCT invariants 38, 46, 56).
+  const lockPaths = [siblings.taskListPath, siblings.backlogPath];
+  if (body.capabilityThemeId !== undefined && siblings.roadmapPath !== null) {
+    lockPaths.push(siblings.roadmapPath);
+  }
+  const result = await withPathLocks(lockPaths, () =>
+    promoteTransaction({
+      taskListPath: siblings.taskListPath,
+      backlogPath: siblings.backlogPath,
+      taskListBaseMtime: body.taskListBaseMtime as string,
+      backlogBaseMtime: body.backlogBaseMtime as string,
+      sourceBacklogId: body.sourceBacklogId as string,
+      taskRecord: body.taskRecord,
+      // ID-90 U9: invariant-34 arming rides every transaction leg too.
+      requireDenylist: ctx.requireDenylist,
+      ...(body.capabilityThemeId !== undefined && siblings.roadmapPath !== null
+        ? {
+            capabilityTheme: {
+              roadmapPath: siblings.roadmapPath,
+              roadmapBaseMtime: body.roadmapBaseMtime as string,
+              themeId: body.capabilityThemeId as string,
+            },
+          }
+        : {}),
+    }),
+  );
 
   if (!result.ok) {
     return jsonResponse(
@@ -2145,11 +2158,22 @@ function buildFetchHandler(ctx: RequestContext) {
       return handleGetLedger(ctx);
     }
 
+    // ID-90 U9: every CANONICAL-mutating handler body runs under the
+    // per-canonical-path mutation mutex (PRODUCT invariants 38 + 46) —
+    // closing the intra-daemon TOCTOU window between the §5.4 mtime check
+    // and the atomic-write rename. The transaction acquires its two/three
+    // paths inside handlePostTransaction (withPathLocks — fixed
+    // lexicographic order) because the sibling paths are only known after
+    // body validation. Regen rides the lock too so a mirror regen can
+    // never read the canonical mid-write.
+
     // POST /api/ledger/record — record-level CREATE (ID-20.15). Exact path
     // (no recordId) — matched BEFORE the /:recordId regex below so the
     // collection-level POST is not swallowed by the per-record route.
     if (path === "/api/ledger/record" && request.method === "POST") {
-      return handlePostRecord(ctx, request);
+      return withPathLock(ctx.ledgerPath, () =>
+        handlePostRecord(ctx, request),
+      );
     }
 
     // POST /api/ledger/transaction — cross-ledger atomic Promote (ID-20.15).
@@ -2168,7 +2192,9 @@ function buildFetchHandler(ctx: RequestContext) {
     if (subtaskCollectionMatch) {
       const taskId = decodeURIComponent(subtaskCollectionMatch[1]);
       if (request.method === "POST") {
-        return handlePostSubtasks(ctx, taskId, request);
+        return withPathLock(ctx.ledgerPath, () =>
+          handlePostSubtasks(ctx, taskId, request),
+        );
       }
       return jsonResponse(
         { ok: false, error: "method-not-allowed" },
@@ -2183,7 +2209,9 @@ function buildFetchHandler(ctx: RequestContext) {
       const taskId = decodeURIComponent(subtaskItemMatch[1]);
       const subId = decodeURIComponent(subtaskItemMatch[2]);
       if (request.method === "DELETE") {
-        return handleDeleteSubtask(ctx, taskId, subId, request);
+        return withPathLock(ctx.ledgerPath, () =>
+          handleDeleteSubtask(ctx, taskId, subId, request),
+        );
       }
       return jsonResponse(
         { ok: false, error: "method-not-allowed" },
@@ -2199,10 +2227,14 @@ function buildFetchHandler(ctx: RequestContext) {
         return handleGetRecord(ctx, recordId);
       }
       if (request.method === "PATCH") {
-        return handlePatchRecord(ctx, recordId, request);
+        return withPathLock(ctx.ledgerPath, () =>
+          handlePatchRecord(ctx, recordId, request),
+        );
       }
       if (request.method === "DELETE") {
-        return handleDeleteRecord(ctx, recordId, request);
+        return withPathLock(ctx.ledgerPath, () =>
+          handleDeleteRecord(ctx, recordId, request),
+        );
       }
       return jsonResponse(
         { ok: false, error: "method-not-allowed" },
@@ -2212,7 +2244,7 @@ function buildFetchHandler(ctx: RequestContext) {
 
     // POST /api/ledger/regen
     if (path === "/api/ledger/regen" && request.method === "POST") {
-      return handlePostRegen(ctx, request);
+      return withPathLock(ctx.ledgerPath, () => handlePostRegen(ctx, request));
     }
 
     return jsonResponse(
