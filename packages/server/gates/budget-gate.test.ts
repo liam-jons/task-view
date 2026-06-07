@@ -420,3 +420,66 @@ describe("checkBudgetForCreate", () => {
     expect(outcome).toEqual({ ok: true, warnings: [] });
   });
 });
+
+// ── Multi-violation enumeration (ID-90.12 U10 — check-90-7 annotation) ───────
+//
+// Multi-patch rejections previously reported only the FIRST over-budget
+// mutated field; subsequent mutated violations were silently dropped from the
+// detail string. U10 enumerates ALL of them so the operator can fix every
+// field in one pass.
+
+describe("multi-violation enumeration (ID-90.12 U10)", () => {
+  test("two over-budget mutated fields on ONE record both appear in the detail", () => {
+    const snapshot = makeTaskList({
+      description: OVER_1500,
+      status_note: OVER_300,
+    });
+    const outcome = checkBudgetForPatches("task-list", snapshot, [
+      { fieldPath: ["tasks", "7", "description"], newValue: OVER_1500 },
+      { fieldPath: ["tasks", "7", "status_note"], newValue: OVER_300 },
+    ]);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.error).toBe("budget-exceeded");
+      expect(outcome.detail).toContain(
+        "description is 1510 chars (budget 1500, over by 10) on task 7",
+      );
+      expect(outcome.detail).toContain(
+        "status_note is 310 chars (budget 300, over by 10) on task 7",
+      );
+    }
+  });
+
+  test("over-budget mutated fields on DIFFERENT records in one batch are all enumerated", () => {
+    const snapshot = makeTaskList({ description: OVER_1500 });
+    (
+      (snapshot.tasks[0] as unknown as Record<string, unknown>)
+        .subtasks as Array<Record<string, unknown>>
+    )[0].description = OVER_250;
+    const outcome = checkBudgetForPatches("task-list", snapshot, [
+      { fieldPath: ["tasks", "7", "description"], newValue: OVER_1500 },
+      {
+        fieldPath: ["tasks", "7", "subtasks", "1", "description"],
+        newValue: OVER_250,
+      },
+    ]);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.detail).toContain("on task 7");
+      expect(outcome.detail).toContain("on subtask 7.1");
+    }
+  });
+
+  test("single-violation detail keeps the exact pre-U10 single-line shape", () => {
+    const snapshot = makeTaskList({ description: OVER_1500 });
+    const outcome = checkBudgetForPatches("task-list", snapshot, [
+      { fieldPath: ["tasks", "7", "description"], newValue: OVER_1500 },
+    ]);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.detail).toBe(
+        "description is 1510 chars (budget 1500, over by 10) on task 7",
+      );
+    }
+  });
+});

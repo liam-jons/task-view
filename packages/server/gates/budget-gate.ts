@@ -131,7 +131,10 @@ function sweepRecordBudgets(
     return { ok: true, warnings: [] };
   const budgets = LEDGER_BUDGETS[gate.recordKind] as Record<string, number>;
   const warnings: string[] = [];
-  let mutatedViolation: { detail: string } | null = null;
+  // ID-90.12 U10 (check-90-7 annotation): enumerate ALL over-budget mutated
+  // fields rather than keeping only the first — subsequent mutated violations
+  // were previously dropped from the detail string.
+  const mutatedViolations: string[] = [];
   for (const [field, budget] of Object.entries(budgets)) {
     const value = gate.record[field];
     if (typeof value !== "string") continue;
@@ -147,15 +150,15 @@ function sweepRecordBudgets(
       return { ok: false, detail: line, warnings: [] };
     }
     if (mutatedFields.has(field)) {
-      if (!mutatedViolation) mutatedViolation = { detail: line };
+      mutatedViolations.push(line);
     } else {
       // Untouched over-budget field — soft warning, never a rejection
       // (the ID-35.26 untouched-field discipline escape).
       warnings.push(`budget (untouched): ${line}`);
     }
   }
-  if (mutatedViolation)
-    return { ok: false, detail: mutatedViolation.detail, warnings };
+  if (mutatedViolations.length > 0)
+    return { ok: false, detail: mutatedViolations.join("; "), warnings };
   return { ok: true, warnings };
 }
 
@@ -334,16 +337,19 @@ export function checkBudgetForPatches(
   }
 
   const warnings: string[] = [];
-  let violation: { detail: string } | null = null;
+  // ID-90.12 U10 (check-90-7 annotation): enumerate violations across ALL
+  // touched records in the batch, not just the first failing record.
+  const violationDetails: string[] = [];
   for (const { gate, mutatedFields } of groups.values()) {
     const result = sweepRecordBudgets(gate, mutatedFields);
-    if (!result.ok && !violation) violation = { detail: result.detail };
+    if (!result.ok) violationDetails.push(result.detail);
     warnings.push(...result.warnings);
   }
 
-  const merged: CheckBudgetResult = violation
-    ? { ok: false, detail: violation.detail, warnings }
-    : { ok: true, warnings };
+  const merged: CheckBudgetResult =
+    violationDetails.length > 0
+      ? { ok: false, detail: violationDetails.join("; "), warnings }
+      : { ok: true, warnings };
   return applyForce(merged, options);
 }
 
