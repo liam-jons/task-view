@@ -226,6 +226,25 @@ describe("checkBudget — field-update mode (mutatedField set)", () => {
     }
   });
 
+  // KH port (ID-90.13 U11): ledger-cli-budget.test.ts ID-35.27 #6 — the
+  // UNTOUCHED-field warning is ALSO subject-discriminated (the dotted
+  // `subtask <taskId>.<subId>` label, never `task <subId>`).
+  test("untouched-field warning on a SUBTASK is subject-discriminated (ID-35.27 port)", () => {
+    const result = checkBudget({
+      recordKind: "subtask",
+      recordId: 6,
+      parentId: "49",
+      record: { description: OVER_250, testStrategy: "short" },
+      mutatedField: "testStrategy",
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings[0]).toContain("on subtask 49.6");
+      expect(result.warnings[0]).not.toContain("task 6");
+    }
+  });
+
   test("rejection carries the untouched warnings alongside", () => {
     const result = checkBudget({
       recordKind: "task",
@@ -418,6 +437,37 @@ describe("checkBudgetForCreate", () => {
       { force: false },
     );
     expect(outcome).toEqual({ ok: true, warnings: [] });
+  });
+
+  // KH ports (ID-90.13 U11): ledger-cli-budget.test.ts ID-35.27 — the
+  // budget-exceeded SUBJECT is recordKind-discriminated on every create
+  // surface (`theme <id>` / `item <id>`, matching the task/subtask labels
+  // asserted above).
+  test("over-budget theme create detail reads `theme <id>` (ID-35.27 port)", () => {
+    const outcome = checkBudgetForCreate(
+      "theme",
+      { id: "9", description: "fine", notes: "n".repeat(310) },
+      { force: false },
+    );
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.error).toBe("budget-exceeded");
+      expect(outcome.detail).toContain("notes is 310 chars");
+      expect(outcome.detail).toContain("on theme 9");
+    }
+  });
+
+  test("over-budget item create detail reads `item <id>` (ID-35.27 port)", () => {
+    const outcome = checkBudgetForCreate(
+      "item",
+      { id: "101", title: "t".repeat(90), description: "ok" },
+      { force: false },
+    );
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.detail).toContain("title is 90 chars");
+      expect(outcome.detail).toContain("on item 101");
+    }
   });
 });
 

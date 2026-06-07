@@ -650,6 +650,38 @@ describe("scopedSpliceSerialise — insert/remove byte stability", () => {
     expect(r.kind).toBe("walk-error");
   });
 
+  // KH port (ID-90.13 U11): __tests__/lib/ledger/scoped-serialise.test.ts —
+  // "a subtask insert with the wrong id type (string) fails schema-error".
+  test("a subtask insert with the wrong id type (string) fails schema-error", () => {
+    const original = taskListFixtureText();
+    const hostId = (JSON.parse(original) as { tasks: { id: string }[] })
+      .tasks[0].id;
+    const r = scopedSpliceSerialise(original, {
+      kind: "insert",
+      collection: "subtasks",
+      taskId: hostId,
+      record: {
+        ...newSubtaskRecord(1),
+        id: "not-a-number" as unknown as number,
+      },
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.kind).toBe("schema-error");
+  });
+
+  // KH port (ID-90.13 U11): the splice path's unknown-document rejection —
+  // the scopedSerialise twin exists above; the splice surface needs its own.
+  test("unknown-document when the splice target is not a recognised ledger", () => {
+    const r = scopedSpliceSerialise(
+      JSON.stringify({ document_name: "Not A Ledger", tasks: [] }),
+      { kind: "insert", collection: "tasks", record: newTaskRecord("1") },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.kind).toBe("unknown-document");
+  });
+
   test("a no-op remove (id absent) re-validates and round-trips byte-identically", () => {
     const original = taskListFixtureText();
     const r = scopedSpliceSerialise(original, {
