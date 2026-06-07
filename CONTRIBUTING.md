@@ -33,7 +33,7 @@ shall be dual licensed as above, without any additional terms or conditions.
 
 ## Re-vendoring the Knowledge Hub Zod schemas (OQ-T2 ratified default)
 
-The `packages/schemas/src/` directory carries vendored copies of the four
+The `packages/schemas/src/` directory carries vendored copies of the six
 Knowledge Hub Zod validation files:
 
 - `packages/schemas/src/task-list-schema.ts`
@@ -44,17 +44,23 @@ Knowledge Hub Zod validation files:
   (← KH `lib/validation/backlog-schema.ts`)
 - `packages/schemas/src/work-status.ts`
   (← KH `lib/validation/work-status.ts`)
+- `packages/schemas/src/ledger-budgets.ts`
+  (← KH `lib/validation/ledger-budgets.ts` — ID-90 U0 relocation twin; the KH
+  copy stays canonical through Phase 3)
+- `packages/schemas/src/umbrellas-schema.ts`
+  (← KH `lib/validation/umbrellas-schema.ts` — ID-90 U8 umbrellas document
+  kind)
 
 These are **frozen copies**. task-view does not import from KH `lib/validation/`
 at runtime; per PRODUCT inv 3, task-view has zero KH runtime dependencies.
 
-When KH evolves any of the four schemas (a new status enum value, an additional
+When KH evolves any of the six schemas (a new status enum value, an additional
 required field, a renamed property), the changes flow into task-view via an
 explicit **manual annotated re-vendor**:
 
 ### Procedure
 
-1. **Compare the four files between repositories.** Use `diff` (or a side-by-
+1. **Compare the six files between repositories.** Use `diff` (or a side-by-
    side review tool) to identify the changes that arrived in KH since the last
    re-vendor:
 
@@ -64,9 +70,10 @@ explicit **manual annotated re-vendor**:
      packages/schemas/src/task-list-schema.ts
    ```
 
-   Repeat for `roadmap-schema.ts`, `backlog-schema.ts`, `work-status.ts`.
+   Repeat for `roadmap-schema.ts`, `backlog-schema.ts`, `work-status.ts`,
+   `ledger-budgets.ts`, `umbrellas-schema.ts`.
 
-2. **Copy the new file contents over.** The bundle is four files, not a
+2. **Copy the new file contents over.** The bundle is six files, not a
    directory tree, so a single `cp` per file is sufficient:
 
    ```sh
