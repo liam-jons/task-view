@@ -181,6 +181,16 @@ export interface PromoteTransactionInput {
    * awaited yield between the adjacent renames.
    */
   faultBetweenCommits?: () => void;
+  /**
+   * Test-only (ID-90.13 U11; check-90-10 K5 annotation — crash-point 2):
+   * SYNC fault fired AFTER the roadmap link rename, before the backlog
+   * REMOVE-side rename. Proves the second residual window of the three-leg
+   * ordering: a kill there leaves the Task present AND the theme linked
+   * with the backlog item still present — again a benign, self-healing
+   * transient duplicate, never a lost record. Synchronous for the same
+   * reason as `faultBetweenCommits`.
+   */
+  faultAfterLinkCommit?: () => void;
 }
 
 export type PromoteTransactionResult =
@@ -785,6 +795,7 @@ export async function promoteTransaction(
     await commitStagedWrite(stagedTaskList); // ADD side first
     if (input.faultBetweenCommits) input.faultBetweenCommits();
     if (stagedRoadmap) commitStagedWriteSync(stagedRoadmap); // link leg — sync
+    if (input.faultAfterLinkCommit) input.faultAfterLinkCommit(); // crash-point 2
     commitStagedWriteSync(stagedBacklog); // REMOVE side LAST — sync
   } catch (err) {
     // A rename failure here is the unrecoverable residual window. Surface a

@@ -686,6 +686,50 @@ describe("promoteTransaction — ID-90 U7 capability-theme third leg", () => {
     expect(await readFile(s.roadmapPath, "utf8")).toBe(s.roadmapContent);
   });
 
+  test("crash-point 2: a kill AFTER the roadmap rename leaves Task present + theme LINKED + backlog item present — never a lost record (ID-90.13 U11, check-90-10 K5)", async () => {
+    const s = await setupThreeLeg();
+    const result = await promoteTransaction({
+      taskListPath: s.taskListPath,
+      backlogPath: s.backlogPath,
+      taskListBaseMtime: s.taskListMtime,
+      backlogBaseMtime: s.backlogMtime,
+      sourceBacklogId: "101",
+      taskRecord: makeNewTask("42"),
+      capabilityTheme: {
+        roadmapPath: s.roadmapPath,
+        roadmapBaseMtime: s.roadmapMtime,
+        themeId: "7",
+      },
+      faultAfterLinkCommit: () => {
+        throw new Error("simulated kill (after the roadmap link rename)");
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.status).toBe(500);
+    expect(result.error).toBe("commit-failed");
+
+    // Crash-point 2 sits between the link rename and the REMOVE rename:
+    // the ADD leg committed — the Task is present...
+    const taskList = JSON.parse(await readFile(s.taskListPath, "utf8")) as {
+      tasks: { id: string }[];
+    };
+    expect(taskList.tasks.some((t) => t.id === "42")).toBe(true);
+    // ...the LINK leg committed too — the theme lists the new task id...
+    const roadmap = JSON.parse(await readFile(s.roadmapPath, "utf8")) as {
+      themes: { id: string; linked_tasks: string[] }[];
+    };
+    expect(roadmap.themes[0].linked_tasks).toEqual(["42"]);
+    // ...and the REMOVE leg has NOT run: the backlog item survives. The
+    // worst case is again a visible, self-healing transient duplicate
+    // (re-running the promote heals it — the link push is idempotent);
+    // never a lost record.
+    const backlog = JSON.parse(await readFile(s.backlogPath, "utf8")) as {
+      items: { id: string }[];
+    };
+    expect(backlog.items.some((i) => i.id === "101")).toBe(true);
+  });
+
   test("idempotent re-link: theme already lists the task id → exactly ONE entry, roadmap bytes unchanged", async () => {
     const s = await setupThreeLeg(["42"]);
     const result = await promoteTransaction({
