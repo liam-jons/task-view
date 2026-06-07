@@ -15,7 +15,8 @@
  *     one envelope (invariant 41).
  *   - `regenMirrors: false` — write lands, regen skipped and REPORTED
  *     (`mirrorRegen: "suppressed"`).
- *   - present-but-non-boolean override field → 400 `invalid-option`.
+ *   - present-but-non-boolean override field → 400 `invalid-json` (the
+ *     established body-malformation code; the detail names the field).
  *
  * Network binds need `dangerouslyDisableSandbox: true` under the Claude
  * harness. Synthetic fixtures only (AC-I) — the established ZorbCo family.
@@ -592,7 +593,7 @@ describe("regenMirrors: false — write lands, regen skipped and reported", () =
 // ── invalid option values ────────────────────────────────────────────────────
 
 describe("present-but-non-boolean override fields", () => {
-  test("PATCH with dryRun: 'yes' → 400 invalid-option, nothing written", async () => {
+  test("PATCH with dryRun: 'yes' → 400 invalid-json, nothing written", async () => {
     const ledgerPath = await writeLedger(makeTaskListDoc());
     const url = await startServer(ledgerPath);
     const before = await snapshotFile(ledgerPath);
@@ -609,7 +610,7 @@ describe("present-but-non-boolean override fields", () => {
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body.error).toBe("invalid-option");
+    expect(body.error).toBe("invalid-json");
     expect(String(body.detail)).toContain("dryRun");
 
     const after = await snapshotFile(ledgerPath);
@@ -906,7 +907,7 @@ describe("transaction (promote) — U10 envelope", () => {
     expect(existsSync(join(testDir, "backlog"))).toBe(false);
   });
 
-  test("present-but-non-boolean override field on the transaction body → 400 invalid-option", async () => {
+  test("present-but-non-boolean override field on the transaction body → 400 invalid-json", async () => {
     const paths = await writeTransactionLedgers();
     const url = await startServer(paths.taskListPath);
 
@@ -923,7 +924,7 @@ describe("transaction (promote) — U10 envelope", () => {
     });
     expect(res.status).toBe(400);
     expect(((await res.json()) as Record<string, unknown>).error).toBe(
-      "invalid-option",
+      "invalid-json",
     );
   });
 });

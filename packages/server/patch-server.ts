@@ -218,7 +218,9 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
  * {dryRun?, force?, allowClientName?, regenMirrors?} from a mutation body
  * (T-3 ratified — JSON body fields, never headers; defaults applied per
  * request, NOTHING stored server-side — PRODUCT invariants 16, 26, 33).
- * A present non-boolean value is a 400 `invalid-option` response.
+ * A present non-boolean value is a 400 `invalid-json` response (the
+ * established body-malformation family — no separate vocabulary entry;
+ * the detail string carries the field-specific message).
  */
 function mutationOptionsOrError(
   body: Record<string, unknown>,
@@ -230,7 +232,7 @@ function mutationOptionsOrError(
   return {
     ok: false,
     response: jsonResponse(
-      { ok: false, error: "invalid-option", detail: parsed.detail },
+      { ok: false, error: "invalid-json", detail: parsed.detail },
       { status: 400 },
     ),
   };

@@ -272,9 +272,10 @@ async function loadLedger(
     // body makes detectSchema throw ZodError (detect-schema.ts deliberately
     // does not swallow — PRODUCT inv 48). Uncaught, that rejection escaped
     // handlePostTransaction as a connection reset. Mirror the
-    // ledger-parse-failed shape above; redaction-safe summary only (issue
-    // count + first issue path) — never the verbatim issues, which can embed
-    // document content.
+    // ledger-parse-failed shape above (SAME code — minimal-vocabulary
+    // posture: the detail string carries the parse-vs-schema distinction);
+    // redaction-safe summary only (issue count + first issue path) — never
+    // the verbatim issues, which can embed document content.
     const summary =
       err instanceof ZodError
         ? `${err.issues.length} issue${err.issues.length === 1 ? "" : "s"}; first at ${
@@ -285,7 +286,7 @@ async function loadLedger(
       error: {
         ok: false,
         status: 500,
-        error: "ledger-schema-invalid",
+        error: "ledger-parse-failed",
         detail: `${path}: schema validation failed (${summary})`,
       },
     };

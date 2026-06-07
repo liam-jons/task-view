@@ -346,10 +346,11 @@ describe("promoteTransaction — schema-invalid sibling surfaces structured erro
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      // Mirrors the ledger-parse-failed class: the on-disk sibling is
-      // corrupt — a server-state failure, not a bad request.
+      // SAME code as the parse-failure class (minimal-vocabulary posture):
+      // the on-disk sibling is corrupt — a server-state failure, not a bad
+      // request. The detail string carries the parse-vs-schema distinction.
       expect(result.status).toBe(500);
-      expect(result.error).toBe("ledger-schema-invalid");
+      expect(result.error).toBe("ledger-parse-failed");
       // Detail names the file + a redaction-safe summary (issue count +
       // first issue path) — never the verbatim issues / document content.
       expect(result.detail).toContain(s.backlogPath);
