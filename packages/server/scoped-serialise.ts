@@ -39,27 +39,26 @@
  * ongoing writes (PRODUCT invariant 20).
  *
  * ── Umbrellas (U1 extension) ────────────────────────────────────────────────────
- * `umbrellas.json` (document_name: "umbrellas") is discriminated locally via
- * the vendored `UmbrellasSchema` until U8 registers `'umbrellas'` as the fourth
- * `KNOWN_DOCUMENT_NAMES` literal in detect-schema.ts — at which point the local
- * pre-check can delegate to `detectSchema` directly. Umbrella membership edits
- * are field patches on `['umbrellas', id, field]` (invariant 50: splices do not
- * apply — the umbrella id-set is mutated via membership fields, not record
- * insert/remove).
+ * `umbrellas.json` (document_name: "umbrellas") is discriminated by
+ * `detectSchema` directly — U8 (ID-90 record 10) registered `'umbrellas'` as
+ * the fourth `KNOWN_DOCUMENT_NAMES` literal in detect-schema.ts, retiring the
+ * local `UmbrellasSchema` pre-check this module carried between records 6 and
+ * 10. Umbrella membership edits are field patches on `['umbrellas', id,
+ * field]` (invariant 50: splices do not apply — the umbrella id-set is
+ * mutated via membership fields, not record insert/remove).
  */
 
-import { detectSchema } from "./detect-schema";
-import { UmbrellasSchema } from "@task-view/schemas/umbrellas";
+import { detectSchema, type DetectSchemaResult } from "./detect-schema";
 import { applyValueToLeaf, type FieldPatch } from "./patch-apply";
 
 // ── document-kind discrimination ─────────────────────────────────────────────────
 
 /**
- * The document kinds the scoped serialiser can walk. Extends the
- * detect-schema 3-kind union with `'umbrellas'` (U1 extension; the
- * detect-schema registration proper lands at U8).
+ * The document kinds the scoped serialiser can walk — every known
+ * detect-schema kind (U8 registered `'umbrellas'` as the fourth, so the
+ * record-6 local extension union is retired in favour of the registry).
  */
-export type ScopedDocumentKind = "task-list" | "roadmap" | "backlog" | "umbrellas";
+export type ScopedDocumentKind = Exclude<DetectSchemaResult["kind"], "unknown">;
 
 type ScopedDetectResult =
   | { kind: ScopedDocumentKind }
@@ -67,20 +66,12 @@ type ScopedDetectResult =
 
 /**
  * Discriminate + validate a parsed-JSON value for scoped serialisation.
- * Umbrellas documents are validated via the vendored `UmbrellasSchema`
- * (local pre-check until U8); everything else defers to `detectSchema`.
+ * Delegates to `detectSchema` for all four known kinds (the record-6 local
+ * umbrellas pre-check is retired — the U8 registration supersedes it).
  * Throws `ZodError` when the document matches a kind but fails its schema —
  * identical contract to `detectSchema`.
  */
 function detectScopedKind(parsed: unknown): ScopedDetectResult {
-  if (
-    parsed &&
-    typeof parsed === "object" &&
-    (parsed as { document_name?: unknown }).document_name === "umbrellas"
-  ) {
-    UmbrellasSchema.parse(parsed); // throws ZodError on violation
-    return { kind: "umbrellas" };
-  }
   const detected = detectSchema(parsed);
   if (detected.kind === "unknown") {
     return { kind: "unknown", documentName: detected.documentName };

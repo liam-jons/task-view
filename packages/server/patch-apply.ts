@@ -30,6 +30,10 @@
  *       ['themes', themeId, 'status' | 'notes' | 'title' | ...]
  *   - Backlog:
  *       ['items', itemId, 'description' | 'status' | ...]
+ *   - Umbrellas (ID-90 U8 — PRODUCT inv 49–50):
+ *       ['umbrellas', umbrellaId, 'task_ids' | 'status' | 'phase' | ...]
+ *     Membership edits are field PATCHes on task_ids[] — the umbrella
+ *     id-set itself never changes through this walk (record-set delta none).
  *
  * Why id-based not index-based: the canonical JSON ordering is the
  * Planner's decision; clients shouldn't have to track indices across
@@ -41,6 +45,11 @@ import { TaskSchema, SubtaskSchema } from "@task-view/schemas/task-list";
 import { RoadmapSchema, type Roadmap } from "@task-view/schemas/roadmap";
 import { RoadmapThemeSchema } from "@task-view/schemas/roadmap";
 import { BacklogSchema, BacklogItemSchema, type BacklogDocument } from "@task-view/schemas/backlog";
+import {
+  UmbrellasSchema,
+  UmbrellaEntrySchema,
+  type Umbrellas,
+} from "@task-view/schemas/umbrellas";
 import { ZodError } from "zod";
 import type { DetectSchemaResult } from "./detect-schema";
 
@@ -74,6 +83,10 @@ const TASK_KNOWN_FIELDS = new Set(Object.keys(TaskSchema.shape));
 const SUBTASK_KNOWN_FIELDS = new Set(Object.keys(SubtaskSchema.shape));
 const ROADMAP_THEME_KNOWN_FIELDS = new Set(Object.keys(RoadmapThemeSchema.shape));
 const BACKLOG_ITEM_KNOWN_FIELDS = new Set(Object.keys(BacklogItemSchema.shape));
+// ID-90 U8: umbrellas walk — same schema-keyset guard discipline. The
+// UmbrellaEntrySchema IS `.strict()`, but the keyset guard keeps the
+// walk-error-vs-schema-error boundary identical to the other three kinds.
+const UMBRELLA_KNOWN_FIELDS = new Set(Object.keys(UmbrellaEntrySchema.shape));
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -396,6 +409,59 @@ function applyBacklogPatch(
   return null;
 }
 
+/**
+ * Walk a fieldPath into an Umbrellas snapshot and apply a single patch
+ * (ID-90 U8). Mirrors the serialiser's umbrellas walk in scoped-serialise.ts
+ * (record 6) — membership edits address `['umbrellas', id, 'task_ids']`.
+ */
+function applyUmbrellasPatch(
+  snapshot: Umbrellas,
+  patch: FieldPatch,
+): null | { fieldPath: string[]; detail: string } {
+  const [head, umbrellaId, ...rest] = patch.fieldPath;
+  if (head !== "umbrellas") {
+    return {
+      fieldPath: patch.fieldPath,
+      detail: `Umbrellas patches must start with 'umbrellas'; got "${head ?? "<empty>"}".`,
+    };
+  }
+  if (umbrellaId == null || umbrellaId === "") {
+    return {
+      fieldPath: patch.fieldPath,
+      detail: `Missing umbrella id at fieldPath[1].`,
+    };
+  }
+  const umbrellaIdx = snapshot.umbrellas.findIndex((u) => u.id === umbrellaId);
+  if (umbrellaIdx === -1) {
+    return {
+      fieldPath: patch.fieldPath,
+      detail: `Umbrella id "${umbrellaId}" not found in canonical umbrellas[].`,
+    };
+  }
+  const umbrella = snapshot.umbrellas[umbrellaIdx];
+
+  if (rest.length !== 1) {
+    return {
+      fieldPath: patch.fieldPath,
+      detail: `Umbrella fieldPath must address a single field after the umbrellaId; got ${rest.length} additional segment(s).`,
+    };
+  }
+  const field = rest[0];
+  if (!UMBRELLA_KNOWN_FIELDS.has(field)) {
+    return {
+      fieldPath: patch.fieldPath,
+      detail: `Field "${field}" is not a known field on Umbrella records. Known fields: ${[...UMBRELLA_KNOWN_FIELDS].join(", ")}.`,
+    };
+  }
+  const applyErr = applyValueToLeaf(
+    umbrella as unknown as Record<string, unknown>,
+    field,
+    patch,
+  );
+  if (applyErr) return { fieldPath: patch.fieldPath, detail: applyErr };
+  return null;
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
@@ -474,6 +540,33 @@ export function applyBacklogPatches(
 }
 
 /**
+ * Apply a batch of FieldPatch entries to an Umbrellas canonical snapshot
+ * and re-parse via UmbrellasSchema (ID-90 U8). Same single-validation-pass
+ * + clone-on-entry contract as the other three appliers.
+ */
+export function applyUmbrellasPatches(
+  snapshot: Umbrellas,
+  patches: readonly FieldPatch[],
+): ApplyPatchesResult<Umbrellas> {
+  if (patches.length === 0) return { ok: false, kind: "empty-patches" };
+  for (const patch of patches) {
+    const err = applyUmbrellasPatch(snapshot, patch);
+    if (err) {
+      return { ok: false, kind: "walk-error", fieldPath: err.fieldPath, detail: err.detail };
+    }
+  }
+  try {
+    const parsed = UmbrellasSchema.parse(snapshot);
+    return { ok: true, parsed };
+  } catch (err) {
+    if (err instanceof ZodError) {
+      return { ok: false, kind: "schema-error", zodError: err };
+    }
+    throw err;
+  }
+}
+
+/**
  * Dispatch a patch batch to the per-kind applier. Returns the
  * discriminated-union result with a matching `kind` payload.
  *
@@ -484,7 +577,7 @@ export function applyBacklogPatches(
 export function applyPatches(
   detected: DetectSchemaResult,
   patches: readonly FieldPatch[],
-): ApplyPatchesResult<TaskList | Roadmap | BacklogDocument> {
+): ApplyPatchesResult<TaskList | Roadmap | BacklogDocument | Umbrellas> {
   if (detected.kind === "unknown") {
     throw new Error(
       `Cannot apply patches to unknown ledger kind (document_name: ${detected.documentName ?? "null"}).`,
@@ -497,6 +590,10 @@ export function applyPatches(
   }
   if (detected.kind === "roadmap") {
     return applyRoadmapPatches(detected.data, patches);
+  }
+  // ID-90 U8: fourth dispatcher arm — the umbrellas walk.
+  if (detected.kind === "umbrellas") {
+    return applyUmbrellasPatches(detected.data, patches);
   }
   return applyBacklogPatches(detected.data, patches);
 }

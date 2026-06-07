@@ -53,7 +53,13 @@ import type {
   BacklogItem,
 } from "@task-view/ui/record-view/types";
 
-export type KnownDetected = Exclude<DetectSchemaResult, { kind: "unknown" }>;
+// ID-90 U8: the viewer renders the three MIRRORED kinds only — umbrellas
+// documents have no record-view surface (PRODUCT invariant 53); callers
+// guard the umbrellas kind before invoking renderViewer.
+export type KnownDetected = Exclude<
+  DetectSchemaResult,
+  { kind: "unknown" | "umbrellas" }
+>;
 
 export interface RenderViewerInput {
   detected: KnownDetected;

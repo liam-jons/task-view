@@ -29,6 +29,10 @@ import {
   BacklogSchema,
   type BacklogDocument,
 } from "@task-view/schemas/backlog";
+import {
+  UmbrellasSchema,
+  type Umbrellas,
+} from "@task-view/schemas/umbrellas";
 import { ZodError } from "zod";
 
 import type { DetectSchemaResult } from "./detect-schema";
@@ -80,6 +84,10 @@ function existingIds(detected: KnownDetected): Set<string> {
   if (detected.kind === "roadmap") {
     return new Set(detected.data.themes.map((t) => t.id));
   }
+  // ID-90 U8: umbrellas — kebab-case umbrella entry ids.
+  if (detected.kind === "umbrellas") {
+    return new Set(detected.data.umbrellas.map((u) => u.id));
+  }
   return new Set(detected.data.items.map((it) => it.id));
 }
 
@@ -95,12 +103,15 @@ function reparse(
   kind: KnownDetected["kind"],
   raw: unknown,
 ):
-  | { ok: true; data: TaskList | Roadmap | BacklogDocument }
+  | { ok: true; data: TaskList | Roadmap | BacklogDocument | Umbrellas }
   | { ok: false; zodError: ZodError } {
   try {
     if (kind === "task-list")
       return { ok: true, data: TaskListSchema.parse(raw) };
     if (kind === "roadmap") return { ok: true, data: RoadmapSchema.parse(raw) };
+    // ID-90 U8: fourth known kind.
+    if (kind === "umbrellas")
+      return { ok: true, data: UmbrellasSchema.parse(raw) };
     return { ok: true, data: BacklogSchema.parse(raw) };
   } catch (err) {
     if (err instanceof ZodError) return { ok: false, zodError: err };
@@ -110,11 +121,14 @@ function reparse(
 
 function rebuildDetected(
   kind: KnownDetected["kind"],
-  data: TaskList | Roadmap | BacklogDocument,
+  data: TaskList | Roadmap | BacklogDocument | Umbrellas,
 ): KnownDetected {
   if (kind === "task-list")
     return { kind: "task-list", data: data as TaskList };
   if (kind === "roadmap") return { kind: "roadmap", data: data as Roadmap };
+  // ID-90 U8: fourth known kind.
+  if (kind === "umbrellas")
+    return { kind: "umbrellas", data: data as Umbrellas };
   return { kind: "backlog", data: data as BacklogDocument };
 }
 

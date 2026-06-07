@@ -20,12 +20,14 @@ import {
   applyTaskListPatches,
   applyRoadmapPatches,
   applyBacklogPatches,
+  applyUmbrellasPatches,
   applyPatches,
   type FieldPatch,
 } from "./patch-apply";
 import { TaskListSchema } from "@task-view/schemas/task-list";
 import { RoadmapSchema } from "@task-view/schemas/roadmap";
 import { BacklogSchema } from "@task-view/schemas/backlog";
+import { UmbrellasSchema } from "@task-view/schemas/umbrellas";
 
 // ── Fixture builders ──────────────────────────────────────────────────────────
 
@@ -787,5 +789,139 @@ describe("applyRoadmapPatches / applyBacklogPatches — appendText op (--append 
     if (result.ok) {
       expect(result.parsed.items[0].notes).toBe("Fresh note.");
     }
+  });
+});
+
+// ── ID-90 U8: umbrellas walk (PRODUCT invariants 49–50) ──────────────────────
+//
+// Membership edits are field PATCHes on ['umbrellas', id, 'task_ids'] —
+// record-set delta is none over the umbrella id-set (invariant 50); the walk
+// pairs with record 6's serialiser walk in scoped-serialise.ts and shares
+// applyValueToLeaf with record 9's appendText op.
+
+function makeUmbrellas() {
+  return UmbrellasSchema.parse({
+    document_name: "umbrellas",
+    document_purpose: "Umbrella groupings of Tasks (Linear-Initiative analogue).",
+    last_updated: "kh-main-S1 synthetic fixture",
+    related_documents: [],
+    umbrellas: [
+      {
+        id: "test-umbrella",
+        title: "Test Umbrella",
+        substrate_doc: "docs/reference/test-umbrella.md",
+        task_ids: ["20"],
+        status: "in_progress",
+        phase: "Phase 1",
+      },
+      {
+        id: "second-umbrella",
+        title: "Second Umbrella",
+        substrate_doc: "docs/reference/second-umbrella.md",
+        task_ids: [],
+        status: "proposed",
+        phase: "Phase 2",
+      },
+    ],
+  });
+}
+
+describe("applyUmbrellasPatches — membership field patch (ID-90 U8)", () => {
+  test("replaces task_ids[] on the addressed umbrella (membership edit)", () => {
+    const data = makeUmbrellas();
+    const result = applyUmbrellasPatches(data, [
+      {
+        fieldPath: ["umbrellas", "test-umbrella", "task_ids"],
+        newValue: ["20", "90"],
+      },
+    ]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.parsed.umbrellas[0].task_ids).toEqual(["20", "90"]);
+      // Untouched sibling umbrella is unchanged — the umbrella id-set is
+      // identical (record-set delta none, invariant 50).
+      expect(result.parsed.umbrellas[1].task_ids).toEqual([]);
+      expect(result.parsed.umbrellas.map((u) => u.id)).toEqual([
+        "test-umbrella",
+        "second-umbrella",
+      ]);
+    }
+  });
+
+  test("patches a scalar field (status) on an umbrella", () => {
+    const data = makeUmbrellas();
+    const result = applyUmbrellasPatches(data, [
+      { fieldPath: ["umbrellas", "second-umbrella", "status"], newValue: "in_progress" },
+    ]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.parsed.umbrellas[1].status).toBe("in_progress");
+    }
+  });
+
+  test("appendText composes with the umbrellas walk through applyValueToLeaf (record 9 pairing)", () => {
+    const data = makeUmbrellas();
+    const result = applyUmbrellasPatches(data, [
+      { fieldPath: ["umbrellas", "test-umbrella", "phase"], appendText: " (extended)" },
+    ]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.parsed.umbrellas[0].phase).toBe("Phase 1 (extended)");
+    }
+  });
+
+  test("walk-error on unknown umbrella id", () => {
+    const data = makeUmbrellas();
+    const result = applyUmbrellasPatches(data, [
+      { fieldPath: ["umbrellas", "missing-umbrella", "task_ids"], newValue: [] },
+    ]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.kind).toBe("walk-error");
+  });
+
+  test("walk-error on a field not in the UmbrellaEntry schema key-set", () => {
+    const data = makeUmbrellas();
+    const result = applyUmbrellasPatches(data, [
+      { fieldPath: ["umbrellas", "test-umbrella", "not_a_field"], newValue: "x" },
+    ]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.kind).toBe("walk-error");
+  });
+
+  test("walk-error when the head segment is not 'umbrellas'", () => {
+    const data = makeUmbrellas();
+    const result = applyUmbrellasPatches(data, [
+      { fieldPath: ["tasks", "test-umbrella", "task_ids"], newValue: [] },
+    ]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.kind).toBe("walk-error");
+  });
+
+  test("schema-error when the patched value violates UmbrellasSchema", () => {
+    const data = makeUmbrellas();
+    const result = applyUmbrellasPatches(data, [
+      // task_ids[] entries must be bare-digit Task ids.
+      { fieldPath: ["umbrellas", "test-umbrella", "task_ids"], newValue: ["ID-20"] },
+    ]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.kind).toBe("schema-error");
+  });
+
+  test("empty patches array rejected", () => {
+    const data = makeUmbrellas();
+    const result = applyUmbrellasPatches(data, []);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.kind).toBe("empty-patches");
+  });
+});
+
+describe("applyPatches — umbrellas dispatcher arm (ID-90 U8)", () => {
+  test("dispatches umbrellas kind to applyUmbrellasPatches", () => {
+    const data = makeUmbrellas();
+    const result = applyPatches(
+      { kind: "umbrellas", data },
+      [{ fieldPath: ["umbrellas", "test-umbrella", "task_ids"], newValue: ["20", "21"] }],
+    );
+    expect(result.ok).toBe(true);
   });
 });

@@ -201,6 +201,13 @@ function lookupRecord(
     if (!theme) return null;
     return { kind: "roadmap-theme", record: theme };
   }
+  // ID-90 U8: umbrellas — fourth known kind. Records are umbrella entries
+  // keyed by their kebab-case id.
+  if (detected.kind === "umbrellas") {
+    const umbrella = detected.data.umbrellas.find((u) => u.id === recordId);
+    if (!umbrella) return null;
+    return { kind: "umbrella", record: umbrella };
+  }
   // backlog
   const item = detected.data.items.find((it) => it.id === recordId);
   if (!item) return null;
@@ -217,6 +224,11 @@ function computeMirrorFilename(
   }
   if (recordKind === "roadmap-theme") {
     return computeRecordFilename("roadmap", { id: recordId });
+  }
+  // ID-90 U8: umbrellas carry no mirror obligation (PRODUCT invariant 53) —
+  // there is no mirror filename for an umbrella record.
+  if (recordKind === "umbrella") {
+    return "";
   }
   // backlog-item
   return computeRecordFilename("backlog", { id: recordId });
@@ -277,6 +289,18 @@ async function handleGetRoot(
         documentName: canonical.detected.documentName,
       },
       { status: 422 },
+    );
+  }
+  // ID-90 U8: umbrellas documents have no record-view surface — no mirrors
+  // (PRODUCT invariant 53) and no viewer pages; membership edits go through
+  // the field-PATCH API. Render a plain explanatory page rather than a 500.
+  if (canonical.detected.kind === "umbrellas") {
+    return new Response(
+      "<!doctype html><html><body><main><h1>umbrellas</h1>" +
+        "<p>Umbrella documents have no record-view surface. Membership edits " +
+        "are field PATCHes on ['umbrellas', id, 'task_ids'] via the ledger " +
+        "API (ID-90 U8; PRODUCT invariants 49–50, 53).</p></main></body></html>",
+      { status: 200, headers: { "content-type": "text/html; charset=utf-8" } },
     );
   }
   // Resolve the theme preference (record-view-styling SPEC SV-8): query
@@ -395,6 +419,11 @@ async function renderSiblingLedger(
   if (canonical.detected.kind === "unknown") {
     return siblingNotAvailableResponse(slug, styles);
   }
+  // ID-90 U8: umbrellas documents have no viewer surface (PRODUCT inv 53) —
+  // a nav to them is a dead-end, same treatment as a missing sibling.
+  if (canonical.detected.kind === "umbrellas") {
+    return siblingNotAvailableResponse(slug, styles);
+  }
   const siblings = await readSiblingLedgers(siblingPath, canonical.detected.kind);
   const result = renderViewer({
     detected: canonical.detected,
@@ -403,7 +432,12 @@ async function renderSiblingLedger(
     styles,
     readOnly: true,
     siblings,
-    launchedSlug: launchedSlug ?? undefined,
+    // The launched document can itself be an umbrellas doc (no viewer slug
+    // in the ui banner vocabulary) — omit the banner back-link in that case.
+    launchedSlug:
+      launchedSlug === null || launchedSlug === "umbrellas"
+        ? undefined
+        : launchedSlug,
   });
   return new Response(result.html, {
     status: result.status,
@@ -482,13 +516,21 @@ async function handleGetLedger(ctx: RequestContext): Promise<Response> {
       { status: 422 },
     );
   }
-  const mirrorDir = resolveMirrorDir(canonical.detected.kind, ctx.ledgerPath);
+  // ID-90 U8: umbrellas carry no mirror obligation (PRODUCT invariant 53) —
+  // the mirror fields are empty for the fourth kind.
+  const mirrorDir =
+    canonical.detected.kind === "umbrellas"
+      ? ""
+      : resolveMirrorDir(canonical.detected.kind, ctx.ledgerPath);
   return jsonResponse({
     ok: true,
     kind: canonical.detected.kind,
     data: canonical.detected.data,
     mirrorDir,
-    mirrorDirName: computeMirrorDirName(canonical.detected.kind),
+    mirrorDirName:
+      canonical.detected.kind === "umbrellas"
+        ? ""
+        : computeMirrorDirName(canonical.detected.kind),
     mtime: canonical.mtimeIso,
   });
 }
@@ -877,6 +919,22 @@ async function handlePostRecord(
     );
   }
 
+  // ID-90 U8: record creates do not apply to umbrellas — the umbrella id-set
+  // is never mutated through record splices; membership edits are field
+  // PATCHes on ['umbrellas', id, 'task_ids'] (PRODUCT invariants 49-50).
+  if (canonical.detected.kind === "umbrellas") {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "unsupported-op",
+        detail:
+          "umbrellas documents do not support record creates; membership " +
+          "edits are field PATCHes on ['umbrellas', id, 'task_ids'].",
+      },
+      { status: 422 },
+    );
+  }
+
   // §5.4 mtime check — BEFORE mutation.
   const baseMtimeMs = Date.parse(body.baseMtime);
   if (!Number.isFinite(baseMtimeMs)) {
@@ -1122,6 +1180,22 @@ async function handleDeleteRecord(
         ok: false,
         error: "unknown-document-name",
         documentName: canonical.detected.documentName,
+      },
+      { status: 422 },
+    );
+  }
+
+  // ID-90 U8: record deletes do not apply to umbrellas — the umbrella id-set
+  // is never mutated through record splices; membership edits are field
+  // PATCHes on ['umbrellas', id, 'task_ids'] (PRODUCT invariants 49-50).
+  if (canonical.detected.kind === "umbrellas") {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "unsupported-op",
+        detail:
+          "umbrellas documents do not support record deletes; membership " +
+          "edits are field PATCHes on ['umbrellas', id, 'task_ids'].",
       },
       { status: 422 },
     );

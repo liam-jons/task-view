@@ -28,9 +28,11 @@ import type {
 import type { Roadmap } from "@task-view/schemas/roadmap";
 import type { Task } from "@task-view/schemas/task-list";
 
+// ID-90 U8: umbrellas is additionally excluded — no mirror dir means no
+// index.md (PRODUCT invariant 53).
 export type LedgerKindExceptUnknown = Exclude<
   DetectSchemaResult["kind"],
-  "unknown"
+  "unknown" | "umbrellas"
 >;
 
 /**
@@ -45,6 +47,12 @@ export type LedgerKindExceptUnknown = Exclude<
 export function renderIndexMd(detected: DetectSchemaResult): string {
   if (detected.kind === "unknown") {
     throw new Error("Cannot render index.md for unknown ledger kind.");
+  }
+  // ID-90 U8: umbrellas carry no mirror dir, hence no index.md (inv 53).
+  if (detected.kind === "umbrellas") {
+    throw new Error(
+      "Cannot render index.md for the umbrellas kind — umbrellas documents have no mirror directory (PRODUCT invariant 53).",
+    );
   }
   if (detected.kind === "task-list") {
     return renderTaskListIndex(detected.data.tasks);

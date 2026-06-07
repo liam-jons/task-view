@@ -81,6 +81,14 @@ export function sanitiseFilenameStem(id: string): string {
 export type LedgerKind = DetectSchemaResult["kind"];
 
 /**
+ * The kinds that carry a mirror obligation. ID-90 U8: `umbrellas` is
+ * EXCLUDED at the type level — umbrellas documents have no mirrors, ever
+ * (PRODUCT invariant 53). `generateMirrors` / `generateRecordMirror`
+ * return the empty plan for kind 'umbrellas' without creating a directory.
+ */
+export type MirroredLedgerKind = Exclude<LedgerKind, "unknown" | "umbrellas">;
+
+/**
  * Compute the record's mirror filename per the §3.2 prefix rules.
  *
  * @param kind - ledger kind (task-list | roadmap | backlog)
@@ -91,7 +99,7 @@ export type LedgerKind = DetectSchemaResult["kind"];
  * items) is gone — themes are the only roadmap record kind.
  */
 export function computeRecordFilename(
-  kind: Exclude<LedgerKind, "unknown">,
+  kind: MirroredLedgerKind,
   record: { id: string },
 ): string {
   const stem = sanitiseFilenameStem(record.id);
@@ -104,7 +112,7 @@ export function computeRecordFilename(
  * Compute the mirror directory name (sibling dir basename) per §3.1.
  */
 export function computeMirrorDirName(
-  kind: Exclude<LedgerKind, "unknown">,
+  kind: MirroredLedgerKind,
 ): string {
   if (kind === "task-list") return "tasks";
   if (kind === "roadmap") return "roadmap";
@@ -385,7 +393,7 @@ function planBacklogMirrors(items: readonly BacklogItem[]): PlannedMirror[] {
  * `<dir>/{task-list,product-roadmap,product-backlog}.json` → `<dir>/{tasks,roadmap,backlog}/`
  */
 export function resolveMirrorDir(
-  kind: Exclude<LedgerKind, "unknown">,
+  kind: MirroredLedgerKind,
   canonicalPath: string,
 ): string {
   return join(dirname(canonicalPath), computeMirrorDirName(kind));
@@ -400,7 +408,7 @@ export function resolveMirrorDir(
  * byte-identical to the same record's slot in a full regen.
  */
 function renderRecordMirror(
-  detected: Exclude<DetectSchemaResult, { kind: "unknown" }>,
+  detected: Extract<DetectSchemaResult, { kind: MirroredLedgerKind }>,
   recordId: string,
 ): { filename: string; content: string } | null {
   if (detected.kind === "task-list") {
@@ -455,6 +463,11 @@ export async function generateRecordMirror(
       `Cannot generate mirror for unknown ledger kind (document_name: ${detected.documentName ?? "null"}).`,
     );
   }
+  // ID-90 U8: umbrellas carry NO mirror obligation (PRODUCT invariant 53) —
+  // the EMPTY plan, no mirror directory created, ever.
+  if (detected.kind === "umbrellas") {
+    return { mirrorDir: "", written: [], deleted: [] };
+  }
   const mirrorDir = resolveMirrorDir(detected.kind, canonicalPath);
   const planned = renderRecordMirror(detected, recordId);
   if (!planned) {
@@ -481,6 +494,11 @@ export async function generateMirrors(
     throw new Error(
       `Cannot generate mirrors for unknown ledger kind (document_name: ${detected.documentName ?? "null"}).`,
     );
+  }
+  // ID-90 U8: umbrellas carry NO mirror obligation (PRODUCT invariant 53) —
+  // the EMPTY plan, no mirror directory created, ever.
+  if (detected.kind === "umbrellas") {
+    return { mirrorDir: "", written: [], deleted: [] };
   }
 
   const kind = detected.kind;

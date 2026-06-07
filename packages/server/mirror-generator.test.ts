@@ -591,3 +591,60 @@ describe("generateMirrors — atomic write (TECH §3.4)", () => {
     );
   });
 });
+
+// ── ID-90 U8 — umbrellas kind: EMPTY mirror plan (PRODUCT invariant 53) ───────
+
+describe("generateMirrors — umbrellas kind returns the EMPTY plan (ID-90 U8, inv 53)", () => {
+  const makeUmbrellas = () => ({
+    document_name: "umbrellas",
+    document_purpose: "Umbrella groupings of Tasks (Linear-Initiative analogue).",
+    last_updated: "kh-main-S1 synthetic fixture",
+    related_documents: [],
+    umbrellas: [
+      {
+        id: "test-umbrella",
+        title: "Test Umbrella",
+        substrate_doc: "docs/reference/test-umbrella.md",
+        task_ids: ["20"],
+        status: "in_progress",
+        phase: "Phase 1",
+      },
+    ],
+  });
+
+  test("generateMirrors writes nothing and creates NO mirror directory, ever", async () => {
+    ledgerPath = join(testDir, "umbrellas.json");
+    await writeFile(
+      ledgerPath,
+      JSON.stringify(makeUmbrellas(), null, 2),
+      "utf8",
+    );
+    const result = await generateMirrors(detectSchema(makeUmbrellas()), ledgerPath);
+    expect(result.written).toEqual([]);
+    expect(result.deleted).toEqual([]);
+    expect(result.mirrorDir).toBe("");
+    // Invariant 53: no mirror dir, EVER — the canonical file stays the only
+    // entry in the directory.
+    const entries = await readdir(testDir);
+    expect(entries).toEqual(["umbrellas.json"]);
+  });
+
+  test("generateRecordMirror writes nothing and creates NO mirror directory", async () => {
+    ledgerPath = join(testDir, "umbrellas.json");
+    await writeFile(
+      ledgerPath,
+      JSON.stringify(makeUmbrellas(), null, 2),
+      "utf8",
+    );
+    const result = await generateRecordMirror(
+      detectSchema(makeUmbrellas()),
+      ledgerPath,
+      "test-umbrella",
+    );
+    expect(result.written).toEqual([]);
+    expect(result.deleted).toEqual([]);
+    expect(result.mirrorDir).toBe("");
+    const entries = await readdir(testDir);
+    expect(entries).toEqual(["umbrellas.json"]);
+  });
+});

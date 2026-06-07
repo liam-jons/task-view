@@ -15,7 +15,7 @@
  * "Product Backlog", not on schema field shape.
  */
 import { describe, expect, test } from "bun:test";
-import { detectSchema } from "./detect-schema";
+import { detectSchema, KNOWN_DOCUMENT_NAMES } from "./detect-schema";
 
 // ── Minimal fixtures matching the vendored schemas ────────────────────────────
 
@@ -91,6 +91,23 @@ const minimalBacklog = {
   ],
 };
 
+const minimalUmbrellas = {
+  document_name: "umbrellas",
+  document_purpose: "Umbrella groupings of Tasks (Linear-Initiative analogue).",
+  last_updated: "kh-main-S1 synthetic fixture",
+  related_documents: [],
+  umbrellas: [
+    {
+      id: "test-umbrella",
+      title: "Test Umbrella",
+      substrate_doc: "docs/reference/test-umbrella.md",
+      task_ids: ["1", "2"],
+      status: "in_progress",
+      phase: "Phase 1",
+    },
+  ],
+};
+
 describe("detectSchema — known document_name values", () => {
   test("routes 'Knowledge Hub Task List' to task-list kind with parsed data", () => {
     const result = detectSchema(minimalTaskList);
@@ -118,6 +135,33 @@ describe("detectSchema — known document_name values", () => {
       expect(result.data.document_name).toBe("Product Backlog");
       expect(result.data.items).toHaveLength(1);
     }
+  });
+
+  // ID-90 U8 — umbrellas registered as the FOURTH known document kind
+  // (PRODUCT invariant 49).
+  test("routes 'umbrellas' to umbrellas kind with parsed data (ID-90 U8, inv 49)", () => {
+    const result = detectSchema(minimalUmbrellas);
+    expect(result.kind).toBe("umbrellas");
+    if (result.kind === "umbrellas") {
+      expect(result.data.document_name).toBe("umbrellas");
+      expect(result.data.umbrellas).toHaveLength(1);
+      expect(result.data.umbrellas[0].id).toBe("test-umbrella");
+      expect(result.data.umbrellas[0].task_ids).toEqual(["1", "2"]);
+    }
+  });
+
+  test("KNOWN_DOCUMENT_NAMES carries the fourth literal 'umbrellas' (ID-90 U8)", () => {
+    expect(KNOWN_DOCUMENT_NAMES).toContain("umbrellas");
+    expect(KNOWN_DOCUMENT_NAMES).toHaveLength(4);
+  });
+
+  test("throws ZodError when document_name matches umbrellas but body fails schema", () => {
+    expect(() =>
+      detectSchema({
+        document_name: "umbrellas",
+        // missing required fields
+      }),
+    ).toThrow();
   });
 });
 

@@ -11,6 +11,7 @@
  *   task-list ↔ "Knowledge Hub Task List"
  *   roadmap   ↔ "Knowledge Hub Roadmap"
  *   backlog   ↔ "Product Backlog"
+ *   umbrellas ↔ "umbrellas"            (ID-90 U8 — fourth document kind)
  * (Canonical names sourced from detect-schema.ts KNOWN_DOCUMENT_NAMES.)
  *
  * `resolveLedgerPathByName` reuses the exact `scanForLedgers(dirname)` +
@@ -23,14 +24,16 @@ import { dirname } from "node:path";
 import type { KnownDocumentName } from "./detect-schema";
 import { scanForLedgers } from "./path-resolution";
 
-/** The three cross-ledger nav slugs (stable, server-controlled). */
-export type LedgerSlug = "task-list" | "roadmap" | "backlog";
+/** The four cross-ledger nav slugs (stable, server-controlled). ID-90 U8
+ * adds `umbrellas` — its slug equals its lowercase document_name literal. */
+export type LedgerSlug = "task-list" | "roadmap" | "backlog" | "umbrellas";
 
 /** Enumerated nav slugs — the membership set the URL parser validates against. */
 export const LEDGER_SLUGS: readonly LedgerSlug[] = [
   "task-list",
   "roadmap",
   "backlog",
+  "umbrellas",
 ] as const;
 
 /**
@@ -41,6 +44,7 @@ const SLUG_TO_DOCUMENT_NAME: Record<LedgerSlug, KnownDocumentName> = {
   "task-list": "Knowledge Hub Task List",
   roadmap: "Knowledge Hub Roadmap",
   backlog: "Product Backlog",
+  umbrellas: "umbrellas",
 };
 
 const DOCUMENT_NAME_TO_SLUG: Record<string, LedgerSlug> = Object.fromEntries(

@@ -32,6 +32,7 @@ import {
 import type { TaskList } from "@task-view/schemas/task-list";
 import type { Roadmap } from "@task-view/schemas/roadmap";
 import type { BacklogDocument } from "@task-view/schemas/backlog";
+import type { Umbrellas } from "@task-view/schemas/umbrellas";
 import type { FieldPatch } from "../patch-apply";
 
 // ── Grapheme counting (invariant 24 / ID-35.31) ──────────────────────────────
@@ -204,7 +205,10 @@ function applyForce(
   };
 }
 
-type KnownKind = "task-list" | "roadmap" | "backlog";
+// ID-90 U8: includes the fourth document kind. Umbrellas carry NO budget
+// entries (PRODUCT invariant 50 — none exist in the registry and none are
+// fabricated): a patch on an umbrellas document resolves to no budget target.
+type KnownKind = "task-list" | "roadmap" | "backlog" | "umbrellas";
 
 /** A patch resolved to the record it mutates + the leaf field it touches. */
 interface ResolvedPatchTarget {
@@ -223,10 +227,13 @@ interface ResolvedPatchTarget {
  */
 function resolvePatchTarget(
   kind: KnownKind,
-  data: TaskList | Roadmap | BacklogDocument,
+  data: TaskList | Roadmap | BacklogDocument | Umbrellas,
   patch: FieldPatch,
 ): ResolvedPatchTarget | null {
   const p = patch.fieldPath;
+  // ID-90 U8: no umbrella budget entries exist and none are fabricated
+  // (PRODUCT invariant 50) — umbrellas patches are never budgeted.
+  if (kind === "umbrellas") return null;
   if (kind === "task-list") {
     const tasks = (data as TaskList).tasks;
     if (p[0] !== "tasks" || p.length < 3) return null;
@@ -304,7 +311,7 @@ function resolvePatchTarget(
  */
 export function checkBudgetForPatches(
   kind: KnownKind,
-  data: TaskList | Roadmap | BacklogDocument,
+  data: TaskList | Roadmap | BacklogDocument | Umbrellas,
   patches: readonly FieldPatch[],
   options: BudgetGateOptions = {},
 ): BudgetGateOutcome {
@@ -368,7 +375,11 @@ export function checkBudgetForCreate(
 
 /** Map a detected document kind to the registry record-kind a whole-record
  * CREATE on that ledger budgets against. */
-export function createRecordKindFor(kind: KnownKind): LedgerRecordKind {
+export function createRecordKindFor(
+  // ID-90 U8: umbrellas excluded — record creates do not apply to the
+  // umbrellas kind (the HTTP surface rejects them before reaching here).
+  kind: Exclude<KnownKind, "umbrellas">,
+): LedgerRecordKind {
   if (kind === "task-list") return "task";
   if (kind === "roadmap") return "theme";
   return "item";
