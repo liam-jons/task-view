@@ -318,16 +318,18 @@ export function withCreateDefaults(
  * `max(existingIds) + 1` for a collection, returning the correct primitive
  * TYPE:
  *   - `tasks` / `themes` / `items` → bare-digit STRING (`"186"`)
- *   - `subtasks`                    → NUMBER (`13`), scoped to `taskId`
+ *   - `subtasks`                    → bare-digit STRING (`"13"`), scoped to `taskId`
  *
  * `max+1` is the monotonic semantics (never reuses a freed id; does NOT fill
- * gaps).
+ * gaps). For subtasks the now-string ids are mapped to numbers for the
+ * `Math.max` before the result is String()-wrapped, preserving monotonic
+ * numeric ordering (a raw string `Math.max` would mis-order mixed-width ids).
  */
 export function nextId(
   detected: KnownDetected,
   collectionKey: "tasks" | "themes" | "items" | "subtasks",
   taskId?: string,
-): string | number {
+): string {
   if (collectionKey === "subtasks") {
     if (detected.kind !== "task-list") {
       throw new Error("nextId(subtasks) requires a task-list ledger");
@@ -336,8 +338,10 @@ export function nextId(
       throw new Error("nextId(subtasks) requires a taskId");
     }
     const task = detected.data.tasks.find((t) => t.id === taskId);
-    const ids = (task?.subtasks ?? []).map((s) => s.id);
-    return ids.length === 0 ? 1 : Math.max(...ids) + 1;
+    const nums = (task?.subtasks ?? [])
+      .map((s) => Number(s.id))
+      .filter((n) => !Number.isNaN(n));
+    return String(nums.length === 0 ? 1 : Math.max(...nums) + 1);
   }
   let ids: string[] = [];
   if (collectionKey === "tasks" && detected.kind === "task-list") {
@@ -375,11 +379,11 @@ export type InsertSubtasksResult =
       ok: true;
       detected: KnownDetected;
       taskId: string;
-      subtaskIds: number[];
+      subtaskIds: string[];
       records: Record<string, unknown>[];
     }
   | { ok: false; kind: "task-not-found"; taskId: string }
-  | { ok: false; kind: "duplicate-id"; subtaskId: number }
+  | { ok: false; kind: "duplicate-id"; subtaskId: string }
   | { ok: false; kind: "invalid-body"; detail: string }
   | { ok: false; kind: "schema-error"; zodError: ZodError };
 
@@ -427,11 +431,14 @@ export function insertSubtasks(
   }
 
   // Fold-left over the batch: accumulate ids (existing + already-folded) and
-  // allocate max+1 per id-less record at its turn.
-  const accumulatedIds = new Set<number>(task.subtasks.map((s) => s.id));
-  let maxId = task.subtasks.reduce((m, s) => Math.max(m, s.id), 0);
+  // allocate max+1 per id-less record at its turn. Ids are bare digit-strings;
+  // the allocation counter `maxId` stays NUMERIC for the arithmetic (a string
+  // `+ 1` would concatenate — `'5' + 1 === '51'`), and each stamped/tracked id
+  // is String()-wrapped.
+  const accumulatedIds = new Set<string>(task.subtasks.map((s) => s.id));
+  let maxId = task.subtasks.reduce((m, s) => Math.max(m, Number(s.id)), 0);
   const records: Record<string, unknown>[] = [];
-  const subtaskIds: number[] = [];
+  const subtaskIds: string[] = [];
   for (const raw of subtasks) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
       return {
@@ -445,23 +452,25 @@ export function insertSubtasks(
       raw as Record<string, unknown>,
     );
     if (record.id === undefined) {
-      // Per-record nextId max+1 over the ACCUMULATED set (fold-left).
-      record = { ...record, id: maxId + 1 };
+      // Per-record nextId max+1 over the ACCUMULATED set (fold-left). Numeric
+      // increment, digit-string stamp.
+      record = { ...record, id: String(maxId + 1) };
     }
     const id = record.id;
-    if (typeof id === "number" && Number.isInteger(id)) {
+    if (typeof id === "string" && /^\d+$/.test(id)) {
       if (accumulatedIds.has(id)) {
         return { ok: false, kind: "duplicate-id", subtaskId: id };
       }
       accumulatedIds.add(id);
-      if (id > maxId) maxId = id;
+      const idNum = Number(id);
+      if (idNum > maxId) maxId = idNum;
       subtaskIds.push(id);
     } else {
-      // A non-numeric explicit id cannot be pre-checked here; the whole-doc
-      // Zod re-parse below rejects it (SubtaskSchema.id is a number). Push a
-      // sentinel so subtaskIds stays index-aligned — unreachable on the ok
+      // A non-digit-string explicit id cannot be pre-checked here; the whole-doc
+      // Zod re-parse below rejects it (SubtaskSchema.id is a digit-string). Push
+      // a sentinel so subtaskIds stays index-aligned — unreachable on the ok
       // path because the parse fails first.
-      subtaskIds.push(Number.NaN);
+      subtaskIds.push("");
     }
     records.push(record);
   }
@@ -499,13 +508,13 @@ export function insertSubtasks(
 
 /** Result of a subtask removal. */
 export type RemoveSubtaskResult =
-  | { ok: true; detected: KnownDetected; taskId: string; subtaskId: number }
+  | { ok: true; detected: KnownDetected; taskId: string; subtaskId: string }
   | { ok: false; kind: "task-not-found"; taskId: string }
-  | { ok: false; kind: "subtask-not-found"; taskId: string; subtaskId: number }
+  | { ok: false; kind: "subtask-not-found"; taskId: string; subtaskId: string }
   | { ok: false; kind: "schema-error"; zodError: ZodError };
 
 /**
- * Remove one subtask by numeric id from a Task (ID-90 U5).
+ * Remove one subtask by digit-string id from a Task (ID-90 U5).
  *
  * Removing the last subtask leaves `subtasks: []` — a legal atomic-Task state
  * (TaskSchema.subtasks has no `.min(1)`). The mutated document is re-parsed
@@ -514,7 +523,7 @@ export type RemoveSubtaskResult =
 export function removeSubtask(
   detected: KnownDetected,
   taskId: string,
-  subtaskId: number,
+  subtaskId: string,
 ): RemoveSubtaskResult {
   if (detected.kind !== "task-list") {
     return { ok: false, kind: "task-not-found", taskId };
@@ -530,7 +539,7 @@ export function removeSubtask(
   const rawClone = structuredClone(detected.data) as Record<string, unknown>;
   const tasksClone = rawClone.tasks as Record<string, unknown>[];
   const taskClone = tasksClone.find((t) => t.id === taskId) as {
-    subtasks: { id: number }[];
+    subtasks: { id: string }[];
   };
   taskClone.subtasks = taskClone.subtasks.filter((s) => s.id !== subtaskId);
 

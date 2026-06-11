@@ -198,7 +198,7 @@ function detectTaskListWithSubtasks(): KnownDetected {
         dependencies: [],
         subtasks: [
           {
-            id: 1,
+            id: "1",
             title: "s1",
             description: "d1",
             details: "",
@@ -207,12 +207,12 @@ function detectTaskListWithSubtasks(): KnownDetected {
             testStrategy: null,
           },
           {
-            id: 2,
+            id: "2",
             title: "s2",
             description: "d2",
             details: "",
             status: "pending",
-            dependencies: [1],
+            dependencies: ["1"],
             testStrategy: null,
           },
         ],
@@ -231,13 +231,55 @@ function detectTaskListWithSubtasks(): KnownDetected {
   return d;
 }
 
+/**
+ * Task "49" seeded with EXACTLY the given digit-string subtask ids — used by
+ * the ID-102.7 P3b concat-prevention canaries (a high baseline like ['5'] is
+ * where a string `counter += 1` would corrupt to '51'/'511').
+ */
+function detectTaskListWithSubtaskIds(ids: readonly string[]): KnownDetected {
+  const d = detectSchema({
+    document_name: "Knowledge Hub Task List",
+    document_purpose: "x",
+    related_documents: [],
+    tasks: [
+      {
+        id: "49",
+        title: "t",
+        description: "d",
+        status: "pending",
+        priority: "must",
+        dependencies: [],
+        subtasks: ids.map((id) => ({
+          id,
+          title: `s${id}`,
+          description: `d${id}`,
+          details: "",
+          status: "pending" as const,
+          dependencies: [],
+          testStrategy: null,
+        })),
+        updatedAt: "2026-05-25T00:00:00.000Z",
+        effort_estimate: null,
+        owner: null,
+        priority_note: null,
+        status_note: null,
+        cross_doc_links: [],
+        session_refs: [],
+        commit_refs: [],
+      },
+    ],
+  });
+  if (d.kind === "unknown") throw new Error("fixture invalid");
+  return d;
+}
+
 describe("nextId — per-record max+1 allocation (ledger-cli.ts:645-674 port)", () => {
-  test("subtasks: NUMBER, scoped to the parent task, max+1", () => {
-    expect(nextId(detectTaskListWithSubtasks(), "subtasks", "49")).toBe(3);
+  test("subtasks: digit-STRING, scoped to the parent task, max+1", () => {
+    expect(nextId(detectTaskListWithSubtasks(), "subtasks", "49")).toBe("3");
   });
 
   test("subtasks: empty collection allocates 1", () => {
-    expect(nextId(detectTaskList(), "subtasks", "20")).toBe(1);
+    expect(nextId(detectTaskList(), "subtasks", "20")).toBe("1");
   });
 
   test("tasks: bare-digit STRING max+1", () => {
@@ -276,10 +318,10 @@ describe("withCreateDefaults — structural defaults under the record (ledger-cl
     const r = withCreateDefaults("subtask", {
       title: "x",
       status: "in_progress",
-      dependencies: [2],
+      dependencies: ["2"],
     });
     expect(r.status).toBe("in_progress");
-    expect(r.dependencies).toEqual([2]);
+    expect(r.dependencies).toEqual(["2"]);
   });
 
   test("task: updatedAt auto-stamps to the write timestamp when absent", () => {
@@ -321,10 +363,10 @@ describe("insertSubtasks — bulk fold-left create (ID-90.9 U5)", () => {
     ]);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.subtaskIds).toEqual([3, 4, 5]);
+      expect(result.subtaskIds).toEqual(["3", "4", "5"]);
       if (result.detected.kind === "task-list") {
         const subs = result.detected.data.tasks[0].subtasks;
-        expect(subs.map((s) => s.id)).toEqual([1, 2, 3, 4, 5]);
+        expect(subs.map((s) => s.id)).toEqual(["1", "2", "3", "4", "5"]);
       }
     }
   });
@@ -345,31 +387,31 @@ describe("insertSubtasks — bulk fold-left create (ID-90.9 U5)", () => {
 
   test("an explicit id is kept and later auto-ids never collide with it", () => {
     const result = insertSubtasks(detectTaskListWithSubtasks(), "49", [
-      { id: 7, title: "explicit", description: "d" },
+      { id: "7", title: "explicit", description: "d" },
       { title: "auto", description: "d" },
     ]);
     expect(result.ok).toBe(true);
     if (result.ok) {
       // Fold-left: after inserting id 7, the per-record max+1 is 8.
-      expect(result.subtaskIds).toEqual([7, 8]);
+      expect(result.subtaskIds).toEqual(["7", "8"]);
     }
   });
 
   test("duplicate-id pre-check: explicit id colliding with an existing subtask rejects", () => {
     const result = insertSubtasks(detectTaskListWithSubtasks(), "49", [
-      { id: 2, title: "dup", description: "d" },
+      { id: "2", title: "dup", description: "d" },
     ]);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.kind).toBe("duplicate-id");
-      if (result.kind === "duplicate-id") expect(result.subtaskId).toBe(2);
+      if (result.kind === "duplicate-id") expect(result.subtaskId).toBe("2");
     }
   });
 
   test("duplicate-id pre-check: two explicit ids colliding WITHIN the batch reject", () => {
     const result = insertSubtasks(detectTaskListWithSubtasks(), "49", [
-      { id: 9, title: "a", description: "d" },
-      { id: 9, title: "b", description: "d" },
+      { id: "9", title: "a", description: "d" },
+      { id: "9", title: "b", description: "d" },
     ]);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.kind).toBe("duplicate-id");
@@ -420,17 +462,53 @@ describe("insertSubtasks — bulk fold-left create (ID-90.9 U5)", () => {
       expect(detected.data.tasks[0].subtasks).toHaveLength(2);
     }
   });
+
+  // ID-102.7 P3b concat-prevention canaries: the fold-left counter MUST stay
+  // numeric for the `+ 1` arithmetic and only String()-wrap the stamped id. A
+  // string counter would concatenate ('5' + 1 === '51'), corrupting every
+  // bulk-allocated id past a single-digit baseline (inv 8 monotonic auto-id).
+  test("high baseline ['5'] → batch-of-3 allocates '6','7','8' (NOT '51','511')", () => {
+    const result = insertSubtasks(detectTaskListWithSubtaskIds(["5"]), "49", [
+      { title: "a", description: "da" },
+      { title: "b", description: "db" },
+      { title: "c", description: "dc" },
+    ]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.subtaskIds).toEqual(["6", "7", "8"]);
+      if (result.detected.kind === "task-list") {
+        const subs = result.detected.data.tasks[0].subtasks;
+        expect(subs.map((s) => s.id)).toEqual(["5", "6", "7", "8"]);
+      }
+    }
+  });
+
+  test("gap baseline ['2','10'] → batch-of-1 allocates '11' (max+1 numeric, not '3')", () => {
+    const result = insertSubtasks(
+      detectTaskListWithSubtaskIds(["2", "10"]),
+      "49",
+      [{ title: "a", description: "da" }],
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.subtaskIds).toEqual(["11"]);
+      if (result.detected.kind === "task-list") {
+        const subs = result.detected.data.tasks[0].subtasks;
+        expect(subs.map((s) => s.id)).toEqual(["2", "10", "11"]);
+      }
+    }
+  });
 });
 
 describe("removeSubtask — subtask DELETE (ID-90.9 U5)", () => {
   test("removes an existing subtask and re-parses", () => {
     const detected = detectTaskListWithSubtasks();
     // Subtask 2 depends on 1, so 2 is the dependency-safe removal.
-    const result = removeSubtask(detected, "49", 2);
+    const result = removeSubtask(detected, "49", "2");
     expect(result.ok).toBe(true);
     if (result.ok && result.detected.kind === "task-list") {
       expect(result.detected.data.tasks[0].subtasks.map((s) => s.id)).toEqual([
-        1,
+        "1",
       ]);
     }
     // Input snapshot untouched:
@@ -440,10 +518,10 @@ describe("removeSubtask — subtask DELETE (ID-90.9 U5)", () => {
   });
 
   test("removing the last subtask leaves a legal empty subtasks[]", () => {
-    const d1 = removeSubtask(detectTaskListWithSubtasks(), "49", 2);
+    const d1 = removeSubtask(detectTaskListWithSubtasks(), "49", "2");
     expect(d1.ok).toBe(true);
     if (!d1.ok) return;
-    const d2 = removeSubtask(d1.detected, "49", 1);
+    const d2 = removeSubtask(d1.detected, "49", "1");
     expect(d2.ok).toBe(true);
     if (d2.ok && d2.detected.kind === "task-list") {
       expect(d2.detected.data.tasks[0].subtasks).toEqual([]);
@@ -453,19 +531,19 @@ describe("removeSubtask — subtask DELETE (ID-90.9 U5)", () => {
   test("removing a subtask a SIBLING depends on surfaces the schema-error (sibling-dep superRefine)", () => {
     // Subtask 2 declares dependencies: [1] — dropping 1 strands the dep, and
     // the whole-doc re-parse (TaskSchema superRefine) rejects it.
-    const result = removeSubtask(detectTaskListWithSubtasks(), "49", 1);
+    const result = removeSubtask(detectTaskListWithSubtasks(), "49", "1");
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.kind).toBe("schema-error");
   });
 
   test("subtask-not-found for an absent subId", () => {
-    const result = removeSubtask(detectTaskListWithSubtasks(), "49", 99);
+    const result = removeSubtask(detectTaskListWithSubtasks(), "49", "99");
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.kind).toBe("subtask-not-found");
   });
 
   test("task-not-found for an absent parent task", () => {
-    const result = removeSubtask(detectTaskListWithSubtasks(), "999", 1);
+    const result = removeSubtask(detectTaskListWithSubtasks(), "999", "1");
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.kind).toBe("task-not-found");
   });

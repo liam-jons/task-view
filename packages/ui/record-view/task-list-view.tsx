@@ -406,7 +406,7 @@ export const TaskListView: React.FC<{
 const SubtaskBlock: React.FC<{
   parentTaskId: string;
   subtask: import("@task-view/schemas/task-list").Subtask;
-  siblingSubtaskIds: ReadonlySet<number>;
+  siblingSubtaskIds: ReadonlySet<string>;
 }> = ({ parentTaskId, subtask, siblingSubtaskIds }) => {
   const depRows: React.ReactNode =
     subtask.dependencies.length === 0
@@ -435,7 +435,7 @@ const SubtaskBlock: React.FC<{
     "tasks",
     parentTaskId,
     "subtasks",
-    String(subtask.id),
+    subtask.id,
     field,
   ];
 

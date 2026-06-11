@@ -45,7 +45,7 @@ function makeTask(
     dependencies: [],
     subtasks: [
       {
-        id: 1,
+        id: "1",
         title: "Synthetic subtask one",
         description: "Short subtask description.",
         details: "Initial details.",
@@ -79,7 +79,7 @@ function makeNoisyTaskList(): KnownDetected {
         description: OVER_1500,
         subtasks: [
           {
-            id: 1,
+            id: "1",
             title: "Synthetic subtask one",
             description: OVER_250,
             details: "Initial details.",
@@ -88,7 +88,7 @@ function makeNoisyTaskList(): KnownDetected {
             testStrategy: "Short strategy.",
           },
           {
-            id: 2,
+            id: "2",
             title: "Synthetic subtask two",
             description: "Short.",
             details: "Initial details.",
@@ -204,7 +204,7 @@ describe("disciplineWarnings", () => {
   test("subtask scope keeps ONLY the named subtask's lines", () => {
     const scoped = disciplineWarnings(makeNoisyTaskList(), {
       taskId: "7",
-      subId: 1,
+      subId: "1",
     });
     expect(scoped).toHaveLength(1);
     expect(scoped[0]).toStartWith("Subtask 7.1 description");
@@ -212,7 +212,7 @@ describe("disciplineWarnings", () => {
 
   test("a clean record under scope yields []", () => {
     expect(
-      disciplineWarnings(makeNoisyTaskList(), { taskId: "7", subId: 2 }),
+      disciplineWarnings(makeNoisyTaskList(), { taskId: "7", subId: "2" }),
     ).toEqual([]);
   });
 });
@@ -222,7 +222,7 @@ describe("disciplineWarningsForScopes", () => {
     const warnings = disciplineWarningsForScopes(makeNoisyTaskList(), [
       { taskId: "7" },
       { taskId: "7" }, // duplicate scope — must not duplicate the message
-      { taskId: "7", subId: 1 },
+      { taskId: "7", subId: "1" },
     ]);
     expect(warnings).toHaveLength(2);
     expect(warnings[0]).toContain('Task "7" description');

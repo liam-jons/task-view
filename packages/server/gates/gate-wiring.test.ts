@@ -61,7 +61,7 @@ function makeTask(id: string, overrides: Partial<Record<string, unknown>> = {}) 
     dependencies: [],
     subtasks: [
       {
-        id: 1,
+        id: "1",
         title: "Slice one",
         description: "First slice.",
         details: "Initial details.",

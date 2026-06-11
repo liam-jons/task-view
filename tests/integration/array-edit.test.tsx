@@ -115,12 +115,12 @@ describe("Subtask cross-Task dependency rejection (PRODUCT inv 34 — schema sup
           status_note: null,
           subtasks: [
             {
-              id: 1,
+              id: "1",
               title: "S1",
               description: "x",
               details: "x",
               status: "pending",
-              dependencies: [99], // stray cross-Task ref — no sibling 99
+              dependencies: ["99"], // stray cross-Task ref — no sibling "99"
               testStrategy: "x",
             },
           ],
@@ -158,11 +158,13 @@ describe("Subtask cross-Task dependency rejection (PRODUCT inv 34 — schema sup
     }
   });
 
-  test("comma-separated parse of NUMERIC dep ids", () => {
-    // Subtask.dependencies is z.array(z.number().int()); the SPA
-    // calls parseCommaSeparatedNumbers before patch construction.
-    // Malformed (non-numeric) entries become NaN which the server's
-    // schema rejects.
+  test("comma-separated NUMERIC parse — LEGACY helper (dead for subtask deps post ID-102.7)", () => {
+    // LEGACY: `parseCommaSeparatedNumbers` predates ID-102.7. Subtask.dependencies
+    // is now z.array(z.string().regex(/^\d+$/)) (digit-strings), NOT numbers, and
+    // the subtask-deps FieldPencil wires `kind="array-comma"` (string array via
+    // `parseCommaSeparatedIds`) in task-list-view.tsx — this helper is no longer
+    // wired to subtask deps. It is retained only as a standalone numeric-array
+    // parser; this test pins its unchanged number-coercion behaviour.
     expect(parseCommaSeparatedNumbers("1, 2, 3")).toEqual([1, 2, 3]);
     expect(parseCommaSeparatedNumbers("1, abc, 3")).toEqual([1, NaN, 3]);
   });

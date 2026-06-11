@@ -59,7 +59,7 @@ function makeTaskListLedger() {
         dependencies: [],
         subtasks: [
           {
-            id: 1,
+            id: "1",
             title: "Slice 1",
             description: "First slice.",
             details: "Details for slice 1.",

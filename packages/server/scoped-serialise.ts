@@ -163,19 +163,19 @@ function walkTaskList(
     return { ok: true, target: { container: task, key: afterTask[0] } };
   }
   if (afterTask.length >= 2 && afterTask[0] === "subtasks") {
-    const subIdNum = Number(afterTask[1]);
-    if (!Number.isInteger(subIdNum)) {
+    const subIdRaw = afterTask[1];
+    if (!/^\d+$/.test(subIdRaw)) {
       return {
         ok: false,
-        detail: `Subtask id "${afterTask[1]}" is not an integer.`,
+        detail: `Subtask id "${subIdRaw}" is not a digit-string id.`,
       };
     }
     const subtasks = asArray(task.subtasks);
-    const sub = subtasks?.find((s) => s.id === subIdNum);
+    const sub = subtasks?.find((s) => s.id === subIdRaw);
     if (!sub) {
       return {
         ok: false,
-        detail: `Subtask id ${subIdNum} not found in Task ${taskId}.`,
+        detail: `Subtask id ${subIdRaw} not found in Task ${taskId}.`,
       };
     }
     const rest = afterTask.slice(2);
@@ -317,8 +317,10 @@ type SpliceCollection = "tasks" | "themes" | "items" | "subtasks";
  *     `collection: 'subtasks'`, `taskId` addresses the parent Task whose
  *     `subtasks[]` receives the record.
  *   - `remove` drops the record whose id matches `recordId` from the resolved
- *     collection. Top-level record ids are bare-digit STRINGS (`tasks`/`themes`/
- *     `items`); subtask ids are NUMBERS.
+ *     collection. All record ids are bare-digit STRINGS — top-level
+ *     (`tasks`/`themes`/`items`) and subtasks alike. The `string | number`
+ *     union is retained for back-compat with any pre-flip caller, but
+ *     KH's subtask-delete intent now carries `recordId` as a digit-string.
  */
 export type SpliceOp =
   | {
@@ -436,8 +438,9 @@ export function scopedSpliceSerialise(
     // Mutate the parsed-ORIGINAL array in place; untouched records keep bytes.
     collection.push(op.record as Record<string, unknown>);
   } else {
-    // Filter in place. Subtask ids are numbers; top-level ids are strings — the
-    // strict `===` below intentionally matches only the correct id type.
+    // Filter in place. All record ids — subtask and top-level — are now
+    // digit-strings, so the strict `===` below is a string-vs-string compare
+    // (subtask-delete carries `recordId` as the digit-string subId from KH).
     const kept = collection.filter((rec) => rec.id !== op.recordId);
     collection.length = 0;
     for (const rec of kept) collection.push(rec);

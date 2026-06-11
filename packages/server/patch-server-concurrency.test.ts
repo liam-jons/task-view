@@ -319,7 +319,7 @@ describe("auto-id race — concurrent id-less creates never duplicate an id (inv
     const doc = makeTaskListLedger(["1"]);
     // Seed one existing subtask so auto-id must start ABOVE an occupied id.
     (doc.tasks[0].subtasks as unknown[]).push({
-      id: 1,
+      id: "1",
       title: "Existing slice",
       description: "Occupies id 1.",
       details: "",
@@ -357,7 +357,7 @@ describe("auto-id race — concurrent id-less creates never duplicate an id (inv
           baseMtime,
           201,
         );
-        const body = (await res.json()) as { subtaskIds: number[] };
+        const body = (await res.json()) as { subtaskIds: string[] };
         allocated.push(body.subtaskIds);
       }),
     );
@@ -366,11 +366,11 @@ describe("auto-id race — concurrent id-less creates never duplicate an id (inv
     const ids = allocated.flat();
     expect(ids).toHaveLength(4);
     expect(new Set(ids).size).toBe(4);
-    expect(ids).not.toContain(1); // never collides with the occupied id
+    expect(ids).not.toContain("1"); // never collides with the occupied id
 
     // The document agrees: 5 subtasks, all ids distinct.
     const parsed = JSON.parse(await readFile(ledger, "utf8")) as {
-      tasks: Array<{ subtasks: Array<{ id: number }> }>;
+      tasks: Array<{ subtasks: Array<{ id: string }> }>;
     };
     const finalIds = parsed.tasks[0].subtasks.map((s) => s.id);
     expect(finalIds).toHaveLength(5);
@@ -383,7 +383,7 @@ describe("interleaved journal appends — BOTH blocks present (inv 39)", () => {
     const ledger = join(testDir, "task-list.json");
     const doc = makeTaskListLedger(["1"]);
     (doc.tasks[0].subtasks as unknown[]).push({
-      id: 1,
+      id: "1",
       title: "Journal target",
       description: "Receives concurrent appends.",
       details: "Initial details.",

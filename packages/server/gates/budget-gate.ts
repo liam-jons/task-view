@@ -254,7 +254,7 @@ function resolvePatchTarget(
       };
     }
     if (p.length === 5 && p[2] === "subtasks") {
-      const subId = Number(p[3]);
+      const subId = p[3];
       const subtask = task.subtasks.find((s) => s.id === subId);
       if (!subtask) return null;
       return {

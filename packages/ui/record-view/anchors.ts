@@ -30,14 +30,14 @@ export type LedgerSlug = "task-list" | "roadmap" | "backlog";
  * fragment in href (`#subtask-3`) AND as the `id` attribute of the
  * Subtask block heading.
  */
-export function subtaskAnchorId(subtaskId: number): string {
+export function subtaskAnchorId(subtaskId: string): string {
   return `subtask-${subtaskId}`;
 }
 
 /**
  * Href to a sibling Subtask's anchor within the same Task page.
  */
-export function subtaskHref(subtaskId: number): string {
+export function subtaskHref(subtaskId: string): string {
   return `#${subtaskAnchorId(subtaskId)}`;
 }
 
@@ -83,7 +83,7 @@ export function crossLedgerRecordHref(
  */
 export function subtaskDepLabel(
   parentTaskId: string,
-  subtaskId: number,
+  subtaskId: string,
 ): string {
   return `${TASK_MIRROR_PREFIX}${parentTaskId}.${subtaskId}`;
 }

@@ -46,7 +46,7 @@ function makeTaskList() {
         dependencies: [],
         subtasks: [
           {
-            id: 1,
+            id: "1",
             title: "Slice 1",
             description: "First slice.",
             details: "Details for slice 1.",
@@ -56,12 +56,12 @@ function makeTaskList() {
             updatedAt: "2026-05-21T15:30:00.000Z",
           },
           {
-            id: 2,
+            id: "2",
             title: "Slice 2",
             description: "Second slice.",
             details: "Details for slice 2.",
             status: "pending",
-            dependencies: [1],
+            dependencies: ["1"],
             testStrategy: null,
           },
         ],
@@ -438,7 +438,7 @@ describe("applyTaskListPatches — schema validation", () => {
     // Inserting an id (e.g. 99) with no matching sibling triggers the
     // schema's superRefine.
     const result = applyTaskListPatches(snapshot, [
-      { fieldPath: ["tasks", "20", "subtasks", "2", "dependencies"], newValue: [99] },
+      { fieldPath: ["tasks", "20", "subtasks", "2", "dependencies"], newValue: ["99"] },
     ]);
     expect(result.ok).toBe(false);
     if (!result.ok) {

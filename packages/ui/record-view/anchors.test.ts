@@ -14,17 +14,17 @@ import {
 
 describe("Sibling-Subtask anchors (PRODUCT inv 13, TECH §4.4)", () => {
   test("subtaskAnchorId returns deterministic `subtask-{id}` form", () => {
-    expect(subtaskAnchorId(1)).toBe("subtask-1");
-    expect(subtaskAnchorId(13)).toBe("subtask-13");
+    expect(subtaskAnchorId("1")).toBe("subtask-1");
+    expect(subtaskAnchorId("13")).toBe("subtask-13");
   });
 
   test("subtaskHref returns `#subtask-{id}`", () => {
-    expect(subtaskHref(3)).toBe("#subtask-3");
+    expect(subtaskHref("3")).toBe("#subtask-3");
   });
 
   test("subtaskDepLabel returns `ID-{taskId}.{subtaskId}`", () => {
-    expect(subtaskDepLabel("20", 9)).toBe("ID-20.9");
-    expect(subtaskDepLabel("100", 1)).toBe("ID-100.1");
+    expect(subtaskDepLabel("20", "9")).toBe("ID-20.9");
+    expect(subtaskDepLabel("100", "1")).toBe("ID-100.1");
   });
 });
 

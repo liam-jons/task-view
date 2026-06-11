@@ -54,7 +54,7 @@ const makeTaskList = (taskIds: string[]) => ({
     dependencies: [],
     subtasks: [
       {
-        id: 1,
+        id: "1",
         title: `Subtask ${id}.1 title`,
         description: `Description for Subtask ${id}.1.`,
         status: "pending",

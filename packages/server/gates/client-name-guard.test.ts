@@ -554,7 +554,7 @@ describe("RELOCATED 52ef3d5b mutation-guard suite — append-journal at the HTTP
           dependencies: [],
           subtasks: [
             {
-              id: 1,
+              id: "1",
               title: "Slice one",
               description: "First slice.",
               details: "Initial details.",
