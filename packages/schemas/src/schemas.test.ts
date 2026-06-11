@@ -37,7 +37,7 @@ const minimalTaskList = {
       dependencies: [],
       subtasks: [
         {
-          id: 6,
+          id: "6",
           title: "Fork prep + strip + rename + vendor schemas",
           description: "Slice 1 of ID-20.",
           status: "in_progress",
@@ -114,7 +114,7 @@ describe("Vendored schemas: parse acceptance", () => {
       expect(result.data.document_name).toBe("Knowledge Hub Task List");
       expect(result.data.tasks).toHaveLength(1);
       expect(result.data.tasks[0].subtasks).toHaveLength(1);
-      expect(result.data.tasks[0].subtasks[0].id).toBe(6);
+      expect(result.data.tasks[0].subtasks[0].id).toBe("6");
     }
   });
 

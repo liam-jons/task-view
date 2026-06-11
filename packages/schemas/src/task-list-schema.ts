@@ -77,8 +77,11 @@ export type TaskPriority = z.infer<typeof TaskPriority>;
 
 export const SubtaskSchema = z
   .object({
-    /** Bare integer, restarts at 1 per parent Task (TM convention — inv 9). */
-    id: z.number().int().min(1),
+    /** Bare digit-string, restarts at 1 per parent Task (TM convention — inv 9). */
+    id: z
+      .string()
+      .regex(BARE_ID_REGEX, 'Subtask id must be a string of digits')
+      .refine((s) => Number(s) > 0, 'Subtask id must be a positive integer'),
     /** Short noun phrase (~40–80 chars). */
     title: z.string().min(1),
     /** One-sentence summary (~80–200 chars). */
@@ -91,11 +94,16 @@ export const SubtaskSchema = z
     /** Subtask-level subset: done | pending | in_progress | blocked | deferred | cancelled. */
     status: SubtaskStatus,
     /**
-     * Sibling integer ids. Validated at TaskSchema level via superRefine (inv 14).
-     * Schema here allows any number[] — the cross-sibling constraint is enforced
-     * by the parent TaskSchema's superRefine.
+     * Sibling digit-string ids. Validated at TaskSchema level via superRefine (inv 14).
+     * Schema here allows any string[] of digits — the cross-sibling constraint is
+     * enforced by the parent TaskSchema's superRefine.
      */
-    dependencies: z.array(z.number().int().min(1)),
+    dependencies: z.array(
+      z
+        .string()
+        .regex(BARE_ID_REGEX, 'dependency must be a string of digits')
+        .refine((s) => Number(s) > 0, 'dependency must be a positive integer'),
+    ),
     /** Nullable prose acceptance statement (inv 9). */
     testStrategy: z.string().nullable(),
     /** Optional ISO 8601 timestamp — absent when Subtask not touched since creation (inv 10). */
@@ -154,8 +162,9 @@ export const TaskSchema = z
   .strict() // inv 7 (no details/testStrategy), inv 8 (no parentId)
   .superRefine((task, ctx) => {
     // inv 14–16: Sibling-only Subtask dependency enforcement.
-    // Walk each Subtask's dependencies[] and assert every referenced integer
-    // matches some sibling's id within this Task.
+    // Walk each Subtask's dependencies[] and assert every referenced digit-string
+    // matches some sibling's id within this Task. Set<string> — string-vs-string
+    // membership after the id/deps flip to digit-strings.
     const siblingIds = new Set(task.subtasks.map((s) => s.id));
 
     for (const subtask of task.subtasks) {
