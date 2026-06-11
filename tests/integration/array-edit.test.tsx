@@ -115,12 +115,12 @@ describe("Subtask cross-Task dependency rejection (PRODUCT inv 34 — schema sup
           status_note: null,
           subtasks: [
             {
-              id: 1,
+              id: "1",
               title: "S1",
               description: "x",
               details: "x",
               status: "pending",
-              dependencies: [99], // stray cross-Task ref — no sibling 99
+              dependencies: ["99"], // stray cross-Task ref — no sibling "99"
               testStrategy: "x",
             },
           ],

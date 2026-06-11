@@ -73,7 +73,7 @@ function makeTask(id: string, overrides: Partial<Record<string, unknown>> = {}) 
     dependencies: [],
     subtasks: [
       {
-        id: 1,
+        id: "1",
         title: "Slice one",
         description: "First slice.",
         details: "Initial details.",
@@ -258,7 +258,7 @@ describe("dryRun: true — full gates, would-be payload, NOTHING touched (inv 16
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.ok).toBe(true);
     expect(body.dryRun).toBe(true);
-    expect(body.subtaskIds).toEqual([2]);
+    expect(body.subtaskIds).toEqual(["2"]);
 
     const after = await snapshotFile(ledgerPath);
     expect(after.bytes.equals(before.bytes)).toBe(true);
@@ -281,7 +281,7 @@ describe("dryRun: true — full gates, would-be payload, NOTHING touched (inv 16
     const delSubBody = (await delSub.json()) as Record<string, unknown>;
     expect(delSubBody.ok).toBe(true);
     expect(delSubBody.dryRun).toBe(true);
-    expect(delSubBody.subtaskId).toBe(1);
+    expect(delSubBody.subtaskId).toBe("1");
 
     const delRec = await fetch(`${url}/api/ledger/record/20`, {
       method: "DELETE",

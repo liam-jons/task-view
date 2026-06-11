@@ -102,7 +102,7 @@ function taskListFixtureDoc() {
         dependencies: [],
         subtasks: [
           {
-            id: 1,
+            id: "1",
             title: `Sub one ${EM_DASH} uno`,
             description: `Subtask summary ${EM_DASH} one.`,
             details: `Details with an em-dash ${EM_DASH} and a section ${SECTION}1.`,
@@ -129,7 +129,7 @@ function taskListFixtureDoc() {
         dependencies: [],
         subtasks: [
           {
-            id: 1,
+            id: "1",
             title: `Sub ${EM_DASH} solo`,
             description: `Untouched subtask ${EM_DASH} two.`,
             details: `Untouched details ${EM_DASH} arrow ${ARROW} here.`,
@@ -482,7 +482,7 @@ function newTaskRecord(id: string) {
 }
 
 /** A schema-valid Subtask body (numeric id) with an arrow glyph in details. */
-function newSubtaskRecord(id: number) {
+function newSubtaskRecord(id: string) {
   return {
     id,
     title: `Splice probe subtask ${id} ${EM_DASH} uno`,
@@ -559,17 +559,17 @@ describe("scopedSpliceSerialise — insert/remove byte stability", () => {
       kind: "insert",
       collection: "subtasks",
       taskId: "900",
-      record: newSubtaskRecord(2),
+      record: newSubtaskRecord("2"),
     });
     expect(inserted.ok).toBe(true);
     if (!inserted.ok) return;
-    expect(inserted.text).toContain('"id": 2');
+    expect(inserted.text).toContain('"id": "2"');
 
     const removed = scopedSpliceSerialise(inserted.text, {
       kind: "remove",
       collection: "subtasks",
       taskId: "900",
-      recordId: 2,
+      recordId: "2",
     });
     expect(removed.ok).toBe(true);
     if (!removed.ok) return;
@@ -643,7 +643,7 @@ describe("scopedSpliceSerialise — insert/remove byte stability", () => {
       kind: "insert",
       collection: "subtasks",
       taskId: "does-not-exist",
-      record: newSubtaskRecord(1),
+      record: newSubtaskRecord("1"),
     });
     expect(r.ok).toBe(false);
     if (r.ok) return;
@@ -651,8 +651,10 @@ describe("scopedSpliceSerialise — insert/remove byte stability", () => {
   });
 
   // KH port (ID-90.13 U11): __tests__/lib/ledger/scoped-serialise.test.ts —
-  // "a subtask insert with the wrong id type (string) fails schema-error".
-  test("a subtask insert with the wrong id type (string) fails schema-error", () => {
+  // "a subtask insert with a non-digit-string id fails schema-error".
+  // Post-ID-102.7 the id contract is a digit-string (`/^\d+$/`, positive);
+  // a non-digit string like "not-a-number" fails the schema, as does a number.
+  test("a subtask insert with a non-digit-string id fails schema-error", () => {
     const original = taskListFixtureText();
     const hostId = (JSON.parse(original) as { tasks: { id: string }[] })
       .tasks[0].id;
@@ -661,8 +663,8 @@ describe("scopedSpliceSerialise — insert/remove byte stability", () => {
       collection: "subtasks",
       taskId: hostId,
       record: {
-        ...newSubtaskRecord(1),
-        id: "not-a-number" as unknown as number,
+        ...newSubtaskRecord("1"),
+        id: "not-a-number",
       },
     });
     expect(r.ok).toBe(false);

@@ -37,7 +37,7 @@ function makeTask(overrides: Partial<Record<string, unknown>> = {}) {
     dependencies: [],
     subtasks: [
       {
-        id: 1,
+        id: "1",
         title: "Synthetic subtask one",
         description: "Short subtask description.",
         details: "Initial details.",

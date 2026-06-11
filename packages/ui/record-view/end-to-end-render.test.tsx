@@ -50,7 +50,7 @@ const taskListFixture = {
       capability_theme: "3",
       subtasks: [
         {
-          id: 1,
+          id: "1",
           title: "First",
           description: "First subtask.",
           details:
@@ -60,12 +60,12 @@ const taskListFixture = {
           testStrategy: "Acceptance.",
         },
         {
-          id: 2,
+          id: "2",
           title: "Second",
           description: "Second subtask.",
           details: "Details.",
           status: "pending",
-          dependencies: [1],
+          dependencies: ["1"],
           testStrategy: null,
         },
       ],

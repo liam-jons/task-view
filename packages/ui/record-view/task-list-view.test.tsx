@@ -29,7 +29,7 @@ const NAV: NavStripData = {
 };
 
 const mkSubtask = (overrides: Partial<Subtask> = {}): Subtask => ({
-  id: 1,
+  id: "1",
   title: "Subtask title",
   description: "Subtask description.",
   status: "pending",
@@ -166,8 +166,8 @@ describe("PRODUCT inv 8 (Subtask block: frontmatter + description + testStrategy
   test("renders each Subtask as a level-3 heading with ID prefix + frontmatter", () => {
     const task = mkTask({
       subtasks: [
-        mkSubtask({ id: 1, title: "First sub" }),
-        mkSubtask({ id: 2, title: "Second sub" }),
+        mkSubtask({ id: "1", title: "First sub" }),
+        mkSubtask({ id: "2", title: "Second sub" }),
       ],
     });
     const ledger = buildLedgerContext({ tasks: [task] });
@@ -292,7 +292,7 @@ describe("ID-20.25 (Task + Subtask edit affordances)", () => {
   test("Subtask: details pencil carries the FULL raw string incl. journal block (inv 28)", () => {
     const details =
       "Pre.\n\n<info added on 2026-05-21T15:00:00.000Z>\nShipped.\n</info added on 2026-05-21T15:00:00.000Z>";
-    const task = mkTask({ subtasks: [mkSubtask({ id: 1, details })] });
+    const task = mkTask({ subtasks: [mkSubtask({ id: "1", details })] });
     const ledger = buildLedgerContext({ tasks: [task] });
     const html = renderToStaticMarkup(
       <TaskListView task={task} ledger={ledger} nav={NAV} />,
@@ -308,8 +308,8 @@ describe("ID-20.25 (Task + Subtask edit affordances)", () => {
   test("Subtask: dependencies pencil raw value is bare integer ids", () => {
     const task = mkTask({
       subtasks: [
-        mkSubtask({ id: 1 }),
-        mkSubtask({ id: 2, dependencies: [1] }),
+        mkSubtask({ id: "1" }),
+        mkSubtask({ id: "2", dependencies: ["1"] }),
       ],
     });
     const ledger = buildLedgerContext({ tasks: [task] });
@@ -385,8 +385,8 @@ describe("PRODUCT inv 13 (sibling-Subtask deps → in-page anchor)", () => {
   test("sibling deps render as #subtask-{id} fragment links", () => {
     const task = mkTask({
       subtasks: [
-        mkSubtask({ id: 1, dependencies: [] }),
-        mkSubtask({ id: 2, dependencies: [1] }),
+        mkSubtask({ id: "1", dependencies: [] }),
+        mkSubtask({ id: "2", dependencies: ["1"] }),
       ],
     });
     const ledger = buildLedgerContext({ tasks: [task] });
@@ -406,7 +406,7 @@ describe("PRODUCT inv 13 (sibling-Subtask deps → in-page anchor)", () => {
     // renderer must defensively flag any sibling id not in the parent.
     const task = mkTask({
       subtasks: [
-        mkSubtask({ id: 1, dependencies: [99] }), // 99 is not a sibling
+        mkSubtask({ id: "1", dependencies: ["99"] }), // "99" is not a sibling
       ],
     });
     const ledger = buildLedgerContext({ tasks: [task] });

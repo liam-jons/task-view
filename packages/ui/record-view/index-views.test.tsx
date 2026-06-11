@@ -84,7 +84,7 @@ describe("TaskListIndexView (TECH §4.3)", () => {
         id: "20",
         subtasks: [
           {
-            id: 1,
+            id: "1",
             title: "S1",
             description: "S1 desc",
             details: "",
@@ -93,7 +93,7 @@ describe("TaskListIndexView (TECH §4.3)", () => {
             testStrategy: null,
           },
           {
-            id: 2,
+            id: "2",
             title: "S2",
             description: "S2 desc",
             details: "",

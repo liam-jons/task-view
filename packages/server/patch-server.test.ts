@@ -71,7 +71,7 @@ function makeTaskListLedgerObject() {
         dependencies: [],
         subtasks: [
           {
-            id: 1,
+            id: "1",
             title: "Slice 1",
             description: "First slice.",
             details: "Details for slice 1.",
@@ -81,12 +81,12 @@ function makeTaskListLedgerObject() {
             updatedAt: "2026-05-21T15:30:00.000Z",
           },
           {
-            id: 2,
+            id: "2",
             title: "Slice 2",
             description: "Second slice.",
             details: "Details for slice 2.",
             status: "pending",
-            dependencies: [1],
+            dependencies: ["1"],
             testStrategy: null,
           },
         ],
@@ -1664,21 +1664,21 @@ describe("POST /api/ledger/record/:taskId/subtask — bulk subtask CREATE (ID-90
     expect(res.status).toBe(201);
     const body = (await res.json()) as {
       ok: boolean;
-      subtaskIds: number[];
+      subtaskIds: string[];
       taskId: string;
       newMtime: string;
     };
     expect(body.ok).toBe(true);
     expect(body.taskId).toBe("20");
     // Existing subtask max id is 2 → fold-left allocates 3 then 4.
-    expect(body.subtaskIds).toEqual([3, 4]);
+    expect(body.subtaskIds).toEqual(["3", "4"]);
 
     const text = await readFile(ledger, "utf8");
     const updated = JSON.parse(text) as {
       tasks: { id: string; subtasks: Record<string, unknown>[] }[];
     };
     const subs = updated.tasks[0].subtasks;
-    expect(subs.map((s) => s.id)).toEqual([1, 2, 3, 4]);
+    expect(subs.map((s) => s.id)).toEqual(["1", "2", "3", "4"]);
     // Create defaults observable in the written bytes:
     const added = subs[2];
     expect(added.status).toBe("pending");
@@ -1702,14 +1702,14 @@ describe("POST /api/ledger/record/:taskId/subtask — bulk subtask CREATE (ID-90
       body: JSON.stringify({
         baseMtime,
         subtasks: [
-          { id: 7, title: "Explicit", description: "d" },
+          { id: "7", title: "Explicit", description: "d" },
           { title: "Auto", description: "d" },
         ],
       }),
     });
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { subtaskIds: number[] };
-    expect(body.subtaskIds).toEqual([7, 8]);
+    const body = (await res.json()) as { subtaskIds: string[] };
+    expect(body.subtaskIds).toEqual(["7", "8"]);
   });
 
   test("409 duplicate-id for an explicit id colliding with an existing sibling; nothing written", async () => {
@@ -1723,13 +1723,13 @@ describe("POST /api/ledger/record/:taskId/subtask — bulk subtask CREATE (ID-90
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         baseMtime,
-        subtasks: [{ id: 2, title: "Dup", description: "d" }],
+        subtasks: [{ id: "2", title: "Dup", description: "d" }],
       }),
     });
     expect(res.status).toBe(409);
-    const body = (await res.json()) as { error: string; subtaskId: number };
+    const body = (await res.json()) as { error: string; subtaskId: string };
     expect(body.error).toBe("duplicate-id");
-    expect(body.subtaskId).toBe(2);
+    expect(body.subtaskId).toBe("2");
     expect(await readFile(ledger, "utf8")).toBe(original);
   });
 
@@ -1859,17 +1859,17 @@ describe("DELETE /api/ledger/record/:taskId/subtask/:subId — subtask DELETE (I
     const body = (await res.json()) as {
       ok: boolean;
       taskId: string;
-      subtaskId: number;
+      subtaskId: string;
     };
     expect(body.ok).toBe(true);
     expect(body.taskId).toBe("20");
-    expect(body.subtaskId).toBe(2);
+    expect(body.subtaskId).toBe("2");
 
     const text = await readFile(ledger, "utf8");
     const updated = JSON.parse(text) as {
-      tasks: { subtasks: { id: number }[] }[];
+      tasks: { subtasks: { id: string }[] }[];
     };
-    expect(updated.tasks[0].subtasks.map((s) => s.id)).toEqual([1]);
+    expect(updated.tasks[0].subtasks.map((s) => s.id)).toEqual(["1"]);
     // Untouched Task 30 block stays byte-identical:
     const block30 = original.slice(original.indexOf('"id": "30"'));
     expect(text).toContain(block30);

@@ -1851,20 +1851,17 @@ async function handleDeleteSubtask(
   if (!opt.ok) return opt.response;
   const options = opt.options;
 
-  // ID-35.43 subId coercion (CLI parity): the path segment arrives as a
-  // string but `SubtaskSchema.id` is a NUMBER — a numeric string coerces;
+  // ID-102.7 subId validation (CLI parity): the path segment arrives as a
+  // string and `SubtaskSchema.id` is now a digit-string — validate it is a
+  // positive-integer digit-string and carry the STRING forward unchanged;
   // anything else is a structured `invalid-id` rather than a confusing 404.
-  const subtaskId = Number(subIdRaw);
-  if (
-    !Number.isInteger(subtaskId) ||
-    subtaskId <= 0 ||
-    subIdRaw.trim() === ""
-  ) {
+  const subtaskId = subIdRaw;
+  if (!/^\d+$/.test(subtaskId) || Number(subtaskId) <= 0) {
     return jsonResponse(
       {
         ok: false,
         error: "invalid-id",
-        detail: `subId ${JSON.stringify(subIdRaw)} is not a positive integer; subtask.id must be a number`,
+        detail: `subId ${JSON.stringify(subIdRaw)} is not a positive integer; subtask.id must be a string of digits`,
       },
       { status: 400 },
     );

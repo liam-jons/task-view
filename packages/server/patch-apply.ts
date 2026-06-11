@@ -23,9 +23,10 @@
  *   - Task-list:
  *       ['tasks', taskId, 'status' | 'priority' | 'description' | ...]
  *       ['tasks', taskId, 'subtasks', subtaskId, 'status' | ...]
- *     taskId is a STRING id (e.g. '20'); subtaskId is an INTEGER id
- *     (e.g. 4 — represented as a string here because FieldPath is
- *     uniformly string[]; we Number()-parse on subtask lookup).
+ *     taskId is a STRING id (e.g. '20'); subtaskId is a DIGIT-STRING id
+ *     (e.g. '4'). FieldPath is uniformly string[] and the stored subtask
+ *     id is now itself a digit-string, so we compare string-to-string on
+ *     subtask lookup (no Number()-parse).
  *   - Roadmap (ID-20.19 themes[]):
  *       ['themes', themeId, 'status' | 'notes' | 'title' | ...]
  *   - Backlog:
@@ -245,18 +246,17 @@ function applyTaskListPatch(
       detail: `Missing subtask id at fieldPath[3].`,
     };
   }
-  const subtaskIdNum = Number(subtaskIdRaw);
-  if (!Number.isFinite(subtaskIdNum) || !Number.isInteger(subtaskIdNum)) {
+  if (!/^\d+$/.test(subtaskIdRaw)) {
     return {
       fieldPath: patch.fieldPath,
-      detail: `Subtask id "${subtaskIdRaw}" is not an integer.`,
+      detail: `Subtask id "${subtaskIdRaw}" is not a digit-string id.`,
     };
   }
-  const subtaskIdx = task.subtasks.findIndex((s) => s.id === subtaskIdNum);
+  const subtaskIdx = task.subtasks.findIndex((s) => s.id === subtaskIdRaw);
   if (subtaskIdx === -1) {
     return {
       fieldPath: patch.fieldPath,
-      detail: `Subtask id ${subtaskIdNum} not found within Task ${taskId}.`,
+      detail: `Subtask id ${subtaskIdRaw} not found within Task ${taskId}.`,
     };
   }
   const subtask = task.subtasks[subtaskIdx];

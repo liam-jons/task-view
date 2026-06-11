@@ -26,7 +26,7 @@ const taskListFixture = {
       dependencies: [],
       subtasks: [
         {
-          id: 1,
+          id: "1",
           title: "S1",
           description: "S1 desc",
           details: "",
