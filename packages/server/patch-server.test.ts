@@ -576,7 +576,7 @@ describe("PATCH /api/ledger/record/:recordId — multi-field save (PRODUCT inv 3
         id: string;
         status: string;
         priority: string;
-        subtasks: { id: number; status: string }[];
+        subtasks: { id: string; status: string }[];
       }[];
     };
     expect(updated.tasks[0].status).toBe("done");

@@ -231,6 +231,48 @@ function detectTaskListWithSubtasks(): KnownDetected {
   return d;
 }
 
+/**
+ * Task "49" seeded with EXACTLY the given digit-string subtask ids — used by
+ * the ID-102.7 P3b concat-prevention canaries (a high baseline like ['5'] is
+ * where a string `counter += 1` would corrupt to '51'/'511').
+ */
+function detectTaskListWithSubtaskIds(ids: readonly string[]): KnownDetected {
+  const d = detectSchema({
+    document_name: "Knowledge Hub Task List",
+    document_purpose: "x",
+    related_documents: [],
+    tasks: [
+      {
+        id: "49",
+        title: "t",
+        description: "d",
+        status: "pending",
+        priority: "must",
+        dependencies: [],
+        subtasks: ids.map((id) => ({
+          id,
+          title: `s${id}`,
+          description: `d${id}`,
+          details: "",
+          status: "pending" as const,
+          dependencies: [],
+          testStrategy: null,
+        })),
+        updatedAt: "2026-05-25T00:00:00.000Z",
+        effort_estimate: null,
+        owner: null,
+        priority_note: null,
+        status_note: null,
+        cross_doc_links: [],
+        session_refs: [],
+        commit_refs: [],
+      },
+    ],
+  });
+  if (d.kind === "unknown") throw new Error("fixture invalid");
+  return d;
+}
+
 describe("nextId — per-record max+1 allocation (ledger-cli.ts:645-674 port)", () => {
   test("subtasks: digit-STRING, scoped to the parent task, max+1", () => {
     expect(nextId(detectTaskListWithSubtasks(), "subtasks", "49")).toBe("3");
@@ -418,6 +460,42 @@ describe("insertSubtasks — bulk fold-left create (ID-90.9 U5)", () => {
     expect(result.ok).toBe(true);
     if (detected.kind === "task-list") {
       expect(detected.data.tasks[0].subtasks).toHaveLength(2);
+    }
+  });
+
+  // ID-102.7 P3b concat-prevention canaries: the fold-left counter MUST stay
+  // numeric for the `+ 1` arithmetic and only String()-wrap the stamped id. A
+  // string counter would concatenate ('5' + 1 === '51'), corrupting every
+  // bulk-allocated id past a single-digit baseline (inv 8 monotonic auto-id).
+  test("high baseline ['5'] → batch-of-3 allocates '6','7','8' (NOT '51','511')", () => {
+    const result = insertSubtasks(detectTaskListWithSubtaskIds(["5"]), "49", [
+      { title: "a", description: "da" },
+      { title: "b", description: "db" },
+      { title: "c", description: "dc" },
+    ]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.subtaskIds).toEqual(["6", "7", "8"]);
+      if (result.detected.kind === "task-list") {
+        const subs = result.detected.data.tasks[0].subtasks;
+        expect(subs.map((s) => s.id)).toEqual(["5", "6", "7", "8"]);
+      }
+    }
+  });
+
+  test("gap baseline ['2','10'] → batch-of-1 allocates '11' (max+1 numeric, not '3')", () => {
+    const result = insertSubtasks(
+      detectTaskListWithSubtaskIds(["2", "10"]),
+      "49",
+      [{ title: "a", description: "da" }],
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.subtaskIds).toEqual(["11"]);
+      if (result.detected.kind === "task-list") {
+        const subs = result.detected.data.tasks[0].subtasks;
+        expect(subs.map((s) => s.id)).toEqual(["2", "10", "11"]);
+      }
     }
   });
 });
