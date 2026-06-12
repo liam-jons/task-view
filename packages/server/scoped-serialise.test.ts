@@ -59,6 +59,33 @@ describe("escapeNonAscii", () => {
     // U+1F600 grinning face = surrogate pair D83D DE00
     expect(escapeNonAscii("\u{1F600}")).toBe("\\ud83d\\ude00");
   });
+
+  // ── ID-90 F5/Bug2: DEL (U+007F) must escape to match Python ensure_ascii ──
+  test("escapes DEL (U+007F) to \\u007f (Python ensure_ascii parity)", () => {
+    // Python json.dumps("a\x7fb", ensure_ascii=True) === '"a\\u007fb"'.
+    // The pre-fix regex lower bound `` skipped DEL, leaving it raw and
+    // diverging the JS write from the on-disk convention.
+    expect(escapeNonAscii("ab")).toBe("a\\u007fb");
+    expect(escapeNonAscii("")).toBe("\\u007f");
+  });
+
+  test("regression: em-dash / curly-quotes / astral emoji still round-trip byte-faithfully", () => {
+    // The DEL widening must not regress the existing non-ASCII escapes. Each
+    // value, once escaped and wrapped in a JSON string, must JSON.parse back to
+    // the original (byte-faithful), and emit the exact Python-ensure_ascii form.
+    const CURLY_OPEN = "“";
+    const CURLY_CLOSE = "”";
+    const value = `WS-C4 ${EM_DASH} ${CURLY_OPEN}done${CURLY_CLOSE} ${SECTION}3.5 ${ARROW} \u{1F3AF}`;
+    const escaped = escapeNonAscii(value);
+    // exact byte form (lowercase hex, surrogate pair for the astral emoji)
+    expect(escaped).toBe(
+      "WS-C4 \\u2014 \\u201cdone\\u201d \\u00a73.5 \\u2192 \\ud83c\\udfaf",
+    );
+    // byte-faithful round-trip through a JSON string token
+    expect(JSON.parse(`"${escaped}"`)).toBe(value);
+    // zero raw non-ASCII bytes survive
+    expect(RAW_NON_ASCII.test(escaped)).toBe(false);
+  });
 });
 
 // ── escapeSerialise (invariant 18) ────────────────────────────────────────────

@@ -86,7 +86,16 @@ function detectScopedKind(parsed: unknown): ScopedDetectResult {
 // range. Per-UTF-16-code-unit `charCodeAt` matches Python `ensure_ascii=True`
 // (astral chars are already surrogate pairs in the JS string, so each unit is
 // escaped to its own `\uXXXX`).
-const NON_ASCII = new RegExp("[\\u0080-\\uffff]", "g");
+//
+// ID-90 F5/Bug2: the lower bound is `` (DEL), NOT ``. Python's
+// `json.dumps(..., ensure_ascii=True)` escapes DEL (U+007F) to ``, but
+// `JSON.stringify` leaves it as a raw byte. A ledger value containing DEL
+// therefore diverged the JS write from the on-disk (Python) convention,
+// breaking byte-faithfulness on the scoped vs whole-file vs Python-regen
+// paths. Escaping from  closes that gap. (Other C0 control chars below
+// 0x7f are already escaped by `JSON.stringify` itself — \b\t\n\f\r as the
+// short forms, the rest as \u00xx — so they need no widening here.)
+const NON_ASCII = new RegExp("[\\u007f-\\uffff]", "g");
 
 /**
  * Escape every non-ASCII code unit in `s` to its `\uXXXX` form, matching the
