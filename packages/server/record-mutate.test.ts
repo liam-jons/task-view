@@ -304,6 +304,153 @@ describe("nextId — per-record max+1 allocation (ledger-cli.ts:645-674 port)", 
   });
 });
 
+// ── ID-90 F5/Bug3: monotonic id high-water mark (no id reuse) ─────────────────
+//
+// The bl-287/288 collision class: `max(survivors)+1` reuses an id freed by
+// delete/promote (which lowers the live max). The `_idHighWater` field records
+// the highest id ever ALLOCATED so a freed id is never re-handed-out.
+
+function newItem(id: string) {
+  return {
+    id,
+    title: "i",
+    description: "d",
+    type: "feature" as const,
+    status: "parked" as const,
+    effort_estimate: null,
+    priority: "could" as const,
+    track: "unsorted",
+    dependencies: [],
+    session_refs: [],
+    commit_refs: [],
+    cross_doc_links: [],
+    notes: null,
+  };
+}
+
+function backlogWith(
+  ids: readonly string[],
+  highWater?: number,
+): KnownDetected {
+  const doc: Record<string, unknown> = {
+    document_name: "Product Backlog",
+    document_purpose: "x",
+    related_documents: [],
+    items: ids.map(newItem),
+  };
+  if (highWater !== undefined) doc._idHighWater = highWater;
+  const d = detectSchema(doc);
+  if (d.kind === "unknown") throw new Error("fixture invalid");
+  return d;
+}
+
+describe("nextId — _idHighWater monotonic counter (Bug3)", () => {
+  test("backward-compatible: a ledger WITHOUT _idHighWater behaves as max+1", () => {
+    expect(nextId(backlogWith(["10", "11"]), "items")).toBe("12");
+  });
+
+  test("stored high-water above live max wins (a freed top id is not reused)", () => {
+    // Live max 11, but the counter remembers 50 was once allocated.
+    expect(nextId(backlogWith(["10", "11"], 50), "items")).toBe("51");
+  });
+
+  test("live max above a stale high-water wins (counter never lowers an answer)", () => {
+    expect(nextId(backlogWith(["10", "11"], 5), "items")).toBe("12");
+  });
+
+  test("Repro A — create then delete then create does NOT reuse the freed id", () => {
+    // Start: items 10,11 (no counter). Allocate 12, insert it, delete it,
+    // then the NEXT allocation must be 13 — not a reuse of the freed 12.
+    const start = backlogWith(["10", "11"]);
+    const allocated = nextId(start, "items"); // "12"
+    expect(allocated).toBe("12");
+
+    const inserted = insertRecord(start, newItem(allocated));
+    expect(inserted.ok).toBe(true);
+    if (!inserted.ok) return;
+    expect(inserted.detected.data._idHighWater).toBe(12);
+
+    const removed = removeRecord(inserted.detected, "12");
+    expect(removed.ok).toBe(true);
+    if (!removed.ok) return;
+    // The freed top id 12 is recorded in the persisted counter…
+    expect(removed.detected.data._idHighWater).toBe(12);
+    // …so the next allocation is 13, NOT a reuse of 12.
+    expect(nextId(removed.detected, "items")).toBe("13");
+  });
+
+  test("Repro B — promote (removeRecord leg) then create does NOT reuse the freed id", () => {
+    // The promote remove-leg uses removeRecord on the backlog. Modelling that
+    // leg: insert the to-be-promoted item, then removeRecord it (promote out),
+    // then the next backlog allocation must NOT reuse the freed id (which the
+    // promoted Task now back-references).
+    const start = backlogWith(["10", "11"]);
+    const promotedId = nextId(start, "items"); // "12"
+    const created = insertRecord(start, newItem(promotedId));
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const promotedOut = removeRecord(created.detected, promotedId); // promote remove-leg
+    expect(promotedOut.ok).toBe(true);
+    if (!promotedOut.ok) return;
+    expect(promotedOut.detected.data._idHighWater).toBe(12);
+
+    const next = nextId(promotedOut.detected, "items");
+    expect(next).toBe("13");
+    expect(next).not.toBe(promotedId); // never reuse the promoted-out id
+  });
+
+  test("insert seeds the counter on a legacy (no-counter) ledger", () => {
+    const start = backlogWith(["10", "11"]);
+    expect(
+      (start.data as { _idHighWater?: number })._idHighWater,
+    ).toBeUndefined();
+    const inserted = insertRecord(start, newItem("12"));
+    expect(inserted.ok).toBe(true);
+    if (inserted.ok) expect(inserted.detected.data._idHighWater).toBe(12);
+  });
+
+  test("delete seeds the counter from the pre-removal max on a legacy ledger", () => {
+    const start = backlogWith(["10", "11", "12"]);
+    const removed = removeRecord(start, "12");
+    expect(removed.ok).toBe(true);
+    // The pre-removal max (12) is recorded so 12 is never re-handed-out.
+    if (removed.ok) expect(removed.detected.data._idHighWater).toBe(12);
+  });
+
+  test("tasks collection honours the high-water counter too", () => {
+    const doc: Record<string, unknown> = {
+      document_name: "Knowledge Hub Task List",
+      document_purpose: "x",
+      related_documents: [],
+      _idHighWater: 200,
+      tasks: [
+        {
+          id: "20",
+          title: "t",
+          description: "d",
+          status: "pending",
+          priority: "must",
+          dependencies: [],
+          subtasks: [],
+          updatedAt: "2026-05-25T00:00:00.000Z",
+          effort_estimate: null,
+          owner: null,
+          priority_note: null,
+          status_note: null,
+          cross_doc_links: [],
+          session_refs: [],
+          commit_refs: [],
+        },
+      ],
+    };
+    const d = detectSchema(doc);
+    if (d.kind === "unknown") throw new Error("fixture invalid");
+    // Live max 20, counter 200 → next is 201.
+    expect(nextId(d, "tasks")).toBe("201");
+  });
+});
+
 describe("withCreateDefaults — structural defaults under the record (ledger-cli.ts:2237 port)", () => {
   test("subtask: status pending, dependencies [], details '', testStrategy null", () => {
     const r = withCreateDefaults("subtask", { title: "x", description: "y" });

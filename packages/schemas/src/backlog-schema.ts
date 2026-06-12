@@ -210,6 +210,18 @@ export const BacklogSchema = z
 
     /** Flat array of backlog items. */
     items: z.array(BacklogItemSchema),
+
+    /**
+     * ID-90 F5/Bug3: monotonic id high-water mark — the highest item id ever
+     * ALLOCATED on this document (never decreases on delete/promote), so the
+     * auto-id allocator never reuses a freed id (the bl-287/288 collision
+     * class). OPTIONAL + backward-compatible: a ledger without the field falls
+     * back to `max(survivors)+1` and the allocator seeds it on first write.
+     * `BacklogSchema` is not `.strict()`, but declaring the field here makes
+     * Zod PRESERVE it (rather than strip it) through the whole-document
+     * re-serialise paths (delete / promote-remove leg).
+     */
+    _idHighWater: z.number().int().nonnegative().optional(),
   })
   .superRefine((doc, ctx) => {
     const ids = doc.items.map((item) => item.id);

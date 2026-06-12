@@ -185,6 +185,15 @@ export function insertRecord(
   }
   collection.push(record);
 
+  // ID-90 F5/Bug3: advance the monotonic high-water mark by the inserted id
+  // (digit-string ids only; umbrellas use kebab-case ids and carry no field).
+  if (detected.kind !== "umbrellas") {
+    const newIdNum = Number(newId);
+    if (!Number.isNaN(newIdNum)) {
+      stampHighWater(rawClone, effectiveHighWater(detected), newIdNum);
+    }
+  }
+
   const parsed = reparse(detected.kind, rawClone);
   if (!parsed.ok)
     return { ok: false, kind: "schema-error", zodError: parsed.zodError };
@@ -224,6 +233,17 @@ export function removeRecord(
   rawClone[collectionKey] = collection.filter(
     (rec) => extractId(rec) !== recordId,
   );
+
+  // ID-90 F5/Bug3: persist the PRE-removal high-water mark BEFORE the freed id
+  // disappears from the live set. This is the actual fix — removing the highest
+  // id (delete OR the promote remove-leg) used to lower the live max, letting
+  // the next allocation reuse the freed id. By stamping the pre-mutation
+  // effective mark, the freed top id is recorded and never re-handed-out.
+  // (umbrellas carry no field — kebab-case ids.)
+  if (detected.kind !== "umbrellas") {
+    const prior = effectiveHighWater(detected);
+    stampHighWater(rawClone, prior, prior);
+  }
 
   const parsed = reparse(detected.kind, rawClone);
   if (!parsed.ok)
@@ -341,22 +361,94 @@ export function nextId(
     const nums = (task?.subtasks ?? [])
       .map((s) => Number(s.id))
       .filter((n) => !Number.isNaN(n));
+    // Subtasks are nested per-Task with no document-level high-water field;
+    // their max+1 over the live siblings is unchanged (the bl-287/288 class
+    // is a TOP-LEVEL-collection problem — promote/delete free a document-level
+    // id; nested subtasks are not promoted out of their parent).
     return String(nums.length === 0 ? 1 : Math.max(...nums) + 1);
   }
-  let ids: string[] = [];
-  if (collectionKey === "tasks" && detected.kind === "task-list") {
-    ids = detected.data.tasks.map((t) => t.id);
-  } else if (collectionKey === "themes" && detected.kind === "roadmap") {
-    ids = detected.data.themes.map((t) => t.id);
-  } else if (collectionKey === "items" && detected.kind === "backlog") {
-    ids = detected.data.items.map((it) => it.id);
-  } else {
+  if (
+    !(
+      (collectionKey === "tasks" && detected.kind === "task-list") ||
+      (collectionKey === "themes" && detected.kind === "roadmap") ||
+      (collectionKey === "items" && detected.kind === "backlog")
+    )
+  ) {
     throw new Error(
       `nextId(${collectionKey}) does not match detected ledger kind ${detected.kind}`,
     );
   }
-  const nums = ids.map((id) => Number(id)).filter((n) => !Number.isNaN(n));
-  return String(nums.length === 0 ? 1 : Math.max(...nums) + 1);
+  // ID-90 F5/Bug3: allocate above BOTH the live max AND the persisted
+  // monotonic high-water mark, so an id freed by delete/promote (which lowers
+  // the live max) is NEVER reused. `nextHighWaterAlloc` returns the digit-string.
+  return String(nextHighWaterAlloc(detected));
+}
+
+// ── ID-90 F5/Bug3: monotonic id high-water mark ──────────────────────────────
+//
+// The auto-id allocator previously returned `max(survivingIds)+1`. That is NOT
+// monotonic across deletes/promotes: freeing the highest id lowers the live max,
+// so the next allocation re-hands-out the just-freed id (the bl-287/288
+// collision class — a reused backlog id collides with a promoted Task's
+// provenance back-reference). The fix is a document-level `_idHighWater` field
+// recording the highest id ever ALLOCATED; it only ever increases. The allocator
+// reads `max(liveMax, highWater)+1`, and every create/delete/promote persists a
+// non-decreasing `_idHighWater` so the mark survives the freeing write.
+//
+// Backward-compatibility: a legacy ledger has no `_idHighWater`. We derive the
+// effective mark from `max(liveMax, storedHighWater ?? 0)`, so the first write
+// on a legacy ledger behaves identically to the old `max+1` AND seeds the field.
+
+/** The numeric ids currently present in a document's top-level id-collection. */
+function liveCollectionIds(detected: KnownDetected): number[] {
+  let ids: string[] = [];
+  if (detected.kind === "task-list") ids = detected.data.tasks.map((t) => t.id);
+  else if (detected.kind === "roadmap")
+    ids = detected.data.themes.map((t) => t.id);
+  else if (detected.kind === "backlog")
+    ids = detected.data.items.map((it) => it.id);
+  return ids.map((id) => Number(id)).filter((n) => !Number.isNaN(n));
+}
+
+/** Read the persisted `_idHighWater` off a parsed document (0 when absent). */
+function storedHighWater(detected: KnownDetected): number {
+  const hw = (detected.data as { _idHighWater?: unknown })._idHighWater;
+  return typeof hw === "number" && Number.isFinite(hw) && hw >= 0 ? hw : 0;
+}
+
+/**
+ * The effective high-water mark = max(live numeric max, stored high-water).
+ * Tasks/themes/items are 1-based; an empty + un-seeded document has effective
+ * mark 0 so the first allocation is 1 (unchanged from the legacy contract).
+ */
+export function effectiveHighWater(detected: KnownDetected): number {
+  const live = liveCollectionIds(detected);
+  const liveMax = live.length === 0 ? 0 : Math.max(...live);
+  return Math.max(liveMax, storedHighWater(detected));
+}
+
+/** The next id to allocate = effectiveHighWater + 1 (numeric). */
+function nextHighWaterAlloc(detected: KnownDetected): number {
+  return effectiveHighWater(detected) + 1;
+}
+
+/**
+ * Stamp a non-decreasing `_idHighWater` onto a RAW (plain-object) document
+ * clone in place. `candidate` is the id that may advance the mark (e.g. the id
+ * just inserted, or — on delete/promote — the pre-mutation live max, so the
+ * freed top id is recorded before it disappears). The field is only ever raised,
+ * never lowered, and is always seeded (legacy ledgers gain it on first write).
+ */
+function stampHighWater(
+  rawClone: Record<string, unknown>,
+  priorEffective: number,
+  candidate: number,
+): void {
+  const next = Math.max(
+    priorEffective,
+    Number.isFinite(candidate) ? candidate : 0,
+  );
+  rawClone._idHighWater = next;
 }
 
 /**

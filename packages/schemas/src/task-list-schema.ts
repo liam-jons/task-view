@@ -198,6 +198,15 @@ export const TaskListSchema = z
     related_documents: z.array(z.string()),
     /** Array of Task objects — empty allowed (inv 4, 19). */
     tasks: z.array(TaskSchema),
+    /**
+     * ID-90 F5/Bug3: monotonic id high-water mark. The highest task id ever
+     * ALLOCATED on this document (never decreases on delete/promote), so the
+     * auto-id allocator never reuses a freed id. OPTIONAL + backward-compatible:
+     * a ledger without the field falls back to `max(survivors)+1`, and the
+     * allocator seeds the field on its first write. Declared here because the
+     * root is `.strict()` (an undeclared key would otherwise be rejected).
+     */
+    _idHighWater: z.number().int().nonnegative().optional(),
   })
   .strict();
 

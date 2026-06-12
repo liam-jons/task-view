@@ -205,6 +205,13 @@ export const RoadmapSchema = z
      * sections[] field.
      */
     themes: z.array(RoadmapThemeSchema),
+    /**
+     * ID-90 F5/Bug3: monotonic id high-water mark — the highest theme id ever
+     * ALLOCATED (never decreases on delete), so the auto-id allocator never
+     * reuses a freed id. OPTIONAL + backward-compatible (absent → fall back to
+     * `max(survivors)+1`). Declared here because the root is `.strict()`.
+     */
+    _idHighWater: z.number().int().nonnegative().optional(),
   })
   .strict();
 export type Roadmap = z.infer<typeof RoadmapSchema>;
