@@ -144,7 +144,15 @@ function sweepRecordBudgets(
     // Surface the `(over by N)` delta so the operator can trim with
     // precision instead of running the arithmetic themselves.
     const overBy = length - budget;
-    const line = `${field} is ${length} chars (budget ${budget}, over by ${overBy}) on ${budgetSubject(gate)}`;
+    // ID-90 F5/Bug1: append a remedy clause so the operator knows HOW to
+    // resolve the rejection, not just that it happened. `subtask.details` is
+    // the unbudgeted append-only journal home (invariant 27), so overflow
+    // prose belongs there; `--force` is the per-invocation override (inv 26).
+    const remedy =
+      gate.recordKind === "subtask"
+        ? ` — trim it to ${budget} chars, or move the overflow prose into the unbudgeted \`details\` field (or pass --force to override this gate)`
+        : ` — trim it to ${budget} chars (or pass --force to override this gate)`;
+    const line = `${field} is ${length} chars (budget ${budget}, over by ${overBy}) on ${budgetSubject(gate)}${remedy}`;
     if (mutatedFields === undefined) {
       // Create / add / promote — first over-budget field is fatal.
       return { ok: false, detail: line, warnings: [] };

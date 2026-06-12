@@ -149,10 +149,43 @@ describe("checkBudget — create mode (mutatedField undefined)", () => {
     const result = checkBudget(gate);
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.detail).toBe(
+      // The measured prefix (length + budget + over-by + subject) is unchanged.
+      expect(result.detail).toContain(
         "description is 260 chars (budget 250, over by 10) on subtask 49.6",
       );
       expect(result.warnings).toEqual([]);
+    }
+  });
+
+  // ── ID-90 F5/Bug1: budget-exceeded message carries a remedy clause ──────────
+  test("subtask rejection suggests moving overflow into `details` + --force", () => {
+    const result = checkBudget({
+      recordKind: "subtask",
+      recordId: 6,
+      parentId: "49",
+      record: { description: OVER_250, testStrategy: "ok" },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.detail).toContain("trim it to 250 chars");
+      expect(result.detail).toContain("`details` field");
+      expect(result.detail).toContain("--force");
+    }
+  });
+
+  test("non-subtask rejection suggests trim + --force (no `details` advice)", () => {
+    // `task`/`theme`/`item` have no unbudgeted `details` journal home, so the
+    // remedy advises trimming + --force only — never the subtask-only clause.
+    const result = checkBudget({
+      recordKind: "task",
+      recordId: "7",
+      record: { description: "x".repeat(1501) },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.detail).toContain("trim it to 1500 chars");
+      expect(result.detail).toContain("--force");
+      expect(result.detail).not.toContain("`details` field");
     }
   });
 
@@ -527,9 +560,12 @@ describe("multi-violation enumeration (ID-90.12 U10)", () => {
     ]);
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) {
-      expect(outcome.detail).toBe(
+      // Single measured violation — exactly ONE line (no `; ` join). The
+      // measured prefix is unchanged; the Bug1 remedy clause is appended after.
+      expect(outcome.detail).toContain(
         "description is 1510 chars (budget 1500, over by 10) on task 7",
       );
+      expect(outcome.detail).not.toContain("; ");
     }
   });
 });
