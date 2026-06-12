@@ -33,6 +33,10 @@ import {
   UmbrellasSchema,
   type Umbrellas,
 } from "@task-view/schemas/umbrellas";
+import {
+  RetrosSchema,
+  type RetrosDocument,
+} from "@task-view/schemas/retro";
 import { ZodError } from "zod";
 
 import type { DetectSchemaResult } from "./detect-schema";
@@ -77,6 +81,20 @@ function extractId(body: unknown): string | null {
   return null;
 }
 
+/**
+ * The top-level record-collection key for a detected ledger kind. WS-C C2
+ * adds the `retro` arm (`retros`); umbrellas is included for completeness
+ * though its creates are rejected upstream (membership edits are field
+ * PATCHes, not record splices).
+ */
+function collectionKeyFor(kind: KnownDetected["kind"]): string {
+  if (kind === "task-list") return "tasks";
+  if (kind === "roadmap") return "themes";
+  if (kind === "umbrellas") return "umbrellas";
+  if (kind === "retro") return "retros";
+  return "items";
+}
+
 function existingIds(detected: KnownDetected): Set<string> {
   if (detected.kind === "task-list") {
     return new Set(detected.data.tasks.map((t) => t.id));
@@ -87,6 +105,10 @@ function existingIds(detected: KnownDetected): Set<string> {
   // ID-90 U8: umbrellas — kebab-case umbrella entry ids.
   if (detected.kind === "umbrellas") {
     return new Set(detected.data.umbrellas.map((u) => u.id));
+  }
+  // WS-C C2: retros — session-id (`S<n>`) record ids.
+  if (detected.kind === "retro") {
+    return new Set(detected.data.retros.map((r) => r.id));
   }
   return new Set(detected.data.items.map((it) => it.id));
 }
@@ -103,7 +125,10 @@ function reparse(
   kind: KnownDetected["kind"],
   raw: unknown,
 ):
-  | { ok: true; data: TaskList | Roadmap | BacklogDocument | Umbrellas }
+  | {
+      ok: true;
+      data: TaskList | Roadmap | BacklogDocument | Umbrellas | RetrosDocument;
+    }
   | { ok: false; zodError: ZodError } {
   try {
     if (kind === "task-list")
@@ -112,6 +137,8 @@ function reparse(
     // ID-90 U8: fourth known kind.
     if (kind === "umbrellas")
       return { ok: true, data: UmbrellasSchema.parse(raw) };
+    // WS-C C2: fifth known kind — retros.
+    if (kind === "retro") return { ok: true, data: RetrosSchema.parse(raw) };
     return { ok: true, data: BacklogSchema.parse(raw) };
   } catch (err) {
     if (err instanceof ZodError) return { ok: false, zodError: err };
@@ -121,7 +148,7 @@ function reparse(
 
 function rebuildDetected(
   kind: KnownDetected["kind"],
-  data: TaskList | Roadmap | BacklogDocument | Umbrellas,
+  data: TaskList | Roadmap | BacklogDocument | Umbrellas | RetrosDocument,
 ): KnownDetected {
   if (kind === "task-list")
     return { kind: "task-list", data: data as TaskList };
@@ -129,6 +156,9 @@ function rebuildDetected(
   // ID-90 U8: fourth known kind.
   if (kind === "umbrellas")
     return { kind: "umbrellas", data: data as Umbrellas };
+  // WS-C C2: fifth known kind — retros.
+  if (kind === "retro")
+    return { kind: "retro", data: data as RetrosDocument };
   return { kind: "backlog", data: data as BacklogDocument };
 }
 
@@ -167,12 +197,7 @@ export function insertRecord(
   // structuredClone the raw data so the caller's snapshot is untouched on
   // any failure path. We append to the cloned collection, then re-parse.
   const rawClone = structuredClone(detected.data) as Record<string, unknown>;
-  const collectionKey =
-    detected.kind === "task-list"
-      ? "tasks"
-      : detected.kind === "roadmap"
-        ? "themes"
-        : "items";
+  const collectionKey = collectionKeyFor(detected.kind);
   const collection = rawClone[collectionKey];
   if (!Array.isArray(collection)) {
     // Defensive: a validated `detected` always carries the array, but guard
@@ -186,8 +211,9 @@ export function insertRecord(
   collection.push(record);
 
   // ID-90 F5/Bug3: advance the monotonic high-water mark by the inserted id
-  // (digit-string ids only; umbrellas use kebab-case ids and carry no field).
-  if (detected.kind !== "umbrellas") {
+  // (digit-string ids only; umbrellas use kebab-case ids and retros use
+  // caller-supplied session ids (`S<n>`) — neither carries the field).
+  if (detected.kind !== "umbrellas" && detected.kind !== "retro") {
     const newIdNum = Number(newId);
     if (!Number.isNaN(newIdNum)) {
       stampHighWater(rawClone, effectiveHighWater(detected), newIdNum);
@@ -220,12 +246,7 @@ export function removeRecord(
     return { ok: false, kind: "record-not-found", recordId };
   }
   const rawClone = structuredClone(detected.data) as Record<string, unknown>;
-  const collectionKey =
-    detected.kind === "task-list"
-      ? "tasks"
-      : detected.kind === "roadmap"
-        ? "themes"
-        : "items";
+  const collectionKey = collectionKeyFor(detected.kind);
   const collection = rawClone[collectionKey];
   if (!Array.isArray(collection)) {
     return { ok: false, kind: "record-not-found", recordId };
@@ -239,8 +260,9 @@ export function removeRecord(
   // id (delete OR the promote remove-leg) used to lower the live max, letting
   // the next allocation reuse the freed id. By stamping the pre-mutation
   // effective mark, the freed top id is recorded and never re-handed-out.
-  // (umbrellas carry no field — kebab-case ids.)
-  if (detected.kind !== "umbrellas") {
+  // (umbrellas carry no field — kebab-case ids; retros use caller-supplied
+  // session ids — neither carries the high-water field.)
+  if (detected.kind !== "umbrellas" && detected.kind !== "retro") {
     const prior = effectiveHighWater(detected);
     stampHighWater(rawClone, prior, prior);
   }
@@ -265,8 +287,14 @@ export function removeRecord(
 //   - the bulk `add-subtasks` fold-left create + `delete-subtask` removal
 //     (PRODUCT invariants 37-38; invariant 38's mutex half lands in record 11).
 
-/** The four documented record kinds, each with structural create defaults. */
-export type CreateRecordKind = "subtask" | "task" | "theme" | "item";
+/** The documented record kinds, each with structural create defaults. WS-C C2
+ * adds `retro`. */
+export type CreateRecordKind =
+  | "subtask"
+  | "task"
+  | "theme"
+  | "item"
+  | "retro";
 
 /** Per-record-kind structural defaults — empty arrays, nulls, empty strings.
  * Ported VERBATIM from the KH ledger-CLI `CREATE_DEFAULTS` (ledger-cli.ts). */
@@ -313,6 +341,27 @@ const CREATE_DEFAULTS: Record<CreateRecordKind, Record<string, unknown>> = {
     commit_refs: [],
     cross_doc_links: [],
     notes: null,
+  },
+  // WS-C C2: retro record structural defaults — the six empty category arrays,
+  // empty provenance arrays, and the four soft-delete fields. `id`, `session_id`,
+  // `date`, and `track` are required scalars with no inherent empty value and
+  // must be supplied in the body. RetroFindingSchema.cross_doc_links and the
+  // four soft-delete fields also default in-schema, but seeding them here keeps
+  // the written bytes explicit and parity with the other kinds' defaults.
+  retro: {
+    session_refs: [],
+    commit_refs: [],
+    cross_doc_links: [],
+    bugs_discovered: [],
+    failed_assumptions: [],
+    architecture_decisions: [],
+    rejected_approaches: [],
+    workflow_improvements: [],
+    unresolved_questions: [],
+    deprecated: false,
+    deprecation_reason: null,
+    superseding_record_id: null,
+    last_conflict_check: null,
   },
 };
 

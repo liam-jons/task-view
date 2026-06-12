@@ -24,9 +24,15 @@ import { dirname } from "node:path";
 import type { KnownDocumentName } from "./detect-schema";
 import { scanForLedgers } from "./path-resolution";
 
-/** The four cross-ledger nav slugs (stable, server-controlled). ID-90 U8
- * adds `umbrellas` — its slug equals its lowercase document_name literal. */
-export type LedgerSlug = "task-list" | "roadmap" | "backlog" | "umbrellas";
+/** The cross-ledger nav slugs (stable, server-controlled). ID-90 U8 adds
+ * `umbrellas` (slug == its lowercase document_name literal); WS-C C2 adds
+ * `retro` (the session-retro ledger, routed but not viewer-navigable). */
+export type LedgerSlug =
+  | "task-list"
+  | "roadmap"
+  | "backlog"
+  | "umbrellas"
+  | "retro";
 
 /** Enumerated nav slugs — the membership set the URL parser validates against. */
 export const LEDGER_SLUGS: readonly LedgerSlug[] = [
@@ -34,6 +40,7 @@ export const LEDGER_SLUGS: readonly LedgerSlug[] = [
   "roadmap",
   "backlog",
   "umbrellas",
+  "retro",
 ] as const;
 
 /**
@@ -45,6 +52,7 @@ const SLUG_TO_DOCUMENT_NAME: Record<LedgerSlug, KnownDocumentName> = {
   roadmap: "Knowledge Hub Roadmap",
   backlog: "Product Backlog",
   umbrellas: "umbrellas",
+  retro: "Knowledge Hub Retros",
 };
 
 const DOCUMENT_NAME_TO_SLUG: Record<string, LedgerSlug> = Object.fromEntries(

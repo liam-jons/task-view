@@ -36,12 +36,14 @@ import { TaskListSchema, type TaskList } from "@task-view/schemas/task-list";
 import { RoadmapSchema, type Roadmap } from "@task-view/schemas/roadmap";
 import { BacklogSchema, type BacklogDocument } from "@task-view/schemas/backlog";
 import { UmbrellasSchema, type Umbrellas } from "@task-view/schemas/umbrellas";
+import { RetrosSchema, type RetrosDocument } from "@task-view/schemas/retro";
 
 export type DetectSchemaResult =
   | { kind: "task-list"; data: TaskList }
   | { kind: "roadmap"; data: Roadmap }
   | { kind: "backlog"; data: BacklogDocument }
   | { kind: "umbrellas"; data: Umbrellas }
+  | { kind: "retro"; data: RetrosDocument }
   | { kind: "unknown"; documentName: string | null };
 
 /** Canonical literal values. Source of truth for both routing and CLI error messages. */
@@ -50,6 +52,7 @@ export const KNOWN_DOCUMENT_NAMES = [
   "Knowledge Hub Roadmap",
   "Product Backlog",
   "umbrellas",
+  "Knowledge Hub Retros",
 ] as const;
 
 export type KnownDocumentName = (typeof KNOWN_DOCUMENT_NAMES)[number];
@@ -82,6 +85,10 @@ export function detectSchema(parsed: unknown): DetectSchemaResult {
   // ID-90 U8: fourth known kind — umbrellas (PRODUCT invariant 49).
   if (documentName === "umbrellas") {
     return { kind: "umbrellas", data: UmbrellasSchema.parse(parsed) };
+  }
+  // WS-C C2: fifth known kind — retros (session retro ledger, ID-48 §5).
+  if (documentName === "Knowledge Hub Retros") {
+    return { kind: "retro", data: RetrosSchema.parse(parsed) };
   }
 
   return {

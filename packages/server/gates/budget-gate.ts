@@ -33,6 +33,7 @@ import type { TaskList } from "@task-view/schemas/task-list";
 import type { Roadmap } from "@task-view/schemas/roadmap";
 import type { BacklogDocument } from "@task-view/schemas/backlog";
 import type { Umbrellas } from "@task-view/schemas/umbrellas";
+import type { RetrosDocument } from "@task-view/schemas/retro";
 import type { FieldPatch } from "../patch-apply";
 
 // ── Grapheme counting (invariant 24 / ID-35.31) ──────────────────────────────
@@ -101,6 +102,8 @@ function budgetSubject(gate: Pick<BudgetGate, "recordKind" | "recordId" | "paren
       return `theme ${gate.recordId}`;
     case "item":
       return `item ${gate.recordId}`;
+    case "retro":
+      return `retro ${gate.recordId}`;
     default: {
       // Exhaustiveness guard: a future addition to `LedgerRecordKind` becomes
       // a compile-time error here; the runtime fallback keeps the message
@@ -219,7 +222,7 @@ function applyForce(
 // ID-90 U8: includes the fourth document kind. Umbrellas carry NO budget
 // entries (PRODUCT invariant 50 — none exist in the registry and none are
 // fabricated): a patch on an umbrellas document resolves to no budget target.
-type KnownKind = "task-list" | "roadmap" | "backlog" | "umbrellas";
+type KnownKind = "task-list" | "roadmap" | "backlog" | "umbrellas" | "retro";
 
 /** A patch resolved to the record it mutates + the leaf field it touches. */
 interface ResolvedPatchTarget {
@@ -238,13 +241,16 @@ interface ResolvedPatchTarget {
  */
 function resolvePatchTarget(
   kind: KnownKind,
-  data: TaskList | Roadmap | BacklogDocument | Umbrellas,
+  data: TaskList | Roadmap | BacklogDocument | Umbrellas | RetrosDocument,
   patch: FieldPatch,
 ): ResolvedPatchTarget | null {
   const p = patch.fieldPath;
   // ID-90 U8: no umbrella budget entries exist and none are fabricated
   // (PRODUCT invariant 50) — umbrellas patches are never budgeted.
   if (kind === "umbrellas") return null;
+  // WS-C C2: the retro registry entry is empty (append-only narrative) — no
+  // retro field is budgeted, so a retro patch resolves to no gate target.
+  if (kind === "retro") return null;
   if (kind === "task-list") {
     const tasks = (data as TaskList).tasks;
     if (p[0] !== "tasks" || p.length < 3) return null;
@@ -322,7 +328,7 @@ function resolvePatchTarget(
  */
 export function checkBudgetForPatches(
   kind: KnownKind,
-  data: TaskList | Roadmap | BacklogDocument | Umbrellas,
+  data: TaskList | Roadmap | BacklogDocument | Umbrellas | RetrosDocument,
   patches: readonly FieldPatch[],
   options: BudgetGateOptions = {},
 ): BudgetGateOutcome {
@@ -396,5 +402,8 @@ export function createRecordKindFor(
 ): LedgerRecordKind {
   if (kind === "task-list") return "task";
   if (kind === "roadmap") return "theme";
+  // WS-C C2: retro creates budget against the empty `retro` registry entry
+  // (no field is measured — the sweep always passes).
+  if (kind === "retro") return "retro";
   return "item";
 }

@@ -86,7 +86,13 @@ export type LedgerKind = DetectSchemaResult["kind"];
  * (PRODUCT invariant 53). `generateMirrors` / `generateRecordMirror`
  * return the empty plan for kind 'umbrellas' without creating a directory.
  */
-export type MirroredLedgerKind = Exclude<LedgerKind, "unknown" | "umbrellas">;
+// WS-C C2: `retro` is excluded alongside `umbrellas` — the retro surface has
+// NO per-record .md mirror yet (skip/early-return in generateMirrors), so it is
+// not a mirrored kind.
+export type MirroredLedgerKind = Exclude<
+  LedgerKind,
+  "unknown" | "umbrellas" | "retro"
+>;
 
 /**
  * Compute the record's mirror filename per the §3.2 prefix rules.
@@ -464,8 +470,9 @@ export async function generateRecordMirror(
     );
   }
   // ID-90 U8: umbrellas carry NO mirror obligation (PRODUCT invariant 53) —
-  // the EMPTY plan, no mirror directory created, ever.
-  if (detected.kind === "umbrellas") {
+  // the EMPTY plan, no mirror directory created, ever. WS-C C2: retros get NO
+  // .md mirror yet — same EMPTY-plan early return.
+  if (detected.kind === "umbrellas" || detected.kind === "retro") {
     return { mirrorDir: "", written: [], deleted: [] };
   }
   const mirrorDir = resolveMirrorDir(detected.kind, canonicalPath);
@@ -496,8 +503,9 @@ export async function generateMirrors(
     );
   }
   // ID-90 U8: umbrellas carry NO mirror obligation (PRODUCT invariant 53) —
-  // the EMPTY plan, no mirror directory created, ever.
-  if (detected.kind === "umbrellas") {
+  // the EMPTY plan, no mirror directory created, ever. WS-C C2: retros get NO
+  // .md mirror yet — same EMPTY-plan early return.
+  if (detected.kind === "umbrellas" || detected.kind === "retro") {
     return { mirrorDir: "", written: [], deleted: [] };
   }
 

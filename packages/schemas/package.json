@@ -8,6 +8,7 @@
     "./task-list": "./src/task-list-schema.ts",
     "./roadmap": "./src/roadmap-schema.ts",
     "./backlog": "./src/backlog-schema.ts",
+    "./retro": "./src/retro-schema.ts",
     "./work-status": "./src/work-status.ts",
     "./ledger-budgets": "./src/ledger-budgets.ts",
     "./umbrellas": "./src/umbrellas-schema.ts"

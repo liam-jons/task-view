@@ -51,6 +51,11 @@ import {
   UmbrellaEntrySchema,
   type Umbrellas,
 } from "@task-view/schemas/umbrellas";
+import {
+  RetrosSchema,
+  RetroRecordSchema,
+  type RetrosDocument,
+} from "@task-view/schemas/retro";
 import { ZodError } from "zod";
 import type { DetectSchemaResult } from "./detect-schema";
 
@@ -88,6 +93,10 @@ const BACKLOG_ITEM_KNOWN_FIELDS = new Set(Object.keys(BacklogItemSchema.shape));
 // UmbrellaEntrySchema IS `.strict()`, but the keyset guard keeps the
 // walk-error-vs-schema-error boundary identical to the other three kinds.
 const UMBRELLA_KNOWN_FIELDS = new Set(Object.keys(UmbrellaEntrySchema.shape));
+// WS-C C2: retro record field keyset — same schema-keyset guard discipline.
+// RetroRecordSchema IS `.strict()`, but the keyset guard keeps the
+// walk-error-vs-schema-error boundary identical to the other kinds.
+const RETRO_KNOWN_FIELDS = new Set(Object.keys(RetroRecordSchema.shape));
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -462,6 +471,59 @@ function applyUmbrellasPatch(
   return null;
 }
 
+/**
+ * Walk a fieldPath into a Retros snapshot and apply a single patch (WS-C C2).
+ * Records are addressed by their session id under `retros[]` — the same
+ * `['retros', id, field]` shape the other record-collection appliers use.
+ */
+function applyRetroPatch(
+  snapshot: RetrosDocument,
+  patch: FieldPatch,
+): null | { fieldPath: string[]; detail: string } {
+  const [head, retroId, ...rest] = patch.fieldPath;
+  if (head !== "retros") {
+    return {
+      fieldPath: patch.fieldPath,
+      detail: `Retro patches must start with 'retros'; got "${head ?? "<empty>"}".`,
+    };
+  }
+  if (retroId == null || retroId === "") {
+    return {
+      fieldPath: patch.fieldPath,
+      detail: `Missing retro id at fieldPath[1].`,
+    };
+  }
+  const retroIdx = snapshot.retros.findIndex((r) => r.id === retroId);
+  if (retroIdx === -1) {
+    return {
+      fieldPath: patch.fieldPath,
+      detail: `Retro id "${retroId}" not found in canonical retros[].`,
+    };
+  }
+  const retro = snapshot.retros[retroIdx];
+
+  if (rest.length !== 1) {
+    return {
+      fieldPath: patch.fieldPath,
+      detail: `Retro fieldPath must address a single field after the retroId; got ${rest.length} additional segment(s).`,
+    };
+  }
+  const field = rest[0];
+  if (!RETRO_KNOWN_FIELDS.has(field)) {
+    return {
+      fieldPath: patch.fieldPath,
+      detail: `Field "${field}" is not a known field on Retro records. Known fields: ${[...RETRO_KNOWN_FIELDS].join(", ")}.`,
+    };
+  }
+  const applyErr = applyValueToLeaf(
+    retro as unknown as Record<string, unknown>,
+    field,
+    patch,
+  );
+  if (applyErr) return { fieldPath: patch.fieldPath, detail: applyErr };
+  return null;
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
@@ -540,6 +602,33 @@ export function applyBacklogPatches(
 }
 
 /**
+ * Apply a batch of FieldPatch entries to a Retros canonical snapshot and
+ * re-parse via RetrosSchema (WS-C C2). Same single-validation-pass +
+ * clone-on-entry contract as the other appliers.
+ */
+export function applyRetroPatches(
+  snapshot: RetrosDocument,
+  patches: readonly FieldPatch[],
+): ApplyPatchesResult<RetrosDocument> {
+  if (patches.length === 0) return { ok: false, kind: "empty-patches" };
+  for (const patch of patches) {
+    const err = applyRetroPatch(snapshot, patch);
+    if (err) {
+      return { ok: false, kind: "walk-error", fieldPath: err.fieldPath, detail: err.detail };
+    }
+  }
+  try {
+    const parsed = RetrosSchema.parse(snapshot);
+    return { ok: true, parsed };
+  } catch (err) {
+    if (err instanceof ZodError) {
+      return { ok: false, kind: "schema-error", zodError: err };
+    }
+    throw err;
+  }
+}
+
+/**
  * Apply a batch of FieldPatch entries to an Umbrellas canonical snapshot
  * and re-parse via UmbrellasSchema (ID-90 U8). Same single-validation-pass
  * + clone-on-entry contract as the other three appliers.
@@ -577,7 +666,9 @@ export function applyUmbrellasPatches(
 export function applyPatches(
   detected: DetectSchemaResult,
   patches: readonly FieldPatch[],
-): ApplyPatchesResult<TaskList | Roadmap | BacklogDocument | Umbrellas> {
+): ApplyPatchesResult<
+  TaskList | Roadmap | BacklogDocument | Umbrellas | RetrosDocument
+> {
   if (detected.kind === "unknown") {
     throw new Error(
       `Cannot apply patches to unknown ledger kind (document_name: ${detected.documentName ?? "null"}).`,
@@ -594,6 +685,10 @@ export function applyPatches(
   // ID-90 U8: fourth dispatcher arm — the umbrellas walk.
   if (detected.kind === "umbrellas") {
     return applyUmbrellasPatches(detected.data, patches);
+  }
+  // WS-C C2: fifth dispatcher arm — the retros walk.
+  if (detected.kind === "retro") {
+    return applyRetroPatches(detected.data, patches);
   }
   return applyBacklogPatches(detected.data, patches);
 }

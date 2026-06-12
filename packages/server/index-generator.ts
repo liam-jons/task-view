@@ -29,10 +29,12 @@ import type { Roadmap } from "@task-view/schemas/roadmap";
 import type { Task } from "@task-view/schemas/task-list";
 
 // ID-90 U8: umbrellas is additionally excluded — no mirror dir means no
-// index.md (PRODUCT invariant 53).
+// index.md (PRODUCT invariant 53). WS-C C2: retros likewise have no mirror dir
+// / index.md yet, so they are excluded too (the name predates the second
+// exclusion; it denotes the mirrored-and-indexed kinds).
 export type LedgerKindExceptUnknown = Exclude<
   DetectSchemaResult["kind"],
-  "unknown" | "umbrellas"
+  "unknown" | "umbrellas" | "retro"
 >;
 
 /**
@@ -52,6 +54,12 @@ export function renderIndexMd(detected: DetectSchemaResult): string {
   if (detected.kind === "umbrellas") {
     throw new Error(
       "Cannot render index.md for the umbrellas kind — umbrellas documents have no mirror directory (PRODUCT invariant 53).",
+    );
+  }
+  // WS-C C2: retros carry no mirror dir yet, hence no index.md.
+  if (detected.kind === "retro") {
+    throw new Error(
+      "Cannot render index.md for the retro kind — retro documents have no mirror directory yet (WS-C C2).",
     );
   }
   if (detected.kind === "task-list") {

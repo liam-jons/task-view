@@ -198,7 +198,7 @@ function walkTaskList(
 
 function walkRecordCollection(
   doc: Record<string, unknown>,
-  collectionKey: "themes" | "items" | "umbrellas",
+  collectionKey: "themes" | "items" | "umbrellas" | "retros",
   path: string[],
 ): WalkResult {
   const [head, recordId, ...rest] = path;
@@ -231,6 +231,10 @@ function resolveLeaf(
   if (kind === "roadmap") return walkRecordCollection(doc, "themes", path);
   if (kind === "umbrellas") {
     return walkRecordCollection(doc, "umbrellas", path);
+  }
+  // WS-C C2: retros — `['retros', id, field]` record walk.
+  if (kind === "retro") {
+    return walkRecordCollection(doc, "retros", path);
   }
   return walkRecordCollection(doc, "items", path);
 }
@@ -316,8 +320,9 @@ export function scopedSerialise(
 // + bytes. This is the foundation primitive for scoped creates/promotes — the
 // whole-file oracle (record-mutate.ts) stays the schema-validation oracle.
 
-/** Top-level record collections, keyed per ledger kind. */
-type SpliceCollection = "tasks" | "themes" | "items" | "subtasks";
+/** Top-level record collections, keyed per ledger kind. WS-C C2 adds
+ * `retros` (the session-retro top-level collection). */
+type SpliceCollection = "tasks" | "themes" | "items" | "retros" | "subtasks";
 
 /**
  * A record-level splice operation against a parsed-original ledger.

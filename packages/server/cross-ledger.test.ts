@@ -29,9 +29,10 @@ const FIXTURE_DIR = join(
 );
 
 describe("slug ↔ document_name map (SPEC §2)", () => {
-  test("LEDGER_SLUGS enumerates the four nav slugs (ID-90 U8 adds 'umbrellas')", () => {
+  test("LEDGER_SLUGS enumerates the nav slugs (ID-90 U8 adds 'umbrellas'; WS-C C2 adds 'retro')", () => {
     expect([...LEDGER_SLUGS].sort()).toEqual([
       "backlog",
+      "retro",
       "roadmap",
       "task-list",
       "umbrellas",
@@ -44,6 +45,8 @@ describe("slug ↔ document_name map (SPEC §2)", () => {
     expect(slugForDocumentName("Product Backlog")).toBe("backlog");
     // ID-90 U8: the umbrellas document_name IS the lowercase literal.
     expect(slugForDocumentName("umbrellas")).toBe("umbrellas");
+    // WS-C C2: the retro ledger document_name → 'retro' slug.
+    expect(slugForDocumentName("Knowledge Hub Retros")).toBe("retro");
   });
 
   test("slugForDocumentName returns null for an unknown document_name", () => {
@@ -55,6 +58,7 @@ describe("slug ↔ document_name map (SPEC §2)", () => {
     expect(documentNameForSlug("roadmap")).toBe("Knowledge Hub Roadmap");
     expect(documentNameForSlug("backlog")).toBe("Product Backlog");
     expect(documentNameForSlug("umbrellas")).toBe("umbrellas");
+    expect(documentNameForSlug("retro")).toBe("Knowledge Hub Retros");
   });
 
   test("documentNameForSlug returns null for an unknown slug", () => {

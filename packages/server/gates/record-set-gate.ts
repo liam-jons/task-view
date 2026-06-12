@@ -56,7 +56,7 @@ export type RecordSetDelta =
  * this closes that gap.
  */
 export type CollectionDescriptor =
-  | { collection: "tasks" | "themes" | "items" | "umbrellas" }
+  | { collection: "tasks" | "themes" | "items" | "umbrellas" | "retros" }
   | { collection: "subtasks"; taskId: string };
 
 /**
@@ -111,6 +111,10 @@ export function beforeCollectionIds(
   }
   if (descriptor.collection === "umbrellas" && detected.kind === "umbrellas") {
     return new Set(detected.data.umbrellas.map((u) => u.id));
+  }
+  // WS-C C2: retros — session-id record set.
+  if (descriptor.collection === "retros" && detected.kind === "retro") {
+    return new Set(detected.data.retros.map((r) => r.id));
   }
   return new Set();
 }
@@ -206,5 +210,7 @@ export function topLevelCollectionFor(
   // the pre-U9 fallthrough to `items` made every umbrellas PATCH a
   // record-set-violation (see CollectionDescriptor note).
   if (kind === "umbrellas") return { collection: "umbrellas" };
+  // WS-C C2: the retro kind's id-set lives under the `retros` key.
+  if (kind === "retro") return { collection: "retros" };
   return { collection: "items" };
 }

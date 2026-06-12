@@ -72,6 +72,15 @@ export const LEDGER_BUDGETS = {
     title: 80,
     description: 500,
   },
+  /**
+   * product-retros.json — Retro record. Intentionally EMPTY: retros are
+   * append-only narrative and the six-category structure already enforces
+   * discipline (RetrosSchema header). No per-field char budget is registered,
+   * so the create/patch budget sweep measures nothing and always passes. The
+   * key exists so `retro` is a valid `LedgerRecordKind` (the create gate's
+   * `createRecordKindFor` resolves to it).
+   */
+  retro: {},
 } as const;
 
 export type LedgerRecordKind = keyof typeof LEDGER_BUDGETS;

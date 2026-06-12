@@ -150,9 +150,10 @@ describe("detectSchema — known document_name values", () => {
     }
   });
 
-  test("KNOWN_DOCUMENT_NAMES carries the fourth literal 'umbrellas' (ID-90 U8)", () => {
+  test("KNOWN_DOCUMENT_NAMES carries the 'umbrellas' (ID-90 U8) + 'Knowledge Hub Retros' (WS-C C2) literals", () => {
     expect(KNOWN_DOCUMENT_NAMES).toContain("umbrellas");
-    expect(KNOWN_DOCUMENT_NAMES).toHaveLength(4);
+    expect(KNOWN_DOCUMENT_NAMES).toContain("Knowledge Hub Retros");
+    expect(KNOWN_DOCUMENT_NAMES).toHaveLength(5);
   });
 
   test("throws ZodError when document_name matches umbrellas but body fails schema", () => {

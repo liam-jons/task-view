@@ -267,6 +267,13 @@ function lookupRecord(
     if (!umbrella) return null;
     return { kind: "umbrella", record: umbrella };
   }
+  // WS-C C2: retros — fifth known kind. Records are session retros keyed by
+  // their session id (`S<n>`).
+  if (detected.kind === "retro") {
+    const retro = detected.data.retros.find((r) => r.id === recordId);
+    if (!retro) return null;
+    return { kind: "retro", record: retro };
+  }
   // backlog
   const item = detected.data.items.find((it) => it.id === recordId);
   if (!item) return null;
@@ -285,8 +292,9 @@ function computeMirrorFilename(
     return computeRecordFilename("roadmap", { id: recordId });
   }
   // ID-90 U8: umbrellas carry no mirror obligation (PRODUCT invariant 53) —
-  // there is no mirror filename for an umbrella record.
-  if (recordKind === "umbrella") {
+  // there is no mirror filename for an umbrella record. WS-C C2: retros carry
+  // no .md mirror yet either — same empty-filename treatment.
+  if (recordKind === "umbrella" || recordKind === "retro") {
     return "";
   }
   // backlog-item
@@ -359,6 +367,18 @@ async function handleGetRoot(
         "<p>Umbrella documents have no record-view surface. Membership edits " +
         "are field PATCHes on ['umbrellas', id, 'task_ids'] via the ledger " +
         "API (ID-90 U8; PRODUCT invariants 49–50, 53).</p></main></body></html>",
+      { status: 200, headers: { "content-type": "text/html; charset=utf-8" } },
+    );
+  }
+  // WS-C C2: retros have no record-view surface yet — render a plain
+  // explanatory page (same treatment as umbrellas) rather than a 500. The
+  // retro write path is the ledger-CLI `create-retro` → POST /api/ledger/retro.
+  if (canonical.detected.kind === "retro") {
+    return new Response(
+      "<!doctype html><html><body><main><h1>retros</h1>" +
+        "<p>Retro documents have no record-view surface yet. Records are " +
+        "authored via the ledger CLI (`create-retro`) → POST " +
+        "/api/ledger/retro/record (WS-C C2).</p></main></body></html>",
       { status: 200, headers: { "content-type": "text/html; charset=utf-8" } },
     );
   }
@@ -479,8 +499,12 @@ async function renderSiblingLedger(
     return siblingNotAvailableResponse(slug, styles);
   }
   // ID-90 U8: umbrellas documents have no viewer surface (PRODUCT inv 53) —
-  // a nav to them is a dead-end, same treatment as a missing sibling.
-  if (canonical.detected.kind === "umbrellas") {
+  // a nav to them is a dead-end, same treatment as a missing sibling. WS-C C2:
+  // retros likewise have no viewer surface yet — same dead-end treatment.
+  if (
+    canonical.detected.kind === "umbrellas" ||
+    canonical.detected.kind === "retro"
+  ) {
     return siblingNotAvailableResponse(slug, styles);
   }
   const siblings = await readSiblingLedgers(siblingPath, canonical.detected.kind);
@@ -491,10 +515,13 @@ async function renderSiblingLedger(
     styles,
     readOnly: true,
     siblings,
-    // The launched document can itself be an umbrellas doc (no viewer slug
-    // in the ui banner vocabulary) — omit the banner back-link in that case.
+    // The launched document can itself be an umbrellas or retro doc (neither
+    // has a viewer slug in the ui banner vocabulary) — omit the banner
+    // back-link in that case.
     launchedSlug:
-      launchedSlug === null || launchedSlug === "umbrellas"
+      launchedSlug === null ||
+      launchedSlug === "umbrellas" ||
+      launchedSlug === "retro"
         ? undefined
         : launchedSlug,
   });
@@ -576,9 +603,13 @@ async function handleGetLedger(ctx: RequestContext): Promise<Response> {
     );
   }
   // ID-90 U8: umbrellas carry no mirror obligation (PRODUCT invariant 53) —
-  // the mirror fields are empty for the fourth kind.
+  // the mirror fields are empty for the fourth kind. WS-C C2: retros carry no
+  // mirror dir yet either — same empty-mirror treatment. The inline kind checks
+  // are kept (rather than a hoisted boolean) so TS narrows `detected.kind` to a
+  // MirroredLedgerKind in the else-arm.
   const mirrorDir =
-    canonical.detected.kind === "umbrellas"
+    canonical.detected.kind === "umbrellas" ||
+    canonical.detected.kind === "retro"
       ? ""
       : resolveMirrorDir(canonical.detected.kind, ctx.ledgerPath);
   return jsonResponse({
@@ -587,7 +618,8 @@ async function handleGetLedger(ctx: RequestContext): Promise<Response> {
     data: canonical.detected.data,
     mirrorDir,
     mirrorDirName:
-      canonical.detected.kind === "umbrellas"
+      canonical.detected.kind === "umbrellas" ||
+      canonical.detected.kind === "retro"
         ? ""
         : computeMirrorDirName(canonical.detected.kind),
     mtime: canonical.mtimeIso,
@@ -1076,7 +1108,22 @@ async function handlePostRecord(
     createKind,
     body.record as Record<string, unknown>,
   );
-  if (record.id === undefined) {
+  // WS-C C2: retro ids are caller-supplied session ids (`S<n>`) — there is NO
+  // auto-allocation / nextId / high-water mark for retros. A retro create that
+  // omits `id` is a client error, not an auto-id opportunity.
+  if (canonical.detected.kind === "retro") {
+    if (record.id === undefined) {
+      return jsonResponse(
+        {
+          ok: false,
+          error: "invalid-body",
+          detail:
+            "retro records require a caller-supplied session id of the form S<digits> (e.g. \"S264\"); retros are not auto-allocated.",
+        },
+        { status: 422 },
+      );
+    }
+  } else if (record.id === undefined) {
     const collectionKey =
       canonical.detected.kind === "task-list"
         ? ("tasks" as const)
@@ -1146,7 +1193,9 @@ async function handlePostRecord(
         ? "tasks"
         : canonical.detected.kind === "roadmap"
           ? "themes"
-          : "items",
+          : canonical.detected.kind === "retro"
+            ? "retros"
+            : "items",
     record,
   });
   if (!spliced.ok) {

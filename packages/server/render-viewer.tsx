@@ -55,10 +55,12 @@ import type {
 
 // ID-90 U8: the viewer renders the three MIRRORED kinds only — umbrellas
 // documents have no record-view surface (PRODUCT invariant 53); callers
-// guard the umbrellas kind before invoking renderViewer.
+// guard the umbrellas kind before invoking renderViewer. WS-C C2: retros have
+// no viewer surface yet either — callers (patch-server) guard the retro kind
+// before invoking renderViewer, identically to umbrellas.
 export type KnownDetected = Exclude<
   DetectSchemaResult,
-  { kind: "unknown" | "umbrellas" }
+  { kind: "unknown" | "umbrellas" | "retro" }
 >;
 
 export interface RenderViewerInput {
