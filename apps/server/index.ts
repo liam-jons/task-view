@@ -38,8 +38,10 @@ import {
   buildPortFilePayload,
   writePortFile,
   createIdleMonitor,
+  createParentDeathMonitor,
   pickLaunchDocument,
   type IdleMonitor,
+  type ParentDeathMonitor,
 } from "@task-view/server/daemon-lifecycle";
 import { formatVersion } from "./cli";
 
@@ -553,9 +555,28 @@ async function main(): Promise<number> {
   process.on("SIGINT", () => onSignal("SIGINT"));
   process.on("SIGTERM", () => onSignal("SIGTERM"));
 
+  // Foreground orphan guard. A foreground launch (interactive shell or the
+  // bin/task-view.js shim, or a test/parent process) ties the server's life
+  // to its launcher: if that launcher dies, this server is reparented to
+  // PID 1 and — with no idle-exit and no browser-close shutdown — would
+  // linger forever. Self-stop when orphaned. The detached daemon is EXEMPT
+  // (`--port-file` is the discoverable-daemon signal the façade always sets);
+  // its lifetime is bounded by --idle-exit + the façade's kill/respawn.
+  let parentDeathMonitor: ParentDeathMonitor | null = null;
+  if (parsed.portFile === undefined) {
+    parentDeathMonitor = createParentDeathMonitor({
+      onOrphaned: () => {
+        console.error("task-view: launcher process exited — stopping.");
+        void handle.stop(true);
+      },
+    });
+  }
+
   // Block on the exit promise (resolved by the SIGINT / SIGTERM handler
-  // calling handle.stop(), or by the idle monitor's onIdle).
+  // calling handle.stop(), the idle monitor's onIdle, or the parent-death
+  // watchdog's onOrphaned).
   await handle.waitForExit();
+  parentDeathMonitor?.stop();
   idleMonitor?.stop();
   return 0;
 }

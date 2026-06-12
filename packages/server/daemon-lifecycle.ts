@@ -142,6 +142,99 @@ export function createIdleMonitor(opts: IdleMonitorOptions): IdleMonitor {
   };
 }
 
+// ── Parent-death watchdog (foreground orphan guard) ──────────────────────────
+
+export interface ParentDeathMonitorOptions {
+  /** Fire ONCE when the launching parent is detected to have exited. */
+  onOrphaned: () => void;
+  /**
+   * Injectable orphan probe (tests). Defaults to a real, runtime-agnostic
+   * check: the parent pid changed away from the one we started under
+   * (`process.ppid`), OR that original parent pid is no longer alive
+   * (`process.kill(pid, 0)` → ESRCH). The dual check does NOT assume
+   * `process.ppid` refreshes live after a reparent — some runtimes cache it,
+   * so the liveness probe is the reliable signal and the ppid compare is a
+   * fast-path.
+   */
+  isOrphaned?: () => boolean;
+  /**
+   * Polling interval for the internal timer. `null` disables the internal
+   * timer entirely (tests drive {@link ParentDeathMonitor.check} directly).
+   * Defaults to 1000ms.
+   */
+  checkIntervalMs?: number | null;
+}
+
+export interface ParentDeathMonitor {
+  /** Evaluate the orphan condition now; fires onOrphaned (once) when crossed. */
+  check: () => void;
+  /** Disarm the monitor + clear the internal timer. Idempotent. */
+  stop: () => void;
+}
+
+/**
+ * Build the default orphan probe, capturing the launcher's pid at creation.
+ * Signal `0` performs an existence/permission check WITHOUT delivering a
+ * signal: a throw with `ESRCH` means the original parent is gone (`EPERM`
+ * means it is alive but owned by another user — still alive, not orphaned).
+ */
+function defaultIsOrphaned(initialPpid: number): () => boolean {
+  return () => {
+    if (process.ppid !== initialPpid) return true;
+    try {
+      process.kill(initialPpid, 0);
+      return false;
+    } catch (err) {
+      return (err as NodeJS.ErrnoException).code === "ESRCH";
+    }
+  };
+}
+
+/**
+ * Create a parent-death watchdog. When the launching process exits, this
+ * process is reparented (to PID 1 / launchd). A FOREGROUND task-view server
+ * has no idle-exit and no browser-close shutdown (the latter was removed —
+ * see ledger.ts), so without this guard an orphaned server lingers forever.
+ * Firing `onOrphaned` lets the caller stop gracefully.
+ *
+ * The internal timer is `unref`ed so it never keeps an otherwise-idle process
+ * alive. NOT used in daemon mode (`--port-file`): the façade spawns the daemon
+ * detached on purpose and bounds its life via `--idle-exit` + kill/respawn.
+ */
+export function createParentDeathMonitor(
+  opts: ParentDeathMonitorOptions,
+): ParentDeathMonitor {
+  const isOrphaned = opts.isOrphaned ?? defaultIsOrphaned(process.ppid);
+  let stopped = false;
+  let fired = false;
+  let timer: ReturnType<typeof setInterval> | null = null;
+
+  const check = () => {
+    if (stopped || fired) return;
+    if (isOrphaned()) {
+      fired = true;
+      opts.onOrphaned();
+    }
+  };
+
+  const stop = () => {
+    stopped = true;
+    if (timer !== null) {
+      clearInterval(timer);
+      timer = null;
+    }
+  };
+
+  if (opts.checkIntervalMs !== null) {
+    const intervalMs = opts.checkIntervalMs ?? 1_000;
+    timer = setInterval(check, intervalMs);
+    // Never keep the process alive for the poll loop alone.
+    timer.unref?.();
+  }
+
+  return { check, stop };
+}
+
 // ── Launch-document pick for --serve-dir ─────────────────────────────────────
 
 /**

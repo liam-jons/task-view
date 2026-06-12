@@ -20,6 +20,7 @@ import {
   buildPortFilePayload,
   writePortFile,
   createIdleMonitor,
+  createParentDeathMonitor,
   pickLaunchDocument,
 } from "./daemon-lifecycle";
 import type { ScanResult } from "./path-resolution";
@@ -141,6 +142,68 @@ describe("createIdleMonitor — idle-exit timer", () => {
     nowMs = 1_000_000;
     monitor.check();
     expect(fired).toBe(0);
+  });
+});
+
+// ── Parent-death watchdog (foreground orphan guard) ──────────────────────────
+
+describe("createParentDeathMonitor — foreground orphan guard", () => {
+  test("fires onOrphaned once, the first time the orphan probe trips", () => {
+    let orphaned = false;
+    let fired = 0;
+    const monitor = createParentDeathMonitor({
+      onOrphaned: () => {
+        fired += 1;
+      },
+      // Injected probe stands in for the real ppid/kill(0) check.
+      isOrphaned: () => orphaned,
+      // Disable the real interval — the test drives check() directly.
+      checkIntervalMs: null,
+    });
+
+    monitor.check();
+    expect(fired).toBe(0); // launcher still alive
+
+    orphaned = true;
+    monitor.check();
+    expect(fired).toBe(1); // launcher gone → fire
+
+    monitor.check();
+    expect(fired).toBe(1); // at most once
+
+    monitor.stop();
+  });
+
+  test("stop() disarms the monitor even after the parent dies", () => {
+    let orphaned = false;
+    let fired = 0;
+    const monitor = createParentDeathMonitor({
+      onOrphaned: () => {
+        fired += 1;
+      },
+      isOrphaned: () => orphaned,
+      checkIntervalMs: null,
+    });
+
+    monitor.stop();
+    orphaned = true;
+    monitor.check();
+    expect(fired).toBe(0);
+  });
+
+  test("default probe does not fire while the real launcher is alive", () => {
+    let fired = 0;
+    const monitor = createParentDeathMonitor({
+      onOrphaned: () => {
+        fired += 1;
+      },
+      // No injected probe — exercise the real ppid-compare + kill(0) liveness
+      // path. The test runner (our parent) is alive, so we are not orphaned.
+      checkIntervalMs: null,
+    });
+    monitor.check();
+    expect(fired).toBe(0);
+    monitor.stop();
   });
 });
 
