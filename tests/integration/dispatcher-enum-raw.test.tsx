@@ -1412,3 +1412,18 @@ describe("exclude-done toggle wiring — checkbox change sets the flag", () => {
     expect(window.location.search).toContain("excludeDone=1");
   });
 });
+
+// ── close-tab-on-exit overlay ─────────────────────────────────────────────────
+
+describe("close-tab-on-exit overlay", () => {
+  test("showServerStoppedOverlay renders a single 'server stopped' takeover", async () => {
+    const mod = await import("../../apps/server/web/index");
+    mod.showServerStoppedOverlay();
+    const overlay = document.querySelector("[data-server-stopped]");
+    expect(overlay).not.toBeNull();
+    expect(overlay?.textContent).toContain("server has stopped");
+    // idempotent — a second call does not stack overlays
+    mod.showServerStoppedOverlay();
+    expect(document.querySelectorAll("[data-server-stopped]").length).toBe(1);
+  });
+});

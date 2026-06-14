@@ -2482,6 +2482,58 @@ async function handleGetHealth(ctx: RequestContext): Promise<Response> {
   });
 }
 
+// ── Shutdown SSE channel (close-tab-on-exit) ──────────────────────────────────
+//
+// Clients open an EventSource to GET /api/shutdown-events. On server stop we
+// emit a `shutdown` event and close every open stream so the page can render a
+// "server stopped" overlay (and best-effort window.close()). The connection
+// simply dropping on an ungraceful exit is the fallback signal. window.close()
+// is blocked for OS-opened tabs, so the overlay — not auto-close — is the
+// reliable UX (see apps/server/web/index.tsx).
+const shutdownSubscribers = new Set<
+  ReadableStreamDefaultController<Uint8Array>
+>();
+const SSE_ENCODER = new TextEncoder();
+
+function handleShutdownEvents(): Response {
+  let registered: ReadableStreamDefaultController<Uint8Array> | null = null;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      registered = controller;
+      shutdownSubscribers.add(controller);
+      // Establish the stream immediately (a `:` comment line is SSE-ignored).
+      controller.enqueue(SSE_ENCODER.encode(": connected\n\n"));
+    },
+    cancel() {
+      if (registered) shutdownSubscribers.delete(registered);
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache, no-transform",
+    },
+  });
+}
+
+/**
+ * Emit a `shutdown` SSE event to every open subscriber and close their
+ * streams. Called from the server `stop` path so a clean Ctrl-C tells the
+ * browser tab the server is gone. Exported for the shutdown-events test.
+ */
+export function broadcastShutdown(): void {
+  const payload = SSE_ENCODER.encode("event: shutdown\ndata: bye\n\n");
+  for (const controller of shutdownSubscribers) {
+    try {
+      controller.enqueue(payload);
+      controller.close();
+    } catch {
+      // stream already closed/errored — nothing to do.
+    }
+  }
+  shutdownSubscribers.clear();
+}
+
 /**
  * Build the per-request dispatcher. Pure function — no closure state
  * other than `ctx`.
@@ -2508,6 +2560,11 @@ function buildFetchHandler(ctx: RequestContext) {
     // GET /api/health — ID-90 U9 daemon identity + document registry.
     if (path === "/api/health" && request.method === "GET") {
       return handleGetHealth(ctx);
+    }
+
+    // GET /api/shutdown-events — SSE channel for close-tab-on-exit.
+    if (path === "/api/shutdown-events" && request.method === "GET") {
+      return handleShutdownEvents();
     }
 
     // ID-90 U9 slug routing (TECH §Proposed changes U9 / PRODUCT inv 56):
@@ -2696,6 +2753,9 @@ export function startPatchServer(opts: PatchServerOptions): PatchServerHandle {
     port: boundPort,
     hostname,
     stop: async (force = true) => {
+      // Tell any open viewer tabs the server is going away before we drop
+      // their connections (close-tab-on-exit).
+      broadcastShutdown();
       server.stop(force);
     },
   };

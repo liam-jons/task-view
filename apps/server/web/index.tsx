@@ -1907,6 +1907,72 @@ function wireBacklogReorder(): void {
   tables.forEach((table) => wireBacklogReorderTable(table));
 }
 
+// ── Close-tab-on-exit (server-stopped overlay) ────────────────────────────────
+//
+// Opens an SSE channel to the server (GET /api/shutdown-events). When the
+// server shuts down it emits a `shutdown` event (and the connection drops); we
+// render a full-page "server stopped" overlay and best-effort attempt
+// window.close(). HONEST CONSTRAINT: browsers block window.close() on tabs the
+// user/OS opened (task-view opens via the OS `open` command), so the overlay —
+// not auto-close — is the reliable outcome.
+export function showServerStoppedOverlay(): void {
+  if (document.querySelector("[data-server-stopped]")) return;
+  const overlay = document.createElement("div");
+  overlay.setAttribute("data-server-stopped", "");
+  overlay.setAttribute("role", "alertdialog");
+  overlay.setAttribute("aria-label", "Server stopped");
+  // Inline styles so the takeover renders without depending on the record-view
+  // stylesheet being present in the page.
+  Object.assign(overlay.style, {
+    position: "fixed",
+    inset: "0",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "0.5rem",
+    background: "rgba(0,0,0,0.72)",
+    color: "#fff",
+    font: "16px system-ui, sans-serif",
+    textAlign: "center",
+    zIndex: "2147483647",
+    padding: "2rem",
+  });
+  const title = document.createElement("p");
+  title.textContent = "The task-view server has stopped.";
+  title.style.fontWeight = "600";
+  const hint = document.createElement("p");
+  hint.textContent = "You can close this tab.";
+  hint.style.opacity = "0.85";
+  overlay.append(title, hint);
+  document.body.appendChild(overlay);
+}
+
+function wireShutdownWatch(): void {
+  if (typeof EventSource === "undefined") return;
+  let established = false;
+  const es = new EventSource("/api/shutdown-events");
+  const onGone = (): void => {
+    es.close();
+    showServerStoppedOverlay();
+    // Best-effort: works only for script-opened windows; harmless otherwise.
+    try {
+      window.close();
+    } catch {
+      /* blocked for OS-opened tabs — the overlay is the real signal. */
+    }
+  };
+  es.addEventListener("open", () => {
+    established = true;
+  });
+  es.addEventListener("shutdown", onGone);
+  es.addEventListener("error", () => {
+    // EventSource auto-reconnects on transient blips; only a CLOSED
+    // (non-reconnecting) stream that was previously established is a real stop.
+    if (established && es.readyState === EventSource.CLOSED) onGone();
+  });
+}
+
 function init(): void {
   document.addEventListener("click", onClick);
   document.addEventListener("keydown", onKeydown);
@@ -1918,6 +1984,7 @@ function init(): void {
   wireSortControl();
   wireExcludeDoneToggle();
   wireBacklogReorder();
+  wireShutdownWatch();
 }
 
 if (typeof document !== "undefined") {
