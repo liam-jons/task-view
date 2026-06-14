@@ -10,6 +10,7 @@
     "./browser": "./browser.ts",
     "./repo": "./repo.ts",
     "./project": "./project.ts",
+    "./compact-done": "./compact-done.ts",
     "./detect-schema": "./detect-schema.ts",
     "./mirror-generator": "./mirror-generator.ts",
     "./path-resolution": "./path-resolution.ts",

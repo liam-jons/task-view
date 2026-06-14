@@ -27,6 +27,7 @@ import { dirname, extname, resolve } from "node:path";
 import { ZodError } from "zod";
 import { detectSchema, KNOWN_DOCUMENT_NAMES } from "@task-view/server/detect-schema";
 import { generateMirrors } from "@task-view/server/mirror-generator";
+import { runCompaction } from "@task-view/server/compact-done";
 import {
   scanForLedgers,
   resolveLedgerForPath,
@@ -59,6 +60,10 @@ type ParsedArgs = {
   noBrowser: boolean;
   port: string | undefined;
   check: boolean;
+  /** One-shot ledger compaction (archive done/cancelled subtask journals). */
+  compact: boolean;
+  /** Report-only modifier for --compact. */
+  dryRun: boolean;
   help: boolean;
   version: boolean;
   /** ID-90 U9: serve ALL known documents in this directory (daemon mode). */
@@ -78,6 +83,8 @@ function parseCliArgs(argv: string[]): ParsedArgs {
       "no-browser": { type: "boolean", default: false },
       port: { type: "string" },
       check: { type: "boolean", default: false },
+      compact: { type: "boolean", default: false },
+      "dry-run": { type: "boolean", default: false },
       help: { type: "boolean", default: false },
       version: { type: "boolean", default: false, short: "v" },
       // ID-90 U9 daemon lifecycle flags (TECH §Proposed changes U9).
@@ -96,6 +103,8 @@ function parseCliArgs(argv: string[]): ParsedArgs {
     noBrowser: Boolean(values["no-browser"]),
     port: typeof values.port === "string" ? values.port : undefined,
     check: Boolean(values.check),
+    compact: Boolean(values.compact),
+    dryRun: Boolean(values["dry-run"]),
     help: Boolean(values.help),
     version: Boolean(values.version),
     serveDir:
@@ -120,6 +129,9 @@ function printHelp(): void {
       "  --no-browser         Do not auto-open the browser; print the URL only.",
       "  --port <N>           Bind the requested port (default: OS-assigned random).",
       "  --check              Run one-shot mirror-regen sanity pass; exit non-zero on drift.",
+      "  --compact            One-shot: archive done/cancelled subtask journals to",
+      "                       <ledgerDir>/archive/ and stub them inline (task-list only).",
+      "  --dry-run            With --compact: report the plan and write nothing.",
       "  --serve-dir <dir>    Daemon mode (ID-90 U9): serve ALL known documents in",
       "                       <dir> via /api/ledger/:slug/… routes. Mutually exclusive",
       "                       with a positional path.",
@@ -298,6 +310,53 @@ async function runRegenCheck(ledgerPath: string): Promise<number> {
   }
 }
 
+// ── --compact (docs/specs/ledger-compaction/SPEC.md) ─────────────────────────
+
+/**
+ * One-shot ledger compaction: archive the long `details` journals of
+ * done/cancelled tasks' subtasks into `<ledgerDir>/archive/` and replace each
+ * inline with a pointer stub (reusing the validated mutation transport). With
+ * `dryRun`, report the plan and write nothing. Exits non-zero on failure.
+ */
+async function runCompactCommand(
+  ledgerPath: string,
+  dryRun: boolean,
+): Promise<number> {
+  if (!existsSync(ledgerPath)) {
+    console.error(`task-view --compact: ledger path not found: ${ledgerPath}`);
+    return 2;
+  }
+  const date = new Date().toISOString().slice(0, 10);
+  const res = await runCompaction(ledgerPath, { date, dryRun });
+  if (!res.ok) {
+    console.error(`task-view --compact: ${res.error}`);
+    return 1;
+  }
+  const kb = (n: number): string => (n / 1024).toFixed(0);
+  if (res.dryRun) {
+    console.log(
+      `task-view --compact (dry-run): ${res.taskCount} tasks, ` +
+        `${res.subtaskCount} journals, ${kb(res.bytesArchived)}KB to archive`,
+    );
+    for (const p of res.plan) {
+      console.log(`  ID-${p.taskId}: ${p.subs} journals, ${kb(p.bytes)}KB`);
+    }
+  } else if (res.subtaskCount === 0) {
+    console.log(
+      "task-view --compact: nothing to archive " +
+        "(no over-threshold done/cancelled journals).",
+    );
+  } else {
+    console.log(
+      `task-view --compact: archived ${res.subtaskCount} journals from ` +
+        `${res.taskCount} tasks (${kb(res.bytesArchived)}KB → ` +
+        `${kb(res.bytesAfterInline)}KB inline); ` +
+        `${res.archivesWritten.length} archive files written.`,
+    );
+  }
+  return 0;
+}
+
 // ── Launch-path fail-on-load (Subtask 20.20 / PRODUCT inv 4 + 48) ─────────────
 
 /**
@@ -453,6 +512,11 @@ async function main(): Promise<number> {
   // --check is a one-shot — does not start a server.
   if (parsed.check) {
     return await runRegenCheck(ledgerPath);
+  }
+
+  // --compact is a one-shot — archive done/cancelled journals, no server.
+  if (parsed.compact) {
+    return await runCompactCommand(ledgerPath, parsed.dryRun);
   }
 
   if (!existsSync(ledgerPath)) {
