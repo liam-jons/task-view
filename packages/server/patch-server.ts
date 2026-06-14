@@ -182,7 +182,15 @@ export interface PatchServerHandle {
 // ── Internal: fetch handler factory ──────────────────────────────────────────
 
 interface RequestContext {
+  /** The LAUNCHED ledger path (the request's home document). */
   ledgerPath: string;
+  /**
+   * editable-ledger-switch §4: the launch DIRECTORY — the allow-list root for
+   * resolving the active ledger of a slug-routed request (= dirname(ledgerPath)).
+   * Held on the context so GET /, the JSON API, and health share one notion of
+   * "which directory" instead of each recomputing it.
+   */
+  ledgerDir: string;
   /** ID-90 U9: invariant-34 arming, threaded into every pre-write gate
    * chain (and each transaction leg). */
   requireDenylist: boolean;
@@ -330,6 +338,23 @@ function computeMirrorFilename(
  *       JSON endpoints' shape — clients can disambiguate by Content-Type).
  *   500 application/json on ledger read failure.
  */
+/**
+ * Option B (editable-ledger-switch §4): resolve the ACTIVE ledger path for a
+ * request — the single seam the JSON API (effCtx) and GET / (renderSiblingLedger)
+ * share. `null` slug ⇒ the launched ledger; a sibling slug ⇒ its document
+ * resolved by canonical name within the launch directory (`null` when absent).
+ * Collapses the formerly-duplicated effCtx-rebind and GET-/-branch resolution.
+ */
+async function resolveActiveLedger(
+  ctx: RequestContext,
+  slug: LedgerSlug | null,
+): Promise<string | null> {
+  if (slug === null) return ctx.ledgerPath;
+  const documentName = documentNameForSlug(slug);
+  if (documentName === null) return null;
+  return resolveLedgerPathByName(ctx.ledgerPath, documentName);
+}
+
 async function handleGetRoot(
   ctx: RequestContext,
   search: URLSearchParams,
@@ -520,13 +545,7 @@ async function renderSiblingLedger(
   styles: Awaited<ReturnType<typeof getViewerStyles>>,
   availableLedgers: readonly ("task-list" | "roadmap" | "backlog")[],
 ): Promise<Response> {
-  const documentName = documentNameForSlug(slug);
-  if (documentName === null) {
-    // Defensive: decodeLedgerParam already validated the slug, so this is
-    // unreachable in practice. Treat as a dead-end 404 to be safe.
-    return siblingNotAvailableResponse(slug, styles);
-  }
-  const siblingPath = await resolveLedgerPathByName(ctx.ledgerPath, documentName);
+  const siblingPath = await resolveActiveLedger(ctx, slug);
   if (siblingPath === null) {
     return siblingNotAvailableResponse(slug, styles);
   }
@@ -2489,7 +2508,7 @@ async function handlePostRegen(
  * reported without a restart.
  */
 async function handleGetHealth(ctx: RequestContext): Promise<Response> {
-  const ledgerDir = resolve(dirname(ctx.ledgerPath));
+  const ledgerDir = ctx.ledgerDir;
   const scan = await scanForLedgers(ledgerDir);
   const entries: Array<{ name: string; path: string }> =
     scan.kind === "one"
@@ -2617,11 +2636,7 @@ function buildFetchHandler(ctx: RequestContext) {
       (LEDGER_SLUGS as readonly string[]).includes(slugMatch[1])
     ) {
       const slug = slugMatch[1] as LedgerSlug;
-      const documentName = documentNameForSlug(slug);
-      const resolvedPath =
-        documentName === null
-          ? null
-          : await resolveLedgerPathByName(ctx.ledgerPath, documentName);
+      const resolvedPath = await resolveActiveLedger(ctx, slug);
       if (resolvedPath === null) {
         return jsonResponse(
           { ok: false, error: "document-not-found", slug },
@@ -2758,6 +2773,7 @@ export function startPatchServer(opts: PatchServerOptions): PatchServerHandle {
 
   const ctx: RequestContext = {
     ledgerPath: opts.ledgerPath,
+    ledgerDir: resolve(dirname(opts.ledgerPath)),
     requireDenylist: opts.requireDenylist === true,
     onRequest: opts.onRequest,
   };
