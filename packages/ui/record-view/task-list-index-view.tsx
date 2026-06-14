@@ -10,12 +10,25 @@
  */
 import React from "react";
 import type { Task } from "@task-view/schemas/task-list";
-import { recordRouteHref } from "./anchors";
+import { indexRowAnchorId, recordRouteHref } from "./anchors";
 import { PriorityBadge, StatusBadge } from "./status-badge";
+import { IndexSearchBox } from "./index-search";
+import { SortableColumnHeader } from "./sortable-header";
+import { sortTasksForIndex } from "./task-list-sort";
+import {
+  applyTaskListFilters,
+  type SortState,
+  type TaskListFilterState,
+} from "./url-state";
 
 export const TaskListIndexView: React.FC<{
   tasks: readonly Task[];
-}> = ({ tasks }) => {
+  filters?: TaskListFilterState;
+  sort?: SortState;
+}> = ({ tasks, filters, sort }) => {
+  const f = filters ?? { q: null };
+  const s = sort ?? { field: null, dir: "asc" };
+  const visible = sortTasksForIndex(applyTaskListFilters(tasks, f), s);
   return (
     <article
       className="record-view-task-list-index"
@@ -25,10 +38,24 @@ export const TaskListIndexView: React.FC<{
         <h1>Task list</h1>
         <p
           className="record-view-task-list-index-count"
-          data-task-count={tasks.length}
+          data-task-count={visible.length}
+          data-task-total={tasks.length}
         >
-          {tasks.length} Task{tasks.length === 1 ? "" : "s"}
+          {visible.length} Task{visible.length === 1 ? "" : "s"}
         </p>
+        {tasks.length === 0 ? null : (
+          <div className="record-view-index-controls">
+            <IndexSearchBox q={f.q ?? null} />
+            <label className="record-view-exclude-done">
+              <input
+                type="checkbox"
+                data-exclude-done-control
+                defaultChecked={f.excludeDone ?? false}
+              />{" "}
+              Hide done / cancelled
+            </label>
+          </div>
+        )}
       </header>
 
       {tasks.length === 0 ? (
@@ -40,6 +67,10 @@ export const TaskListIndexView: React.FC<{
           canonical creation path (workflow-curator skill or manual
           JSON edit).</em>
         </p>
+      ) : visible.length === 0 ? (
+        <p className="record-view-empty-filtered" data-empty-filtered>
+          <em>No Tasks match the search.</em>
+        </p>
       ) : (
         <table
           className="record-view-task-list-table"
@@ -47,16 +78,28 @@ export const TaskListIndexView: React.FC<{
         >
           <thead>
             <tr>
-              <th scope="col">ID</th>
-              <th scope="col">Title</th>
-              <th scope="col">Status</th>
-              <th scope="col">Priority</th>
-              <th scope="col">Subtasks</th>
+              <SortableColumnHeader field="id" label="ID" sort={s} />
+              <SortableColumnHeader field="title" label="Title" sort={s} />
+              <SortableColumnHeader field="status" label="Status" sort={s} />
+              <SortableColumnHeader
+                field="priority"
+                label="Priority"
+                sort={s}
+              />
+              <SortableColumnHeader
+                field="subtasks"
+                label="Subtasks"
+                sort={s}
+              />
             </tr>
           </thead>
           <tbody>
-            {tasks.map((task) => (
-              <tr key={task.id} data-task-row={task.id}>
+            {visible.map((task) => (
+              <tr
+                key={task.id}
+                id={indexRowAnchorId(task.id)}
+                data-task-row={task.id}
+              >
                 <td>
                   <a
                     href={recordRouteHref(task.id)}

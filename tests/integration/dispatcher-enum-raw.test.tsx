@@ -1286,3 +1286,129 @@ describe("ID-20.28 — first-edit and doc-links unregressed", () => {
     );
   });
 });
+
+// ── backlog reorder wiring — drag handle is the ONLY drag source ──────────────
+//
+// Regression for the copy-paste defect: the client used to set
+// `draggable="true"` on the whole `<tr>`, which makes native HTML drag
+// intercept mousedown gestures over the entire row, SUPPRESSING text
+// selection / copy-paste in the row's cells. The fix marks only the
+// `[data-drag-handle]` draggable; the row stays text-selectable while drag
+// is still initiated from the handle. (Real text-selection behaviour is
+// covered by the live agent-browser gate; here we assert the observable DOM
+// state that governs it.)
+
+/**
+ * Build a minimal backlog index table matching the SSR markup that
+ * `wireBacklogReorderTable` keys off: a `[data-supports-drag-reorder="true"]`
+ * table whose rows carry `[data-backlog-row]` + `[data-priority-tier]` and
+ * each contain a `[data-drag-handle]` span.
+ */
+function mountBacklogTable(rows: { id: string; tier: string }[]): HTMLElement {
+  const table = document.createElement("table");
+  table.setAttribute("data-backlog-table", "");
+  table.setAttribute("data-supports-drag-reorder", "true");
+  const tbody = document.createElement("tbody");
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    tr.setAttribute("data-backlog-row", r.id);
+    tr.setAttribute("data-priority-tier", r.tier);
+    const handleCell = document.createElement("td");
+    const handle = document.createElement("span");
+    handle.setAttribute("data-drag-handle", r.id);
+    handle.setAttribute("role", "button");
+    handle.setAttribute("tabindex", "0");
+    handleCell.appendChild(handle);
+    tr.appendChild(handleCell);
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  document.body.appendChild(table);
+  return table;
+}
+
+describe("backlog reorder wiring — drag handle is the only drag source (copy-paste unblocked)", () => {
+  test("wireBacklogReorderTable marks the drag HANDLE draggable, never the row", async () => {
+    const table = mountBacklogTable([
+      { id: "1", tier: "must" },
+      { id: "2", tier: "must" },
+    ]);
+    const mod = await import("../../apps/server/web/index");
+    mod.wireBacklogReorderTable(table);
+
+    // The handle is the drag source.
+    const handles = table.querySelectorAll("[data-drag-handle]");
+    expect(handles.length).toBe(2);
+    for (const handle of handles) {
+      expect(handle.getAttribute("draggable")).toBe("true");
+    }
+    // The ROW is NOT draggable — so native drag does not eat mousedown
+    // gestures over its cells and text stays selectable / copyable.
+    for (const row of table.querySelectorAll("[data-backlog-row]")) {
+      expect(row.getAttribute("draggable")).not.toBe("true");
+    }
+  });
+});
+
+// ── index keyword search wiring (PRODUCT inv 23) ──────────────────────────────
+
+describe("index search wiring — submit is intercepted so sibling params survive", () => {
+  test("wireIndexSearch intercepts the search form's native GET submit", async () => {
+    const form = document.createElement("form");
+    form.setAttribute("data-index-search", "");
+    const input = document.createElement("input");
+    input.setAttribute("type", "search");
+    input.setAttribute("data-search-control", "");
+    input.setAttribute("name", "q");
+    form.appendChild(input);
+    document.body.appendChild(form);
+
+    const mod = await import("../../apps/server/web/index");
+    mod.wireIndexSearch();
+
+    input.value = "auth";
+    const submit = new Event("submit", { bubbles: true, cancelable: true });
+    form.dispatchEvent(submit);
+
+    // The handler preventDefaults BEFORE navigating, so the param-dropping
+    // native GET never fires; the SPA rebuilds the query preserving siblings.
+    expect(submit.defaultPrevented).toBe(true);
+  });
+});
+
+// ── index column sort wiring (docs/notes/ledger-sorting.md) ───────────────────
+
+describe("sort control wiring — a column-header click navigates with sort params", () => {
+  test("wireSortControl sets sortField/sortDir on click", async () => {
+    const th = document.createElement("th");
+    const button = document.createElement("button");
+    button.setAttribute("data-sort-trigger", "id");
+    th.appendChild(button);
+    document.body.appendChild(th);
+
+    const mod = await import("../../apps/server/web/index");
+    mod.wireSortControl();
+    button.dispatchEvent(new Event("click", { bubbles: true }));
+
+    expect(window.location.search).toContain("sortField=id");
+    expect(window.location.search).toContain("sortDir=asc");
+  });
+});
+
+// ── task-list hide-done toggle wiring ─────────────────────────────────────────
+
+describe("exclude-done toggle wiring — checkbox change sets the flag", () => {
+  test("wireExcludeDoneToggle sets excludeDone=1 when checked", async () => {
+    const checkbox = document.createElement("input");
+    checkbox.setAttribute("type", "checkbox");
+    checkbox.setAttribute("data-exclude-done-control", "");
+    document.body.appendChild(checkbox);
+
+    const mod = await import("../../apps/server/web/index");
+    mod.wireExcludeDoneToggle();
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(window.location.search).toContain("excludeDone=1");
+  });
+});

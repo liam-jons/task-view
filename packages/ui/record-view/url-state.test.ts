@@ -5,9 +5,21 @@
 import { describe, expect, test } from "bun:test";
 import {
   applyBacklogFilters,
+  applyRoadmapFilters,
+  applyTaskListFilters,
   decodeBacklogFilters,
   decodeLedgerParam,
+  decodeRoadmapFilters,
+  decodeTaskListFilters,
   encodeBacklogFilters,
+  encodeRoadmapFilters,
+  encodeTaskListFilters,
+  decodeSort,
+  encodeSort,
+  matchesQuery,
+  nextSearchForFlag,
+  nextSearchForQuery,
+  nextSortForField,
 } from "./url-state";
 
 describe("decodeBacklogFilters (PRODUCT inv 23)", () => {
@@ -16,6 +28,7 @@ describe("decodeBacklogFilters (PRODUCT inv 23)", () => {
       track: null,
       status: null,
       priority: null,
+      q: null,
     });
   });
 
@@ -24,6 +37,7 @@ describe("decodeBacklogFilters (PRODUCT inv 23)", () => {
       track: "Bid",
       status: "ready",
       priority: "high",
+      q: null,
     });
   });
 
@@ -32,6 +46,7 @@ describe("decodeBacklogFilters (PRODUCT inv 23)", () => {
       track: null,
       status: null,
       priority: "high",
+      q: null,
     });
   });
 
@@ -42,6 +57,7 @@ describe("decodeBacklogFilters (PRODUCT inv 23)", () => {
       track: "Bid",
       status: null,
       priority: null,
+      q: null,
     });
   });
 });
@@ -114,6 +130,241 @@ describe("applyBacklogFilters (PRODUCT inv 23)", () => {
       priority: null,
     });
     expect(result).toEqual([]);
+  });
+});
+
+describe("matchesQuery (keyword search helper)", () => {
+  test("an empty/absent query matches everything", () => {
+    expect(matchesQuery(null, ["anything"])).toBe(true);
+    expect(matchesQuery("", ["anything"])).toBe(true);
+    expect(matchesQuery(undefined, ["anything"])).toBe(true);
+  });
+
+  test("matches case-insensitively across any field", () => {
+    expect(matchesQuery("FOO", ["a foo b", null])).toBe(true);
+    expect(matchesQuery("auth", ["Billing", "Auth flow"])).toBe(true);
+    expect(matchesQuery("zzz", ["a foo b", "bar"])).toBe(false);
+  });
+
+  test("ignores null/undefined fields", () => {
+    expect(matchesQuery("x", [null, undefined])).toBe(false);
+  });
+});
+
+describe("Backlog keyword search (q) — round-trip + apply", () => {
+  test("decodes q, treating 'all' as a literal search (NOT the filter sentinel)", () => {
+    expect(decodeBacklogFilters("q=all").q).toBe("all");
+    expect(decodeBacklogFilters("q=spec").q).toBe("spec");
+    expect(decodeBacklogFilters("q=").q ?? null).toBeNull();
+    expect(decodeBacklogFilters("").q ?? null).toBeNull();
+  });
+
+  test("encodes q after the track/status/priority keys", () => {
+    expect(
+      encodeBacklogFilters({
+        track: "Bid",
+        status: null,
+        priority: null,
+        q: "spec",
+      }),
+    ).toBe("track=Bid&q=spec");
+    expect(
+      encodeBacklogFilters({
+        track: null,
+        status: null,
+        priority: null,
+        q: null,
+      }),
+    ).toBe("");
+  });
+
+  test("applyBacklogFilters matches q over id + description, conjunctive with filters", () => {
+    const items = [
+      { id: "1", description: "auth flow", track: "Bid", status: "ready", priority: "high" },
+      { id: "2", description: "billing", track: "Bid", status: "ready", priority: "high" },
+      { id: "3", description: "auth tokens", track: "Ops", status: "ready", priority: "high" },
+    ];
+    // q alone
+    expect(
+      applyBacklogFilters(items, {
+        track: null,
+        status: null,
+        priority: null,
+        q: "auth",
+      }).map((i) => i.id),
+    ).toEqual(["1", "3"]);
+    // q AND track (conjunction)
+    expect(
+      applyBacklogFilters(items, {
+        track: "Bid",
+        status: null,
+        priority: null,
+        q: "auth",
+      }).map((i) => i.id),
+    ).toEqual(["1"]);
+  });
+});
+
+describe("Task-list keyword search (decodeTaskListFilters / apply)", () => {
+  const tasks = [
+    { id: "20", title: "Auth flow" },
+    { id: "21", title: "Billing" },
+  ];
+
+  test("decode/encode q round-trip", () => {
+    expect(decodeTaskListFilters("q=auth")).toEqual({
+      q: "auth",
+      excludeDone: false,
+    });
+    expect(decodeTaskListFilters("")).toEqual({ q: null, excludeDone: false });
+    expect(encodeTaskListFilters({ q: "auth" })).toBe("q=auth");
+    expect(encodeTaskListFilters({ q: null })).toBe("");
+  });
+
+  test("excludeDone: decode reads the flag, encode emits it only when true", () => {
+    expect(decodeTaskListFilters("excludeDone=1")).toEqual({
+      q: null,
+      excludeDone: true,
+    });
+    expect(encodeTaskListFilters({ q: null, excludeDone: true })).toBe(
+      "excludeDone=1",
+    );
+    expect(encodeTaskListFilters({ q: "x", excludeDone: true })).toBe(
+      "q=x&excludeDone=1",
+    );
+    expect(encodeTaskListFilters({ q: null, excludeDone: false })).toBe("");
+  });
+
+  test("applyTaskListFilters hides done + cancelled when excludeDone, composing with q", () => {
+    const rows = [
+      { id: "1", title: "auth", status: "done" },
+      { id: "2", title: "auth", status: "in_progress" },
+      { id: "3", title: "auth", status: "cancelled" },
+      { id: "4", title: "other", status: "pending" },
+    ];
+    expect(
+      applyTaskListFilters(rows, { q: null, excludeDone: true }).map(
+        (t) => t.id,
+      ),
+    ).toEqual(["2", "4"]);
+    // composes with q (only in_progress auth survives)
+    expect(
+      applyTaskListFilters(rows, { q: "auth", excludeDone: true }).map(
+        (t) => t.id,
+      ),
+    ).toEqual(["2"]);
+    // off → done/cancelled retained
+    expect(
+      applyTaskListFilters(rows, { q: null, excludeDone: false }).map(
+        (t) => t.id,
+      ),
+    ).toEqual(["1", "2", "3", "4"]);
+  });
+
+  test("applyTaskListFilters matches title + id, case-insensitive", () => {
+    expect(applyTaskListFilters(tasks, { q: "AUTH" }).map((t) => t.id)).toEqual([
+      "20",
+    ]);
+    // id substring: both ids contain "2"
+    expect(applyTaskListFilters(tasks, { q: "2" }).map((t) => t.id)).toEqual([
+      "20",
+      "21",
+    ]);
+    expect(applyTaskListFilters(tasks, { q: null })).toHaveLength(2);
+  });
+});
+
+describe("Roadmap keyword search (decodeRoadmapFilters / apply)", () => {
+  const themes = [
+    { id: "1", title: "Platform" },
+    { id: "2", title: "Growth" },
+  ];
+
+  test("decode/encode q round-trip", () => {
+    expect(decodeRoadmapFilters("q=plat")).toEqual({ q: "plat" });
+    expect(encodeRoadmapFilters({ q: null })).toBe("");
+  });
+
+  test("applyRoadmapFilters matches title + id", () => {
+    expect(applyRoadmapFilters(themes, { q: "growth" }).map((t) => t.id)).toEqual([
+      "2",
+    ]);
+    expect(applyRoadmapFilters(themes, { q: null })).toHaveLength(2);
+  });
+});
+
+describe("Sort state (decodeSort / encodeSort / nextSortForField)", () => {
+  test("decodeSort defaults to no field, ascending", () => {
+    expect(decodeSort("")).toEqual({ field: null, dir: "asc" });
+  });
+
+  test("decodeSort reads sortField + sortDir", () => {
+    expect(decodeSort("sortField=title&sortDir=desc")).toEqual({
+      field: "title",
+      dir: "desc",
+    });
+    expect(decodeSort("sortField=id")).toEqual({ field: "id", dir: "asc" });
+  });
+
+  test("encodeSort omits everything when no field is set", () => {
+    expect(encodeSort({ field: null, dir: "asc" })).toBe("");
+  });
+
+  test("encodeSort emits sortField + sortDir for a set field", () => {
+    expect(encodeSort({ field: "title", dir: "desc" })).toBe(
+      "sortField=title&sortDir=desc",
+    );
+  });
+
+  test("nextSortForField is a 3-state toggle, preserving other params", () => {
+    // new field → ascending
+    expect(nextSortForField("q=x", "id")).toBe("q=x&sortField=id&sortDir=asc");
+    // same field asc → desc
+    expect(nextSortForField("sortField=id&sortDir=asc", "id")).toBe(
+      "sortField=id&sortDir=desc",
+    );
+    // same field desc → cleared (back to natural order)
+    expect(nextSortForField("sortField=id&sortDir=desc&q=x", "id")).toBe("q=x");
+    // switching field resets to ascending
+    expect(nextSortForField("sortField=id&sortDir=desc", "title")).toBe(
+      "sortField=title&sortDir=asc",
+    );
+  });
+});
+
+describe("nextSearchForQuery (client search navigation — preserves other params)", () => {
+  test("sets q on an empty query string", () => {
+    expect(nextSearchForQuery("", "auth")).toBe("q=auth");
+  });
+
+  test("preserves existing filter params when adding q", () => {
+    expect(nextSearchForQuery("track=Bid", "auth")).toBe("track=Bid&q=auth");
+  });
+
+  test("replaces an existing q in place, preserving the other params", () => {
+    expect(nextSearchForQuery("q=old&track=Bid", "new")).toBe(
+      "q=new&track=Bid",
+    );
+  });
+
+  test("clears q (and trims) when the value is blank", () => {
+    expect(nextSearchForQuery("q=old&track=Bid", "   ")).toBe("track=Bid");
+    expect(nextSearchForQuery("q=old", "")).toBe("");
+  });
+
+  test("preserves a cross-ledger ?ledger= slug", () => {
+    expect(nextSearchForQuery("ledger=roadmap", "x")).toBe("ledger=roadmap&q=x");
+  });
+});
+
+describe("nextSearchForFlag (boolean toggle param — preserves other params)", () => {
+  test("sets <key>=1 when on, deletes it when off", () => {
+    expect(nextSearchForFlag("q=x", "excludeDone", true)).toBe(
+      "q=x&excludeDone=1",
+    );
+    expect(nextSearchForFlag("q=x&excludeDone=1", "excludeDone", false)).toBe(
+      "q=x",
+    );
   });
 });
 

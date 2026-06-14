@@ -82,7 +82,12 @@ import {
   applyThemeClassesToHtml,
   writeThemeCookie,
 } from "../../../packages/ui/record-view/theme-client";
-import { FILTER_ALL } from "../../../packages/ui/record-view/url-state";
+import {
+  FILTER_ALL,
+  nextSearchForFlag,
+  nextSearchForQuery,
+  nextSortForField,
+} from "../../../packages/ui/record-view/url-state";
 
 /** Selector for the container that holds both a value + its affordance. */
 const CONTAINER_SELECTOR =
@@ -1180,6 +1185,86 @@ function wireBacklogFilters(): void {
   }
 }
 
+// ── Index keyword search (PRODUCT inv 23 — URL-reflected) ─────────────────────
+//
+// Each index page renders a `<form data-index-search>` carrying an
+// `<input type="search" data-search-control name="q">`. The server already
+// decodes `?q=` and filters the list — but a native search input does not
+// navigate on its own. On change (Enter / blur) or submit we rebuild the query
+// string via `nextSearchForQuery` (set/clear `q`, PRESERVING every other param
+// — filters, `?ledger=`, sort) and navigate; the SSR re-renders the filtered
+// list and the URL stays bookmarkable / shareable (inv 23). Keyed off the
+// INPUT (not a specific form) so it wires the backlog and the read-only index
+// surfaces alike. Mirrors `wireBacklogFilters`.
+export function wireIndexSearch(): void {
+  const inputs = Array.from(
+    document.querySelectorAll<HTMLInputElement>("[data-search-control]"),
+  );
+  if (inputs.length === 0) return;
+  for (const input of inputs) {
+    const navigate = (): void => {
+      window.location.search = nextSearchForQuery(
+        window.location.search,
+        input.value,
+      );
+    };
+    // `change` fires on Enter / blur for a search input (not per keystroke), so
+    // we navigate once per committed query, never mid-typing.
+    input.addEventListener("change", navigate);
+    const form = input.closest("form");
+    if (form) {
+      // Intercept the native GET submit (which would drop sibling params) and
+      // navigate with everything preserved instead.
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        navigate();
+      });
+    }
+  }
+}
+
+// ── Index column sort (docs/notes/ledger-sorting.md) ──────────────────────────
+//
+// The task-list / roadmap index headers render `<button data-sort-trigger=
+// "<field>">`. A click cycles the column sort (ascending → descending → off)
+// via `nextSortForField`, PRESERVING every other param (search `q`,
+// `?ledger=`), and navigates; the SSR re-sorts. Backlog is intentionally
+// excluded — its order is the persisted `rank` (docs/notes/ledger-sorting.md).
+export function wireSortControl(): void {
+  const triggers = Array.from(
+    document.querySelectorAll<HTMLElement>("[data-sort-trigger]"),
+  );
+  if (triggers.length === 0) return;
+  for (const trigger of triggers) {
+    trigger.addEventListener("click", () => {
+      const field = trigger.getAttribute("data-sort-trigger");
+      if (!field) return;
+      window.location.search = nextSortForField(window.location.search, field);
+    });
+  }
+}
+
+// ── Task-list "hide done/cancelled" toggle ───────────────────────────────────
+//
+// The task-list index renders a `<input type="checkbox"
+// data-exclude-done-control>`. On change we set/clear `excludeDone=1` via
+// `nextSearchForFlag` (PRESERVING search `q`, sort, `?ledger=`) and navigate;
+// the SSR drops `done`/`cancelled` rows. Trims the active working set
+// (complements the ledger-compaction write-path).
+export function wireExcludeDoneToggle(): void {
+  const checkbox = document.querySelector<HTMLInputElement>(
+    "[data-exclude-done-control]",
+  );
+  if (!checkbox) return;
+  checkbox.addEventListener("change", () => {
+    window.location.search = nextSearchForFlag(
+      window.location.search,
+      "excludeDone",
+      checkbox.checked,
+    );
+  });
+}
+
 // ── Backlog reorder (backlog-drag-reorder SPEC §2, §3, §4, §7, §8 — Slice C) ──
 //
 // Slice A wired the drag mechanics + within-tier DOM reorder + cross-tier
@@ -1199,10 +1284,12 @@ function wireBacklogFilters(): void {
 // (focus captures a fresh baseline when no gesture is mid-flight; a commit
 // advances it) so the two modalities never clobber each other's snapshot.
 //
-// The SPA sets `draggable="true"` on each row at wire time — NOT the SSR
-// (SPEC §7.2): `draggable` only means something with JS listeners attached, so
-// coupling them is correct, and it keeps DR-6 trivial (read-only / no-wire ⇒
-// nothing draggable). Feature-detected off `[data-supports-drag-reorder="true"]`
+// The SPA sets `draggable="true"` on each row's drag HANDLE at wire time — NOT
+// the SSR, and NOT the whole row (a draggable <tr> suppresses text selection /
+// copy-paste in the row's cells). Per SPEC §7.2 `draggable` only means something
+// with JS listeners attached, so coupling them is correct, and it keeps DR-6
+// trivial (read-only / no-wire ⇒ no handle ⇒ nothing draggable). Feature-detected
+// off `[data-supports-drag-reorder="true"]`
 // with a banner-guard: a read-only sibling (`[data-ledger-banner]`) is NEVER
 // wired (SPEC §6.2, DR-6).
 
@@ -1537,7 +1624,7 @@ function moveRowWithinTier(
  * highlighted drop target across the dragstart→dragover→drop→dragend lifecycle,
  * AND the keyboard reorder gesture on the focused drag handle (SPEC §2).
  */
-function wireBacklogReorderTable(table: HTMLElement): void {
+export function wireBacklogReorderTable(table: HTMLElement): void {
   let dragged: HTMLElement | null = null;
   let dropTarget: HTMLElement | null = null;
   // SPEC §4.5: last-known-good order — the row id sequence captured at the
@@ -1551,9 +1638,17 @@ function wireBacklogReorderTable(table: HTMLElement): void {
   // baseline (it must NOT mid-gesture) and whether Escape has anything to revert.
   let keyboardDirty = false;
 
-  // SPEC §7.2: the CLIENT marks rows draggable (never the SSR).
+  // SPEC §7.2: the CLIENT marks the drag HANDLE draggable (never the SSR, and
+  // never the whole <tr> — a draggable row makes native HTML drag intercept
+  // mousedown gestures over the row, which SUPPRESSES text selection /
+  // copy-paste in its cells). Drag is initiated from the handle; `dragstart`
+  // still resolves the row via `closest("[data-backlog-row]")` (the handle is a
+  // row descendant). A read-only row has no handle (SSR-omitted) → nothing is
+  // marked draggable, reinforcing DR-6.
   for (const row of backlogRows(table)) {
-    row.setAttribute("draggable", "true");
+    row
+      .querySelector<HTMLElement>("[data-drag-handle]")
+      ?.setAttribute("draggable", "true");
   }
 
   function clearDropTarget(): void {
@@ -1580,6 +1675,11 @@ function wireBacklogReorderTable(table: HTMLElement): void {
     row.classList.add(ROW_DRAGGING_CLASS);
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = "move";
+      // The handle is the drag source; render the full ROW as the drag ghost so
+      // the gesture still reads as "moving this row", not "moving the ☰ glyph".
+      if (typeof event.dataTransfer.setDragImage === "function") {
+        event.dataTransfer.setDragImage(row, 0, 0);
+      }
       // Some engines require data to be set for the drag to proceed.
       event.dataTransfer.setData(
         "text/plain",
@@ -1814,6 +1914,9 @@ function init(): void {
   wirePrintClassToggle();
   wireThemePicker();
   wireBacklogFilters();
+  wireIndexSearch();
+  wireSortControl();
+  wireExcludeDoneToggle();
   wireBacklogReorder();
 }
 

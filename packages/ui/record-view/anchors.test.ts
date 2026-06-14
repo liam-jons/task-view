@@ -5,6 +5,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   crossLedgerRecordHref,
+  indexHrefWithAnchor,
+  indexRowAnchorId,
   recordRouteHref,
   subtaskAnchorId,
   subtaskDepLabel,
@@ -69,5 +71,26 @@ describe("crossLedgerRecordHref ({20.29} cross-ledger nav, SPEC §5 slice 2)", (
     // Regression guard: the cross-ledger builder must not change the
     // bare intra-ledger href contract.
     expect(recordRouteHref("6")).toBe("/?record=6");
+  });
+});
+
+describe("Index row anchors — return to page point on 'Back to…'", () => {
+  test("indexRowAnchorId returns `record-{id}` (the index <tr> id AND the back fragment)", () => {
+    expect(indexRowAnchorId("20")).toBe("record-20");
+    expect(indexRowAnchorId("ID-30")).toBe("record-ID-30");
+  });
+
+  test("indexHrefWithAnchor returns `/#record-{id}` so Back lands on the viewed row", () => {
+    expect(indexHrefWithAnchor("20")).toBe("/#record-20");
+    expect(indexHrefWithAnchor("42")).toBe("/#record-42");
+  });
+
+  test("indexHrefWithAnchor folds an optional query string before the fragment", () => {
+    // So a future filtered/sorted index can return to the same filtered view
+    // scrolled to the row (Task 3/4). Empty query → bare path.
+    expect(indexHrefWithAnchor("20", "status=ready")).toBe(
+      "/?status=ready#record-20",
+    );
+    expect(indexHrefWithAnchor("20", "")).toBe("/#record-20");
   });
 });

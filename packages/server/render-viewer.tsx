@@ -39,8 +39,16 @@ import {
   buildLedgerContext,
   type NavStripData,
 } from "@task-view/ui/record-view/types";
-import { decodeBacklogFilters } from "@task-view/ui/record-view/url-state";
-import { recordRouteHref } from "@task-view/ui/record-view/anchors";
+import {
+  decodeBacklogFilters,
+  decodeRoadmapFilters,
+  decodeSort,
+  decodeTaskListFilters,
+} from "@task-view/ui/record-view/url-state";
+import {
+  indexHrefWithAnchor,
+  recordRouteHref,
+} from "@task-view/ui/record-view/anchors";
 import { ThemePicker } from "@task-view/ui/record-view/theme-picker";
 import { ReadOnlyProvider } from "@task-view/ui/record-view/read-only-context";
 import { LedgerBanner } from "@task-view/ui/record-view/ledger-banner";
@@ -214,9 +222,14 @@ function renderBody({
   if (detected.kind === "task-list") {
     const tasks = detected.data.tasks;
     if (recordParam === null) {
+      const filters = decodeTaskListFilters(search);
+      const sort = decodeSort(search);
       return {
         status: 200,
-        markup: renderRecordMarkup(<TaskListIndexView tasks={tasks} />, readOnly),
+        markup: renderRecordMarkup(
+          <TaskListIndexView tasks={tasks} filters={filters} sort={sort} />,
+          readOnly,
+        ),
       };
     }
     const task = tasks.find((t) => t.id === recordParam);
@@ -268,10 +281,16 @@ function renderBody({
 
   // roadmap
   if (recordParam === null) {
+    const filters = decodeRoadmapFilters(search);
+    const sort = decodeSort(search);
     return {
       status: 200,
       markup: renderRecordMarkup(
-        <RoadmapIndexView roadmap={detected.data} />,
+        <RoadmapIndexView
+          roadmap={detected.data}
+          filters={filters}
+          sort={sort}
+        />,
         readOnly,
       ),
     };
@@ -348,7 +367,7 @@ function computeTaskNav(tasks: readonly Task[], current: Task): NavStripData {
     prevLabel: prev ? `ID-${prev.id}: ${prev.title}` : null,
     nextHref: next ? recordRouteHref(next.id) : null,
     nextLabel: next ? `ID-${next.id}: ${next.title}` : null,
-    indexHref: "/",
+    indexHref: indexHrefWithAnchor(current.id),
     indexLabel: "Back to ledger index",
   };
 }
@@ -365,7 +384,7 @@ function computeBacklogNav(
     prevLabel: prev ? `#${prev.id}: ${prev.description}` : null,
     nextHref: next ? recordRouteHref(next.id) : null,
     nextLabel: next ? `#${next.id}: ${next.description}` : null,
-    indexHref: "/",
+    indexHref: indexHrefWithAnchor(current.id),
     indexLabel: "Back to backlog index",
   };
 }
@@ -382,7 +401,7 @@ function computeThemeNav(
     prevLabel: prev ? `${prev.id}: ${prev.title}` : null,
     nextHref: next ? recordRouteHref(next.id) : null,
     nextLabel: next ? `${next.id}: ${next.title}` : null,
-    indexHref: "/",
+    indexHref: indexHrefWithAnchor(current.id),
     indexLabel: "Back to roadmap index",
   };
 }

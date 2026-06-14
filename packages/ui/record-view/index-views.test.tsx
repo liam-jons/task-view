@@ -66,16 +66,24 @@ describe("TaskListIndexView (TECH §4.3)", () => {
       mkTask({ id: "21", title: "Twenty-one" }),
     ];
     const html = renderToStaticMarkup(<TaskListIndexView tasks={tasks} />);
-    expect(html).toContain('<th scope="col">ID</th>');
-    expect(html).toContain('<th scope="col">Title</th>');
-    expect(html).toContain('<th scope="col">Status</th>');
-    expect(html).toContain('<th scope="col">Priority</th>');
-    expect(html).toContain('<th scope="col">Subtasks</th>');
+    // Columns are sortable headers (clickable, aria-sort) — one per field.
+    expect(html).toContain('data-sort-trigger="id"');
+    expect(html).toContain('data-sort-trigger="title"');
+    expect(html).toContain('data-sort-trigger="status"');
+    expect(html).toContain('data-sort-trigger="priority"');
+    expect(html).toContain('data-sort-trigger="subtasks"');
     expect(html).toContain('data-task-row="20"');
     expect(html).toContain('data-task-row="21"');
     expect(html).toContain('data-task-link="20"');
     expect(html).toContain('href="/?record=20"');
     expect(html).toContain("Twenty-one");
+  });
+
+  test("each task row carries id=\"record-{id}\" so a back link can scroll to it", () => {
+    const tasks = [mkTask({ id: "20" }), mkTask({ id: "21" })];
+    const html = renderToStaticMarkup(<TaskListIndexView tasks={tasks} />);
+    expect(html).toContain('id="record-20"');
+    expect(html).toContain('id="record-21"');
   });
 
   test("renders subtask count per task", () => {
@@ -114,6 +122,60 @@ describe("TaskListIndexView (TECH §4.3)", () => {
     expect(html).toContain('data-empty-ledger="task-list"');
     expect(html).toContain("Task list ledger is empty");
   });
+
+  test("renders a keyword search box and filters rows by q (title/id)", () => {
+    const tasks = [
+      mkTask({ id: "20", title: "Auth flow" }),
+      mkTask({ id: "21", title: "Billing" }),
+    ];
+    const all = renderToStaticMarkup(<TaskListIndexView tasks={tasks} />);
+    expect(all).toContain("data-search-control");
+    const filtered = renderToStaticMarkup(
+      <TaskListIndexView tasks={tasks} filters={{ q: "auth" }} />,
+    );
+    expect(filtered).toContain('data-task-row="20"');
+    expect(filtered).not.toContain('data-task-row="21"');
+    // the search box reflects the active query
+    expect(filtered).toContain('value="auth"');
+  });
+
+  test("filtered-to-empty shows a no-matches state, not the empty-ledger state", () => {
+    const tasks = [mkTask({ id: "20", title: "Auth" })];
+    const html = renderToStaticMarkup(
+      <TaskListIndexView tasks={tasks} filters={{ q: "zzz" }} />,
+    );
+    expect(html).toContain("data-empty-filtered");
+    expect(html).not.toContain("data-empty-ledger");
+  });
+
+  test("sorts rows by the active column (id desc) and exposes aria-sort", () => {
+    const tasks = [mkTask({ id: "2" }), mkTask({ id: "10" }), mkTask({ id: "1" })];
+    const html = renderToStaticMarkup(
+      <TaskListIndexView tasks={tasks} sort={{ field: "id", dir: "desc" }} />,
+    );
+    const order = [...html.matchAll(/data-task-row="(\d+)"/g)].map((m) => m[1]);
+    expect(order).toEqual(["10", "2", "1"]);
+    expect(html).toContain('aria-sort="descending"');
+  });
+
+  test("renders a 'hide done/cancelled' toggle that excludes those statuses", () => {
+    const tasks = [
+      mkTask({ id: "1", status: "done" }),
+      mkTask({ id: "2", status: "in_progress" }),
+      mkTask({ id: "3", status: "cancelled" }),
+    ];
+    const all = renderToStaticMarkup(<TaskListIndexView tasks={tasks} />);
+    expect(all).toContain("data-exclude-done-control");
+
+    const hidden = renderToStaticMarkup(
+      <TaskListIndexView tasks={tasks} filters={{ q: null, excludeDone: true }} />,
+    );
+    expect(hidden).toContain('data-task-row="2"');
+    expect(hidden).not.toContain('data-task-row="1"');
+    expect(hidden).not.toContain('data-task-row="3"');
+    // the checkbox reflects the active state
+    expect(hidden).toContain("checked");
+  });
 });
 
 // ── Roadmap index ─────────────────────────────────────────────────────────────
@@ -132,11 +194,11 @@ describe("RoadmapIndexView (themes[] — ID-20.19)", () => {
     const html = renderToStaticMarkup(
       <RoadmapIndexView roadmap={roadmap} />,
     );
-    expect(html).toContain('<th scope="col">ID</th>');
-    expect(html).toContain('<th scope="col">Title</th>');
-    expect(html).toContain('<th scope="col">Time horizon</th>');
-    expect(html).toContain('<th scope="col">Status</th>');
-    expect(html).toContain('<th scope="col">Linked tasks</th>');
+    expect(html).toContain('data-sort-trigger="id"');
+    expect(html).toContain('data-sort-trigger="title"');
+    expect(html).toContain('data-sort-trigger="time_horizon"');
+    expect(html).toContain('data-sort-trigger="status"');
+    expect(html).toContain('data-sort-trigger="linked_tasks"');
     expect(html).toContain('data-theme-row="1"');
     expect(html).toContain('data-theme-row="42"');
     expect(html).toContain('href="/?record=1"');
@@ -146,6 +208,13 @@ describe("RoadmapIndexView (themes[] — ID-20.19)", () => {
     // theme count reported
     expect(html).toContain('data-theme-count="2"');
     expect(html).toContain("2 themes");
+  });
+
+  test("each theme row carries id=\"record-{id}\" for back-to-page-point", () => {
+    const roadmap = mkRoadmap([mkTheme({ id: "1" }), mkTheme({ id: "42" })]);
+    const html = renderToStaticMarkup(<RoadmapIndexView roadmap={roadmap} />);
+    expect(html).toContain('id="record-1"');
+    expect(html).toContain('id="record-42"');
   });
 
   test("renders linked-task count per theme", () => {
@@ -164,5 +233,32 @@ describe("RoadmapIndexView (themes[] — ID-20.19)", () => {
       <RoadmapIndexView roadmap={roadmap} />,
     );
     expect(html).toContain('data-empty-ledger="roadmap"');
+  });
+
+  test("renders a keyword search box and filters themes by q (title/id)", () => {
+    const roadmap = mkRoadmap([
+      mkTheme({ id: "1", title: "Platform" }),
+      mkTheme({ id: "2", title: "Growth" }),
+    ]);
+    const filtered = renderToStaticMarkup(
+      <RoadmapIndexView roadmap={roadmap} filters={{ q: "growth" }} />,
+    );
+    expect(filtered).toContain("data-search-control");
+    expect(filtered).toContain('data-theme-row="2"');
+    expect(filtered).not.toContain('data-theme-row="1"');
+  });
+
+  test("sorts themes by the active column (id asc) and exposes aria-sort", () => {
+    const roadmap = mkRoadmap([
+      mkTheme({ id: "2" }),
+      mkTheme({ id: "10" }),
+      mkTheme({ id: "1" }),
+    ]);
+    const html = renderToStaticMarkup(
+      <RoadmapIndexView roadmap={roadmap} sort={{ field: "id", dir: "asc" }} />,
+    );
+    const order = [...html.matchAll(/data-theme-row="(\d+)"/g)].map((m) => m[1]);
+    expect(order).toEqual(["1", "2", "10"]);
+    expect(html).toContain('aria-sort="ascending"');
   });
 });

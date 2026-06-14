@@ -48,6 +48,30 @@ describe("PRODUCT inv 20 (Backlog index columns) + roadmap-backlog-consolidation
     expect(html).toContain('<th scope="col">Effort</th>');
   });
 
+  test("each backlog row carries id=\"record-{id}\" for back-to-page-point", () => {
+    const items = [mkItem({ id: "45" })];
+    const html = renderToStaticMarkup(
+      <BacklogIndexView items={items} filters={NO_FILTERS} />,
+    );
+    expect(html).toContain('id="record-45"');
+  });
+
+  test("renders a keyword search box and filters items by q (description/id)", () => {
+    const items = [
+      mkItem({ id: "1", description: "auth flow" }),
+      mkItem({ id: "2", description: "billing" }),
+    ];
+    const html = renderToStaticMarkup(
+      <BacklogIndexView
+        items={items}
+        filters={{ track: null, status: null, priority: null, q: "auth" }}
+      />,
+    );
+    expect(html).toContain("data-search-control");
+    expect(html).toContain('data-backlog-row="1"');
+    expect(html).not.toContain('data-backlog-row="2"');
+  });
+
   test("sort overridden per roadmap-backlog-consolidation inv 10 — priority → rank (nulls last) → id (NOT track/status/id)", () => {
     // Per inv 10: "the existing sort (track, then status, then id per
     // per-task-mirror inv 20) becomes priority, then rank (nulls last),

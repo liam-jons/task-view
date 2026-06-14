@@ -68,6 +68,43 @@ describe("renderViewer — client-script reference (ID-20.24)", () => {
     });
     expect(html).not.toContain("<script");
   });
+
+  test("a record page's back-to-index link carries #record-<id> (page-point restoration)", () => {
+    // A record page (not the index) needs the full item shape the record view
+    // reads (dependencies, *_refs, …), so use a complete fixture here.
+    const detected: KnownDetected = {
+      kind: "backlog",
+      data: {
+        document_name: "Product Backlog",
+        document_purpose: "fixture",
+        related_documents: [],
+        items: [
+          {
+            id: "ID-30",
+            description: "An item",
+            type: "feature",
+            status: "ready",
+            priority: "high",
+            rank: 3,
+            track: "platform",
+            effort_estimate: "M",
+            dependencies: [],
+            session_refs: [],
+            commit_refs: [],
+            cross_doc_links: [],
+            notes: null,
+          },
+        ],
+      },
+    } as unknown as KnownDetected;
+    const { html } = renderViewer({
+      detected,
+      search: new URLSearchParams("record=ID-30"),
+    });
+    // The nav-strip "Back to … index" link returns to the row just viewed,
+    // so the browser scrolls the index back to that record on return.
+    expect(html).toContain('href="/#record-ID-30"');
+  });
 });
 
 // ── record-view-styling: <style> + <html> class (SV-50, SV-51) ──────────────

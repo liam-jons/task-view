@@ -78,6 +78,31 @@ export function crossLedgerRecordHref(
 }
 
 /**
+ * In-page anchor id for an index row (`record-20`). Emitted as the `id`
+ * attribute of each index `<tr>` AND used as the fragment of the record's
+ * "Back to …" link, so returning from a record scrolls the index back to the
+ * row the user came from instead of the top of the page.
+ *
+ * Record ids are anchor-safe (bare-digit or `ID-`-prefixed), so the same
+ * string serves as both the `id` attribute and the URL fragment without
+ * encoding (encoding would desync the two).
+ */
+export function indexRowAnchorId(recordId: string): string {
+  return `record-${recordId}`;
+}
+
+/**
+ * "Back to index" href that returns to the row the user just viewed:
+ * `/[?<query>]#record-<id>`. The optional `query` (no leading `?`) lets a
+ * filtered/sorted index round-trip its state alongside the scroll anchor; an
+ * empty/absent query yields the bare `/#record-<id>` form.
+ */
+export function indexHrefWithAnchor(recordId: string, query?: string): string {
+  const q = query ? `?${query}` : "";
+  return `/${q}#${indexRowAnchorId(recordId)}`;
+}
+
+/**
  * Label for a sibling-Subtask dep link (used inline in the Dependencies
  * row of the Subtask block frontmatter).
  */

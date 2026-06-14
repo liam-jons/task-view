@@ -10,12 +10,25 @@
  */
 import React from "react";
 import type { Roadmap } from "@task-view/schemas/roadmap";
-import { recordRouteHref } from "./anchors";
+import { indexRowAnchorId, recordRouteHref } from "./anchors";
 import { StatusBadge } from "./status-badge";
+import { IndexSearchBox } from "./index-search";
+import { SortableColumnHeader } from "./sortable-header";
+import { sortThemesForIndex } from "./roadmap-sort";
+import {
+  applyRoadmapFilters,
+  type RoadmapFilterState,
+  type SortState,
+} from "./url-state";
 
 export const RoadmapIndexView: React.FC<{
   roadmap: Roadmap;
-}> = ({ roadmap }) => {
+  filters?: RoadmapFilterState;
+  sort?: SortState;
+}> = ({ roadmap, filters, sort }) => {
+  const f = filters ?? { q: null };
+  const s = sort ?? { field: null, dir: "asc" };
+  const visible = sortThemesForIndex(applyRoadmapFilters(roadmap.themes, f), s);
   return (
     <article
       className="record-view-roadmap-index"
@@ -25,11 +38,15 @@ export const RoadmapIndexView: React.FC<{
         <h1>Roadmap</h1>
         <p
           className="record-view-roadmap-index-count"
-          data-theme-count={roadmap.themes.length}
+          data-theme-count={visible.length}
+          data-theme-total={roadmap.themes.length}
         >
-          {roadmap.themes.length} theme
-          {roadmap.themes.length === 1 ? "" : "s"}
+          {visible.length} theme
+          {visible.length === 1 ? "" : "s"}
         </p>
+        {roadmap.themes.length === 0 ? null : (
+          <IndexSearchBox q={f.q ?? null} />
+        )}
       </header>
 
       {roadmap.themes.length === 0 ? (
@@ -39,6 +56,10 @@ export const RoadmapIndexView: React.FC<{
         >
           <em>The Roadmap ledger has no themes.</em>
         </p>
+      ) : visible.length === 0 ? (
+        <p className="record-view-empty-filtered" data-empty-filtered>
+          <em>No themes match the search.</em>
+        </p>
       ) : (
         <table
           className="record-view-roadmap-index-table"
@@ -46,17 +67,26 @@ export const RoadmapIndexView: React.FC<{
         >
           <thead>
             <tr>
-              <th scope="col">ID</th>
-              <th scope="col">Title</th>
-              <th scope="col">Time horizon</th>
-              <th scope="col">Status</th>
-              <th scope="col">Linked tasks</th>
+              <SortableColumnHeader field="id" label="ID" sort={s} />
+              <SortableColumnHeader field="title" label="Title" sort={s} />
+              <SortableColumnHeader
+                field="time_horizon"
+                label="Time horizon"
+                sort={s}
+              />
+              <SortableColumnHeader field="status" label="Status" sort={s} />
+              <SortableColumnHeader
+                field="linked_tasks"
+                label="Linked tasks"
+                sort={s}
+              />
             </tr>
           </thead>
           <tbody>
-            {roadmap.themes.map((theme) => (
+            {visible.map((theme) => (
               <tr
                 key={theme.id}
+                id={indexRowAnchorId(theme.id)}
                 data-theme-row={theme.id}
               >
                 <td>

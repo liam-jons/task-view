@@ -34,7 +34,8 @@ import React from "react";
 import type { BacklogItem } from "@task-view/schemas/backlog";
 import { BacklogStatus } from "@task-view/schemas/backlog";
 import { Priority } from "@task-view/schemas/work-status";
-import { recordRouteHref } from "./anchors";
+import { indexRowAnchorId, recordRouteHref } from "./anchors";
+import { IndexSearchBox } from "./index-search";
 import { useReadOnly } from "./read-only-context";
 import {
   applyBacklogFilters,
@@ -92,6 +93,7 @@ export const BacklogIndexView: React.FC<BacklogIndexViewProps> = ({
         >
           Showing {filtered.length} of {items.length} items
         </p>
+        <IndexSearchBox q={filters.q ?? null} />
       </header>
 
       <form
@@ -205,6 +207,7 @@ const BacklogItemRow: React.FC<{ item: BacklogItem }> = ({ item }) => {
   const readOnly = useReadOnly();
   return (
     <tr
+      id={indexRowAnchorId(item.id)}
       data-backlog-row={item.id}
       data-priority-tier={item.priority}
     >
