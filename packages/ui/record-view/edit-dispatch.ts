@@ -38,6 +38,7 @@ import {
   type FieldPatch,
   type FieldPath,
 } from "./edit-state";
+import type { LedgerSlug } from "./anchors";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Dispatch kinds — superset of EditKind (edit-state.ts) plus the numeric
@@ -235,9 +236,15 @@ export function buildMultiPatchRequest(
  * `/api/ledger/record/:recordId` with the id URL-encoded (the server
  * `decodeURIComponent`s it back). Record id comes from the closest
  * `data-record-id` ancestor.
+ *
+ * editable-ledger-switch §2: when an active ledger `slug` is passed, the write
+ * is routed to that sibling via `/api/ledger/<slug>/record/:recordId` (the slug
+ * write seam rebinds the effective ledger). Omitting the slug keeps the bare
+ * launched-ledger route, byte-for-byte back-compatible.
  */
-export function recordPatchPath(recordId: string): string {
-  return `/api/ledger/record/${encodeURIComponent(recordId)}`;
+export function recordPatchPath(recordId: string, slug?: LedgerSlug): string {
+  const enc = encodeURIComponent(recordId);
+  return slug ? `/api/ledger/${slug}/record/${enc}` : `/api/ledger/record/${enc}`;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -262,10 +269,12 @@ export function buildDeleteRequest(baseMtime: string): DeleteRequestBody {
 
 /**
  * Derive the DELETE URL for a record. The server routes GET / PATCH /
- * DELETE on the SAME `/api/ledger/record/:recordId` path, so this is
+ * DELETE on the SAME `/api/ledger/record/:recordId` path (and its
+ * `/api/ledger/<slug>/record/:recordId` slug-scoped form), so this is
  * identical to {@link recordPatchPath}; kept as a named export so call
  * sites read intent-first.
  */
-export function recordDeletePath(recordId: string): string {
-  return `/api/ledger/record/${encodeURIComponent(recordId)}`;
+export function recordDeletePath(recordId: string, slug?: LedgerSlug): string {
+  const enc = encodeURIComponent(recordId);
+  return slug ? `/api/ledger/${slug}/record/${enc}` : `/api/ledger/record/${enc}`;
 }

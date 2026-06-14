@@ -8,7 +8,6 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { BacklogItem } from "@task-view/schemas/backlog";
 import { BacklogIndexView } from "./backlog-index-view";
-import { ReadOnlyProvider } from "./read-only-context";
 
 const mkItem = (overrides: Partial<BacklogItem> = {}): BacklogItem => ({
   id: "1",
@@ -59,14 +58,4 @@ describe("backlog index — per-row delete affordance", () => {
     expect(html).toContain('data-item-total="3"');
   });
 
-  test("suppresses all delete affordances + the Actions header read-only (DR-6)", () => {
-    const items = [mkItem({ id: "1" }), mkItem({ id: "2" })];
-    const html = renderToStaticMarkup(
-      <ReadOnlyProvider readOnly={true}>
-        <BacklogIndexView items={items} filters={NO_FILTERS} />
-      </ReadOnlyProvider>,
-    );
-    expect(html).not.toContain("data-delete-action");
-    expect(html).not.toContain('<th scope="col">Actions</th>');
-  });
 });

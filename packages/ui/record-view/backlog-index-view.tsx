@@ -36,7 +36,6 @@ import { BacklogStatus } from "@task-view/schemas/backlog";
 import { Priority } from "@task-view/schemas/work-status";
 import { indexRowAnchorId, recordRouteHref } from "./anchors";
 import { IndexSearchBox } from "./index-search";
-import { useReadOnly } from "./read-only-context";
 import {
   applyBacklogFilters,
   FILTER_ALL,
@@ -61,10 +60,6 @@ export const BacklogIndexView: React.FC<BacklogIndexViewProps> = ({
   filters,
   trackOptions,
 }) => {
-  // {backlog-ui-delete}: the per-row delete affordance + its Actions column
-  // header are suppressed on a read-only sibling page (DR-6) — same posture
-  // as the already-gated rank pencil + drag handle.
-  const readOnly = useReadOnly();
   const tracks =
     trackOptions ?? Array.from(new Set(items.map((i) => i.track))).sort();
   // The Zod enum values are the canonical source per inv 31 (used here
@@ -166,7 +161,7 @@ export const BacklogIndexView: React.FC<BacklogIndexViewProps> = ({
               <th scope="col">Rank</th>
               <th scope="col">Track</th>
               <th scope="col">Effort</th>
-              {readOnly ? null : <th scope="col">Actions</th>}
+              <th scope="col">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -203,8 +198,6 @@ export const BacklogIndexView: React.FC<BacklogIndexViewProps> = ({
 const BacklogItemRow: React.FC<{ item: BacklogItem }> = ({ item }) => {
   const rankValue = item.rank ?? null;
   const fieldKey = `items>${item.id}>rank`;
-  // {20.29}: suppress the inline rank editor on a read-only sibling page.
-  const readOnly = useReadOnly();
   return (
     <tr
       id={indexRowAnchorId(item.id)}
@@ -212,29 +205,22 @@ const BacklogItemRow: React.FC<{ item: BacklogItem }> = ({ item }) => {
       data-priority-tier={item.priority}
     >
       <td className="record-view-drag-cell">
-        {/* backlog-drag-reorder SPEC §6 (DR-6): omit the drag handle on a
-            read-only sibling page — drag + keyboard reorder mutate the
-            `rank` field, which has no sibling-write path (inv 43). With no
-            `[data-drag-handle]` in the served HTML the reorder listeners
-            have nothing to attach to (same posture as the suppressed rank
-            pencil below). The client also banner-guards, but SSR-omit is the
-            primary defence so a no-JS / read-only surface never shows a
-            misleading drag affordance (QC finding A). The gutter column +
-            its `.sr-only` header are kept for column-count stability. */}
-        {readOnly ? null : (
-          <span
-            data-drag-handle={item.id}
-            role="button"
-            tabIndex={0}
-            aria-label={`Reorder backlog item ${item.id}`}
-            data-keyboard-shortcut="arrow-up,arrow-down,enter"
-            // The visible glyph is U+2630 TRIGRAM FOR HEAVEN (≡-like
-            // drag affordance). Hidden from AT — the aria-label supplies
-            // accessible naming.
-          >
-            <span aria-hidden="true">{"☰"}</span>
-          </span>
-        )}
+        {/* backlog-drag-reorder SPEC §6: the drag handle reorders via the
+            `rank` field, editable on every page now that the read-only-sibling
+            model is gone (editable-ledger-switch §3). The gutter column + its
+            `.sr-only` header are kept for column-count stability. */}
+        <span
+          data-drag-handle={item.id}
+          role="button"
+          tabIndex={0}
+          aria-label={`Reorder backlog item ${item.id}`}
+          data-keyboard-shortcut="arrow-up,arrow-down,enter"
+          // The visible glyph is U+2630 TRIGRAM FOR HEAVEN (≡-like
+          // drag affordance). Hidden from AT — the aria-label supplies
+          // accessible naming.
+        >
+          <span aria-hidden="true">{"☰"}</span>
+        </span>
       </td>
       <td>
         <a
@@ -259,39 +245,35 @@ const BacklogItemRow: React.FC<{ item: BacklogItem }> = ({ item }) => {
         <span className="record-view-rank-value">
           {rankValue === null ? "—" : rankValue}
         </span>
-        {readOnly ? null : (
-          <button
-            type="button"
-            className="record-view-pencil-button"
-            data-edit-action="open"
-            data-edit-field={fieldKey}
-            // ID-20.24: rank is `z.number().int().nullable()` — the PE
-            // dispatcher reads this kind to build an integer input that
-            // clears to null on empty input (the "(unset)" path).
-            data-edit-kind="integer-nullable"
-            aria-label={`Edit rank for backlog item ${item.id}`}
-          >
-            <span aria-hidden="true">{"✎"}</span>
-          </button>
-        )}
+        <button
+          type="button"
+          className="record-view-pencil-button"
+          data-edit-action="open"
+          data-edit-field={fieldKey}
+          // ID-20.24: rank is `z.number().int().nullable()` — the PE
+          // dispatcher reads this kind to build an integer input that
+          // clears to null on empty input (the "(unset)" path).
+          data-edit-kind="integer-nullable"
+          aria-label={`Edit rank for backlog item ${item.id}`}
+        >
+          <span aria-hidden="true">{"✎"}</span>
+        </button>
       </td>
       <td>{item.track}</td>
       <td>{item.effort_estimate ?? "—"}</td>
       {/* {backlog-ui-delete}: whole-record delete. The SPA dispatcher keys on
           data-delete-action and resolves the id from the enclosing
-          data-backlog-row on the <tr>. Suppressed on read-only siblings. */}
-      {readOnly ? null : (
-        <td className="record-view-actions-cell">
-          <button
-            type="button"
-            className="record-view-delete-button"
-            data-delete-action
-            aria-label={`Delete backlog item ${item.id}`}
-          >
-            Delete
-          </button>
-        </td>
-      )}
+          data-backlog-row on the <tr>. */}
+      <td className="record-view-actions-cell">
+        <button
+          type="button"
+          className="record-view-delete-button"
+          data-delete-action
+          aria-label={`Delete backlog item ${item.id}`}
+        >
+          Delete
+        </button>
+      </td>
     </tr>
   );
 };

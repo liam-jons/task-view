@@ -23,6 +23,16 @@ describe("recordDeletePath", () => {
   test("URL-encodes ids carrying reserved characters", () => {
     expect(recordDeletePath("ID/1 2")).toBe("/api/ledger/record/ID%2F1%202");
   });
+
+  test("a slug routes the delete to the named sibling ledger", () => {
+    expect(recordDeletePath("45", "roadmap")).toBe(
+      "/api/ledger/roadmap/record/45",
+    );
+    // DELETE + PATCH share the slug-scoped per-record route on the server.
+    expect(recordDeletePath("45", "roadmap")).toBe(
+      recordPatchPath("45", "roadmap"),
+    );
+  });
 });
 
 describe("buildDeleteRequest", () => {

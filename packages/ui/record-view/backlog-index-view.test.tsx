@@ -6,7 +6,6 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { BacklogItem } from "@task-view/schemas/backlog";
 import { BacklogIndexView } from "./backlog-index-view";
-import { ReadOnlyProvider } from "./read-only-context";
 import {
   decodeBacklogFilters,
   encodeBacklogFilters,
@@ -335,31 +334,16 @@ describe("inv 10 — rank column, integer-input affordance, drag handle", () => 
     expect(html).toContain('data-supports-drag-reorder="true"');
   });
 
-  // backlog-drag-reorder SPEC §6 (DR-6): read-only sibling pages omit the
-  // drag handle entirely so reorder (which mutates `rank` — no sibling-write
-  // path, inv 43) is inert. Mirrors the already-gated rank pencil.
-  test("read-only sibling render omits the drag handle (DR-6)", () => {
+  test("each row renders a drag handle (editable on every page)", () => {
     const items = [
       mkItem({ id: "1", priority: "high", rank: 1 }),
       mkItem({ id: "2", priority: "high", rank: 2 }),
     ];
-    const readOnly = renderToStaticMarkup(
-      <ReadOnlyProvider readOnly={true}>
-        <BacklogIndexView items={items} filters={NO_FILTERS} />
-      </ReadOnlyProvider>,
-    );
-    // No drag handle reaches the served HTML → the reorder listeners have
-    // nothing to attach to.
-    expect(readOnly).not.toContain("data-drag-handle");
-    // And the rank pencil stays suppressed too (existing {20.29} behaviour).
-    expect(readOnly).not.toContain("data-edit-action");
-
-    // Editable (default, no provider) still renders the handle — regression
-    // guard so the omit is strictly read-only-scoped.
-    const editable = renderToStaticMarkup(
+    const html = renderToStaticMarkup(
       <BacklogIndexView items={items} filters={NO_FILTERS} />,
     );
-    expect(editable).toMatch(/data-drag-handle="1"/);
+    expect(html).toMatch(/data-drag-handle="1"/);
+    expect(html).toMatch(/data-drag-handle="2"/);
   });
 });
 

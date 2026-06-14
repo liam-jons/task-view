@@ -305,47 +305,31 @@ const TASK_LIST_WITH_TASK: KnownDetected = {
   },
 } as unknown as KnownDetected;
 
-describe("renderViewer — read-only sibling render ({20.29} SPEC §5 slice 6)", () => {
-  test("readOnly suppresses ALL edit affordances (no data-edit-*, no pencils)", () => {
+describe("renderViewer — sibling render is editable (editable-ledger-switch §3)", () => {
+  test("a switched-to sibling renders edit affordances (read-only model removed)", () => {
     const { status, html } = renderViewer({
       detected: TASK_LIST_WITH_TASK,
       search: new URLSearchParams("record=6"),
-      readOnly: true,
     });
     expect(status).toBe(200);
     expect(html).toContain('data-record-kind="task"');
     expect(html).toContain('data-record-id="6"');
     expect(html).toContain("Procurement task");
-    // Edit affordances fully suppressed.
-    expect(html).not.toContain("data-edit-action");
-    expect(html).not.toContain("data-edit-field");
-    expect(html).not.toContain("data-edit-kind");
-    expect(html).not.toContain("record-view-pencil-button");
-  });
-
-  test("editable (default) render still emits edit affordances", () => {
-    // Regression guard: the launched-ledger path is unchanged.
-    const { html } = renderViewer({
-      detected: TASK_LIST_WITH_TASK,
-      search: new URLSearchParams("record=6"),
-    });
+    // Every page is editable now — pencils + dispatcher hooks present.
     expect(html).toContain("data-edit-action");
     expect(html).toContain("data-edit-field");
   });
 
-  test("a roadmap theme rendered read-only resolves linked_tasks against sibling ids", () => {
+  test("a sibling roadmap theme resolves linked_tasks against sibling ids", () => {
     // Sibling task-list (id 6) + backlog (id 45) threaded → live cross-ledger
     // links, NOT (missing).
     const { status, html } = renderViewer({
       detected: ROADMAP_WITH_THEME,
       search: new URLSearchParams("record=10"),
-      readOnly: true,
       siblings: {
         tasks: (TASK_LIST_WITH_TASK as { data: { tasks: unknown[] } }).data
           .tasks as never,
-        backlogItems: [
-          { id: "45" } as never,
-        ],
+        backlogItems: [{ id: "45" } as never],
       },
     });
     expect(status).toBe(200);
@@ -354,35 +338,18 @@ describe("renderViewer — read-only sibling render ({20.29} SPEC §5 slice 6)",
     expect(html).toContain('data-cross-ledger="task-list"');
     expect(html).toContain('href="/?ledger=backlog&amp;record=45"');
     expect(html).not.toContain("(missing)");
-    // Read-only → no pencils on the theme either.
-    expect(html).not.toContain("data-edit-action");
   });
 
-  test("missing record id in a read-only sibling → 404 not-found body", () => {
+  test("missing record id in a sibling → 404 not-found body", () => {
     const { status, html } = renderViewer({
       detected: ROADMAP_WITH_THEME,
       search: new URLSearchParams("record=999"),
-      readOnly: true,
     });
     expect(status).toBe(404);
     expect(html).toContain('data-record-kind="not-found"');
   });
 
-  test("a read-only sibling page mounts the ledger banner (SPEC §5 slice 7)", () => {
-    const { html } = renderViewer({
-      detected: TASK_LIST_WITH_TASK,
-      search: new URLSearchParams("record=6"),
-      readOnly: true,
-      launchedSlug: "roadmap",
-    });
-    expect(html).toContain("data-ledger-banner");
-    // Sibling task-list is read-only; launched ledger is the roadmap.
-    expect(html).toContain("Task List");
-    expect(html).toContain("read-only");
-    expect(html).toContain("Back to launched ledger");
-  });
-
-  test("the editable launched-ledger page does NOT mount the banner", () => {
+  test("no page mounts a read-only ledger banner (banner removed)", () => {
     const { html } = renderViewer({
       detected: TASK_LIST_WITH_TASK,
       search: new URLSearchParams("record=6"),
@@ -426,8 +393,6 @@ describe("renderViewer — reverse appears-in-themes backlinks ({20.30})", () =>
     const { status, html } = renderViewer({
       detected: BACKLOG_WITH_ITEM,
       search: new URLSearchParams("record=45"),
-      readOnly: true,
-      launchedSlug: "roadmap",
       siblings: {
         roadmap: (ROADMAP_WITH_THEME as { data: unknown }).data as never,
       },
@@ -438,9 +403,6 @@ describe("renderViewer — reverse appears-in-themes backlinks ({20.30})", () =>
     expect(html).toContain('href="/?ledger=roadmap&amp;record=10"');
     expect(html).toContain('data-cross-ledger="roadmap"');
     expect(html).toContain("theme 10: Procurement intelligence");
-    // Read-only sibling render preserved (no edit affordances, banner shown).
-    expect(html).not.toContain("data-edit-action");
-    expect(html).toContain("data-ledger-banner");
   });
 
   test("a backlog page WITHOUT a roadmap sibling shows no backlink row", () => {
@@ -485,5 +447,44 @@ describe("renderViewer — in-page theme picker (OQ-3)", () => {
     });
     expect(html).toContain("data-theme-picker");
     expect(html).toContain('value="task-view" selected');
+  });
+});
+
+// ── editable-ledger-switch: ledger switcher mount (SPEC §5 slice 2) ──────────
+
+describe("renderViewer — ledger switcher (editable-ledger-switch SPEC §5 slice 2)", () => {
+  test("mounts the switcher when availableLedgers + activeSlug are threaded in", () => {
+    const { html } = renderViewer({
+      detected: BACKLOG_DETECTED,
+      search: new URLSearchParams(),
+      availableLedgers: ["task-list", "roadmap", "backlog"],
+      activeSlug: "backlog",
+    });
+    expect(html).toContain("data-ledger-switcher");
+    expect(html).toContain('data-active-ledger="backlog"');
+    // Editable switch targets for the siblings.
+    expect(html).toContain('href="/?ledger=task-list"');
+    expect(html).toContain('href="/?ledger=roadmap"');
+  });
+
+  test("no switcher when availableLedgers is absent (pure-SSR unit path)", () => {
+    const { html } = renderViewer({
+      detected: BACKLOG_DETECTED,
+      search: new URLSearchParams(),
+    });
+    expect(html).not.toContain("data-ledger-switcher");
+  });
+
+  test("the switcher sits before the record body", () => {
+    const { html } = renderViewer({
+      detected: BACKLOG_DETECTED,
+      search: new URLSearchParams(),
+      availableLedgers: ["backlog"],
+      activeSlug: "backlog",
+    });
+    const switcherIdx = html.indexOf("data-ledger-switcher");
+    const bodyIdx = html.indexOf('data-record-kind="backlog-index"');
+    expect(switcherIdx).toBeGreaterThan(-1);
+    expect(switcherIdx).toBeLessThan(bodyIdx);
   });
 });

@@ -88,30 +88,74 @@ import {
   nextSearchForQuery,
   nextSortForField,
 } from "../../../packages/ui/record-view/url-state";
+import type { LedgerSlug } from "../../../packages/ui/record-view/anchors";
 
 /** Selector for the container that holds both a value + its affordance. */
 const CONTAINER_SELECTOR =
   "td, .record-view-editable-field, [data-edit-container]";
 
-// ── mtime tracking (optimistic concurrency, TECH §5.4) ──────────────────────
+// ── active ledger + mtime tracking (optimistic concurrency, TECH §5.4) ───────
 //
-// The viewer's baseMtime is fetched lazily from GET /api/ledger on first
-// save (the SSR HTML does not embed it). After each successful PATCH we
-// adopt the returned newMtime so subsequent edits use the latest base.
+// editable-ledger-switch §2: the viewer edits whichever sibling the switcher
+// selected — the `?ledger=<slug>` target, echoed in the SSR
+// `[data-active-ledger]` hook. Every write + mtime fetch is routed to that slug
+// via the slug write seam (`/api/ledger/<slug>/…`), and each ledger's base
+// mtime is tracked separately so an edit to one never 409s against another's.
 
-let baseMtime: string | null = null;
+/** True for the three viewer-renderable ledger slugs. */
+function isLedgerSlug(s: string | null | undefined): s is LedgerSlug {
+  return s === "task-list" || s === "roadmap" || s === "backlog";
+}
 
-async function ensureBaseMtime(): Promise<string> {
-  if (baseMtime !== null) return baseMtime;
-  const res = await fetch("/api/ledger", {
+/**
+ * The slug of the ACTIVE editable ledger for this page: the switcher's
+ * `[data-active-ledger]` hook (present on every served page), falling back to
+ * the `?ledger=` query param. `undefined` when neither is present (pure-SSR /
+ * tests) → bare launched-ledger routes (back-compat).
+ */
+export function activeSlug(): LedgerSlug | undefined {
+  const fromDom = document
+    .querySelector("[data-active-ledger]")
+    ?.getAttribute("data-active-ledger");
+  if (isLedgerSlug(fromDom)) return fromDom;
+  const fromQuery = new URLSearchParams(location.search).get("ledger");
+  if (isLedgerSlug(fromQuery)) return fromQuery;
+  return undefined;
+}
+
+/** The slug-routed JSON ledger endpoint (bare when launched / unknown). */
+function ledgerApiPath(slug: LedgerSlug | undefined): string {
+  return slug ? `/api/ledger/${slug}` : "/api/ledger";
+}
+
+// Per-slug base mtime. The SSR HTML does not embed it; it is fetched lazily on
+// first save (per slug) and re-adopted from each PATCH/DELETE response, so two
+// ledgers edited in one session keep independent bases.
+const baseMtimeBySlug = new Map<string, string>();
+
+export async function ensureBaseMtime(
+  slug: LedgerSlug | undefined = activeSlug(),
+): Promise<string> {
+  const key = slug ?? "";
+  const cached = baseMtimeBySlug.get(key);
+  if (cached !== undefined) return cached;
+  const res = await fetch(ledgerApiPath(slug), {
     headers: { accept: "application/json" },
   });
   const body = (await res.json()) as { ok?: boolean; mtime?: string };
   if (!body.ok || typeof body.mtime !== "string") {
     throw new Error("could not resolve ledger mtime");
   }
-  baseMtime = body.mtime;
-  return baseMtime;
+  baseMtimeBySlug.set(key, body.mtime);
+  return body.mtime;
+}
+
+/** Adopt a fresh base mtime for a ledger after a write (default: active). */
+function adoptMtime(
+  mtime: string,
+  slug: LedgerSlug | undefined = activeSlug(),
+): void {
+  baseMtimeBySlug.set(slug ?? "", mtime);
 }
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────
@@ -609,7 +653,7 @@ async function saveEditor(container: HTMLElement): Promise<void> {
 
   let json: unknown;
   try {
-    const res = await fetch(recordPatchPath(active.recordId), {
+    const res = await fetch(recordPatchPath(active.recordId, activeSlug()), {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -631,7 +675,7 @@ async function saveEditor(container: HTMLElement): Promise<void> {
       // Both persisted the canonical → adopt newMtime + re-render the
       // value in place. mirror-regen-failed is SOFT (TECH §5.4): mirrors
       // may be stale but the edit landed.
-      if (outcome.newMtime) baseMtime = outcome.newMtime;
+      if (outcome.newMtime) adoptMtime(outcome.newMtime);
       commitDisplay(container, active, rawValue);
       activeEdits.delete(container);
       break;
@@ -644,7 +688,7 @@ async function saveEditor(container: HTMLElement): Promise<void> {
     case "mtime-conflict":
       // 409 — canonical NOT mutated. Show the conflict hint inline; keep
       // the draft. Re-base so a retry can succeed (PRODUCT inv 37).
-      if (outcome.currentMtime) baseMtime = outcome.currentMtime;
+      if (outcome.currentMtime) adoptMtime(outcome.currentMtime);
       renderInlineError(container, active, outcome.message);
       break;
     case "network-error":
@@ -815,7 +859,7 @@ async function scanBacklogReferences(id: string): Promise<BacklogReferences> {
     hasReferences: false,
   };
   try {
-    const res = await fetch("/api/ledger", {
+    const res = await fetch(ledgerApiPath(activeSlug()), {
       headers: { accept: "application/json" },
     });
     const body = (await res.json()) as {
@@ -970,7 +1014,7 @@ async function deleteBacklogRecord(button: HTMLElement): Promise<void> {
 
   let json: unknown;
   try {
-    const res = await fetch(recordDeletePath(recordId), {
+    const res = await fetch(recordDeletePath(recordId, activeSlug()), {
       method: "DELETE",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(buildDeleteRequest(base)),
@@ -989,7 +1033,7 @@ async function deleteBacklogRecord(button: HTMLElement): Promise<void> {
     case "ok":
       // Canonical persisted (mirror regen ran server-side; SOFT regen failure
       // collapses to ok). Adopt the new mtime so later edits re-base correctly.
-      if (outcome.newMtime) baseMtime = outcome.newMtime;
+      if (outcome.newMtime) adoptMtime(outcome.newMtime);
       if (isItemPage(button)) {
         window.location.assign("/");
       } else {
@@ -1007,7 +1051,7 @@ async function deleteBacklogRecord(button: HTMLElement): Promise<void> {
       break;
     case "mtime-conflict":
       // 409 — canonical NOT mutated. Adopt currentMtime so a retry can succeed.
-      if (outcome.currentMtime) baseMtime = outcome.currentMtime;
+      if (outcome.currentMtime) adoptMtime(outcome.currentMtime);
       setDeleteError(button, outcome.message);
       break;
     case "schema-error":
@@ -1033,14 +1077,11 @@ function onClick(event: MouseEvent): void {
     return;
   }
 
-  // backlog-ui-delete: whole-record delete affordance. Banner-guarded
-  // (defence-in-depth, same posture as wireBacklogReorder) — a read-only
-  // sibling page never emits the button, but never wire a mutation on one
-  // even if it somehow appears.
+  // backlog-ui-delete: whole-record delete affordance. Every page is editable
+  // now (editable-ledger-switch §3), so the delete dispatches unconditionally.
   const deleteEl = target.closest<HTMLElement>("[data-delete-action]");
   if (deleteEl) {
     event.preventDefault();
-    if (document.querySelector("[data-ledger-banner]")) return;
     void deleteBacklogRecord(deleteEl);
     return;
   }
@@ -1289,9 +1330,7 @@ export function wireExcludeDoneToggle(): void {
 // copy-paste in the row's cells). Per SPEC §7.2 `draggable` only means something
 // with JS listeners attached, so coupling them is correct, and it keeps DR-6
 // trivial (read-only / no-wire ⇒ no handle ⇒ nothing draggable). Feature-detected
-// off `[data-supports-drag-reorder="true"]`
-// with a banner-guard: a read-only sibling (`[data-ledger-banner]`) is NEVER
-// wired (SPEC §6.2, DR-6).
+// off `[data-supports-drag-reorder="true"]`.
 
 /** CSS classes for the transient drag visual states (SPEC §8.1). */
 const ROW_DRAGGING_CLASS = "record-view-row-dragging";
@@ -1465,7 +1504,7 @@ async function commitReorder(
   try {
     // SPEC §4.3: URL recordId = the dragged row's id (the walk ignores it; the
     // per-fieldPath item ids drive the writes — §0.6).
-    const res = await fetch(recordPatchPath(draggedId), {
+    const res = await fetch(recordPatchPath(draggedId, activeSlug()), {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -1489,7 +1528,7 @@ async function commitReorder(
     case "ok":
     case "mirror-regen-failed": {
       // SOFT for mirror-regen-failed: canonical written, live order correct.
-      if (outcome.newMtime) baseMtime = outcome.newMtime;
+      if (outcome.newMtime) adoptMtime(outcome.newMtime);
       // SPEC §8.4: write the new dense ranks in place so a later pencil-open
       // reads fresh ranks.
       for (const { id, rank } of changed) updateRowRankCell(table, id, rank);
@@ -1497,14 +1536,14 @@ async function commitReorder(
       onCommitted(rowIdSequence(table));
       // SPEC §0.7: fire-and-forget full mirror regen. A failed regen logs to
       // console only — NO rollback, NO user-facing error (soft follow-up).
-      void fireRegen(baseMtime);
+      void fireRegen(outcome.newMtime ?? base);
       break;
     }
     case "mtime-conflict": {
       // 409 — canonical NOT mutated. Roll back to last-known-good order, adopt
       // the returned currentMtime as the new base so a retry can succeed.
       restoreRowOrder(table, lastGoodOrder);
-      if (outcome.currentMtime) baseMtime = outcome.currentMtime;
+      if (outcome.currentMtime) adoptMtime(outcome.currentMtime);
       setReorderError(table, outcome.message);
       announceReorder(
         table,
@@ -1536,7 +1575,7 @@ async function commitReorder(
  */
 async function fireRegen(mtime: string | null): Promise<void> {
   try {
-    const res = await fetch("/api/ledger/regen", {
+    const res = await fetch(`${ledgerApiPath(activeSlug())}/regen`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(mtime ? { baseMtime: mtime } : {}),
@@ -1894,13 +1933,12 @@ function rankOfRow(row: HTMLElement): number | null {
 }
 
 /**
- * Wire backlog drag-reorder on the launched (editable) page. Feature-detects
- * `[data-backlog-table][data-supports-drag-reorder="true"]` and refuses to wire
- * anything on a read-only sibling (`[data-ledger-banner]` present) — DR-6.
+ * Wire backlog drag-reorder on every page. Feature-detects
+ * `[data-backlog-table][data-supports-drag-reorder="true"]`; every ledger is
+ * editable now (editable-ledger-switch §3), so there is no read-only page to
+ * skip.
  */
 function wireBacklogReorder(): void {
-  // Banner-guard (SPEC §6.2, defence-in-depth): never wire on a read-only page.
-  if (document.querySelector("[data-ledger-banner]")) return;
   const tables = document.querySelectorAll<HTMLElement>(
     '[data-backlog-table][data-supports-drag-reorder="true"]',
   );

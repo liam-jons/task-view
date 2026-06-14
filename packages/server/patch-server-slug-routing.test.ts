@@ -428,3 +428,85 @@ describe("loopback-only binding unchanged by U9 (inv 55)", () => {
     expect(handle.url).toContain("127.0.0.1");
   });
 });
+
+// ── editable-ledger-switch: GET / switch is editable + slug-routed writes land ─
+//
+// End-to-end glue (editable-ledger-switch SPEC §5 slice 5): launch on one
+// ledger, switch the active editable target in the browser, and confirm the
+// write lands in the switched-to sibling while the others stay untouched. Ties
+// the viewer (switcher + editable siblings) to the slug write seam.
+
+describe("editable-ledger-switch — editable switch + slug-routed writes (E2E)", () => {
+  test("launched on task-list, /?ledger=roadmap is EDITABLE with a switcher (no banner)", async () => {
+    const paths = await writeAllFour();
+    handle = startPatchServer({ ledgerPath: paths.taskList });
+
+    const res = await fetch(`${handle.url}/?ledger=roadmap&record=10`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('data-record-kind="roadmap-theme"');
+    expect(html).toContain('data-record-id="10"');
+    // Switched-to sibling is editable — edit affordances present, banner gone.
+    expect(html).toContain("data-edit-action");
+    expect(html).not.toContain("data-ledger-banner");
+    // The switcher is mounted, marking roadmap active, with task-list + backlog
+    // as switch targets (all present in the launch directory; umbrellas hidden).
+    expect(html).toContain("data-ledger-switcher");
+    expect(html).toContain('data-active-ledger="roadmap"');
+    expect(html).toContain('href="/?ledger=task-list"');
+    expect(html).toContain('href="/?ledger=backlog"');
+  });
+
+  test("a slug-routed PATCH from the switched-to roadmap lands in roadmap; task-list untouched", async () => {
+    const paths = await writeAllFour();
+    handle = startPatchServer({ ledgerPath: paths.taskList });
+
+    // The client, viewing /?ledger=roadmap, writes via
+    // recordPatchPath(id,"roadmap") → /api/ledger/roadmap/record/10.
+    const res = await fetch(`${handle.url}/api/ledger/roadmap/record/10`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        baseMtime: await mtimeOf(paths.roadmap),
+        patches: [
+          {
+            fieldPath: ["themes", "10", "description"],
+            newValue: "Edited via switch.",
+          },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(await readFile(paths.roadmap, "utf8")).toContain("Edited via switch.");
+    // The launch ledger (task-list) is untouched — the slug routed, not aliased.
+    expect(await readFile(paths.taskList, "utf8")).not.toContain(
+      "Edited via switch.",
+    );
+  });
+
+  test("switching the active target to backlog routes the write into the backlog", async () => {
+    const paths = await writeAllFour();
+    handle = startPatchServer({ ledgerPath: paths.taskList });
+
+    // Viewer GET confirms backlog is editable when switched to.
+    const view = await fetch(`${handle.url}/?ledger=backlog&record=101`);
+    expect(view.status).toBe(200);
+    const html = await view.text();
+    expect(html).toContain('data-active-ledger="backlog"');
+    expect(html).toContain("data-edit-action");
+
+    // The slug-routed write lands in the backlog; the launch task-list is clear.
+    const res = await fetch(`${handle.url}/api/ledger/backlog/record/101`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        baseMtime: await mtimeOf(paths.backlog),
+        patches: [{ fieldPath: ["items", "101", "status"], newValue: "blocked" }],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const backlog = JSON.parse(await readFile(paths.backlog, "utf8")) as {
+      items: Array<{ id: string; status: string }>;
+    };
+    expect(backlog.items[0].status).toBe("blocked");
+    expect(await readFile(paths.taskList, "utf8")).not.toContain("blocked");
+  });
+});

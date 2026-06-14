@@ -403,8 +403,19 @@ async function handleGetRoot(
   );
   const requestedSlug = decodeLedgerParam(search);
 
+  // editable-ledger-switch §2: the editable ledger switcher lists every
+  // viewer-renderable sibling in the launch directory; both the launched and
+  // the switched-to renders mount it.
+  const availableLedgers = await scanViewerLedgers(ctx.ledgerPath);
+
   if (requestedSlug !== null && requestedSlug !== launchedSlug) {
-    return renderSiblingLedger(ctx, requestedSlug, launchedSlug, search, styles);
+    return renderSiblingLedger(
+      ctx,
+      requestedSlug,
+      search,
+      styles,
+      availableLedgers,
+    );
   }
 
   // Launched ledger (or explicit self-slug): editable, with siblings threaded
@@ -416,6 +427,8 @@ async function handleGetRoot(
     clientScriptSrc: CLIENT_BUNDLE_ROUTE,
     styles,
     siblings,
+    availableLedgers,
+    activeSlug: canonical.detected.kind,
   });
   return new Response(result.html, {
     status: result.status,
@@ -465,8 +478,36 @@ async function readSiblingLedgers(
 }
 
 /**
- * {20.29}: render a SIBLING ledger read-only as a cross-ledger nav target
- * (SPEC §5 slice 6). Resolves the sibling path by `document_name` in the
+ * editable-ledger-switch §2: the viewer-renderable ledger slugs present in the
+ * launch directory, for the editable ledger switcher. Mirrors
+ * `handleGetHealth`'s scan but narrows to the THREE slugs with a viewer surface
+ * — umbrellas/retro are routed-but-not-navigable (SPEC OQ-4), so they never
+ * appear in the switcher.
+ */
+async function scanViewerLedgers(
+  ledgerPath: string,
+): Promise<("task-list" | "roadmap" | "backlog")[]> {
+  const dir = resolve(dirname(ledgerPath));
+  const scan = await scanForLedgers(dir);
+  const names =
+    scan.kind === "one"
+      ? [scan.documentName]
+      : scan.kind === "multiple"
+        ? scan.paths.map((p) => scan.perPathName[p])
+        : [];
+  const slugs = new Set<"task-list" | "roadmap" | "backlog">();
+  for (const name of names) {
+    const slug = slugForDocumentName(name);
+    if (slug === "task-list" || slug === "roadmap" || slug === "backlog") {
+      slugs.add(slug);
+    }
+  }
+  return [...slugs];
+}
+
+/**
+ * editable-ledger-switch: render a switched-to SIBLING ledger EDITABLE — the
+ * slug write seam routes its writes. Resolves the sibling path by name in the
  * launch dir; a missing sibling FILE or a read/parse failure is a navigation
  * dead-end → 404 HTML (NOT 500 — the launched server is healthy). A missing
  * RECORD id inside a resolved sibling falls through to renderViewer's
@@ -475,9 +516,9 @@ async function readSiblingLedgers(
 async function renderSiblingLedger(
   ctx: RequestContext,
   slug: NonNullable<ReturnType<typeof decodeLedgerParam>>,
-  launchedSlug: ReturnType<typeof slugForDocumentName>,
   search: URLSearchParams,
   styles: Awaited<ReturnType<typeof getViewerStyles>>,
+  availableLedgers: readonly ("task-list" | "roadmap" | "backlog")[],
 ): Promise<Response> {
   const documentName = documentNameForSlug(slug);
   if (documentName === null) {
@@ -513,17 +554,9 @@ async function renderSiblingLedger(
     search,
     clientScriptSrc: CLIENT_BUNDLE_ROUTE,
     styles,
-    readOnly: true,
     siblings,
-    // The launched document can itself be an umbrellas or retro doc (neither
-    // has a viewer slug in the ui banner vocabulary) — omit the banner
-    // back-link in that case.
-    launchedSlug:
-      launchedSlug === null ||
-      launchedSlug === "umbrellas" ||
-      launchedSlug === "retro"
-        ? undefined
-        : launchedSlug,
+    availableLedgers,
+    activeSlug: canonical.detected.kind,
   });
   return new Response(result.html, {
     status: result.status,

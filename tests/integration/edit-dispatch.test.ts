@@ -209,4 +209,17 @@ describe("recordPatchPath — /api/ledger/record/:recordId", () => {
   test("encodes reserved characters", () => {
     expect(recordPatchPath("a/b")).toBe("/api/ledger/record/a%2Fb");
   });
+
+  test("a slug routes the write to the named sibling ledger", () => {
+    expect(recordPatchPath("20", "roadmap")).toBe(
+      "/api/ledger/roadmap/record/20",
+    );
+    expect(recordPatchPath("ID-30", "backlog")).toBe(
+      "/api/ledger/backlog/record/ID-30",
+    );
+  });
+
+  test("omitting the slug preserves the bare back-compat route", () => {
+    expect(recordPatchPath("20")).toBe("/api/ledger/record/20");
+  });
 });

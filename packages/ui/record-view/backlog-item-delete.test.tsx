@@ -9,7 +9,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { BacklogItem } from "@task-view/schemas/backlog";
 import { buildLedgerContext, type NavStripData } from "./types";
 import { BacklogItemView } from "./backlog-item-view";
-import { ReadOnlyProvider } from "./read-only-context";
 
 const NAV: NavStripData = {
   prevHref: null,
@@ -51,14 +50,4 @@ describe("backlog item page — delete affordance", () => {
     expect(html).toContain('data-record-id="45"');
   });
 
-  test("suppresses the delete affordance under a read-only render (DR-6)", () => {
-    const item = mkItem();
-    const ledger = buildLedgerContext({ backlogItems: [item] });
-    const html = renderToStaticMarkup(
-      <ReadOnlyProvider readOnly={true}>
-        <BacklogItemView item={item} ledger={ledger} nav={NAV} />
-      </ReadOnlyProvider>,
-    );
-    expect(html).not.toContain("data-delete-action");
-  });
 });

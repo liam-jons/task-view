@@ -50,8 +50,7 @@ import {
   recordRouteHref,
 } from "@task-view/ui/record-view/anchors";
 import { ThemePicker } from "@task-view/ui/record-view/theme-picker";
-import { ReadOnlyProvider } from "@task-view/ui/record-view/read-only-context";
-import { LedgerBanner } from "@task-view/ui/record-view/ledger-banner";
+import { LedgerSwitcher } from "@task-view/ui/record-view/ledger-switcher";
 import type { LedgerSlug } from "@task-view/ui/record-view/anchors";
 import type { DetectSchemaResult } from "./detect-schema";
 import type { Roadmap } from "@task-view/schemas/roadmap";
@@ -98,13 +97,6 @@ export interface RenderViewerInput {
    */
   styles?: ViewerStylesInput;
   /**
-   * {20.29}: render the page READ-ONLY. Set when serving a SIBLING ledger
-   * (a cross-ledger nav target) — suppresses ALL edit affordances (no
-   * `FieldPencil`, no `data-edit-*`) so the launched ledger stays the single
-   * mutation target (SPEC §3). Defaults to false (editable launched ledger).
-   */
-  readOnly?: boolean;
-  /**
    * {20.29}: parsed SIBLING ledger records threaded in so outbound
    * cross-ledger links on the CURRENT page can compute `exists` against the
    * sibling id sets (SPEC §4 approach A). For a roadmap theme page these
@@ -115,12 +107,18 @@ export interface RenderViewerInput {
    */
   siblings?: SiblingLedgers;
   /**
-   * {20.29}: the slug of the LAUNCHED ledger (the editable one). Threaded in
-   * when `readOnly` so the cross-ledger banner can name it and offer a
-   * "Back to launched ledger" link (SPEC §5 slice 7). Omitted on the
-   * launched-ledger path (no banner is rendered there).
+   * editable-ledger-switch §2: the viewer-renderable ledger slugs present in
+   * the launch directory. Threaded in by `handleGetRoot` (from
+   * `scanForLedgers`) to render the editable ledger switcher on every page.
+   * Omitted by pure-SSR unit callers → no switcher mounted.
    */
-  launchedSlug?: LedgerSlug;
+  availableLedgers?: readonly LedgerSlug[];
+  /**
+   * editable-ledger-switch §2: the slug of the ACTIVE (currently-rendered)
+   * ledger — the launched ledger on the bare path, or the `?ledger=` target on
+   * a switch. Marks the active entry in the switcher.
+   */
+  activeSlug?: LedgerSlug;
 }
 
 /** Parsed sibling-ledger records for cross-ledger `exists` resolution. */
@@ -145,47 +143,37 @@ export interface RenderViewerResult {
 
 export function renderViewer(input: RenderViewerInput): RenderViewerResult {
   const body = renderBody(input);
-  // {20.29}: on a read-only sibling page, prepend the cross-ledger banner
-  // (SPEC §5 slice 7) so the reader knows which ledger they are in and can
-  // return to the launched (editable) ledger. The sibling slug is the kind
-  // of the ledger being rendered; the launched slug is threaded in.
-  const bannerMarkup =
-    input.readOnly === true && input.launchedSlug !== undefined
+  // editable-ledger-switch §2: mount the editable ledger switcher on every
+  // page when the launch-directory registry is threaded in (handleGetRoot
+  // supplies it; pure-SSR unit callers omit it → no switcher mounted).
+  const switcherMarkup =
+    input.availableLedgers &&
+    input.availableLedgers.length > 0 &&
+    input.activeSlug !== undefined
       ? renderToStaticMarkup(
-          <LedgerBanner
-            siblingSlug={kindToSlug(input.detected.kind)}
-            launchedSlug={input.launchedSlug}
+          <LedgerSwitcher
+            available={input.availableLedgers}
+            active={input.activeSlug}
           />,
         )
       : "";
   return {
     status: body.status,
-    html: wrapHtml(bannerMarkup + body.markup, input.clientScriptSrc, input.styles),
+    html: wrapHtml(
+      switcherMarkup + body.markup,
+      input.clientScriptSrc,
+      input.styles,
+    ),
   };
 }
 
-/** Map a known ledger kind to its nav slug ({20.29}). */
-function kindToSlug(kind: KnownDetected["kind"]): LedgerSlug {
-  return kind === "task-list"
-    ? "task-list"
-    : kind === "roadmap"
-      ? "roadmap"
-      : "backlog";
-}
-
 /**
- * Wrap a record body in the read-only provider when `readOnly`, so every
- * descendant `FieldPencil` / inline editor suppresses itself ({20.29}).
- * On the editable launched-ledger path this is a no-op passthrough.
+ * Render a record body to static markup. Every page is editable since the
+ * read-only-sibling model was removed (editable-ledger-switch §3) — the slug
+ * write seam makes any switched-to sibling a first-class mutation target.
  */
-function renderRecordMarkup(
-  node: React.ReactElement,
-  readOnly: boolean,
-): string {
-  if (!readOnly) return renderToStaticMarkup(node);
-  return renderToStaticMarkup(
-    <ReadOnlyProvider readOnly={true}>{node}</ReadOnlyProvider>,
-  );
+function renderRecordMarkup(node: React.ReactElement): string {
+  return renderToStaticMarkup(node);
 }
 
 /**
@@ -214,7 +202,6 @@ interface RenderedBody {
 function renderBody({
   detected,
   search,
-  readOnly = false,
   siblings,
 }: RenderViewerInput): RenderedBody {
   const recordParam = search.get("record");
@@ -228,7 +215,6 @@ function renderBody({
         status: 200,
         markup: renderRecordMarkup(
           <TaskListIndexView tasks={tasks} filters={filters} sort={sort} />,
-          readOnly,
         ),
       };
     }
@@ -242,7 +228,6 @@ function renderBody({
       status: 200,
       markup: renderRecordMarkup(
         <TaskListView task={task} ledger={ledger} nav={nav} />,
-        readOnly,
       ),
     };
   }
@@ -255,7 +240,6 @@ function renderBody({
         status: 200,
         markup: renderRecordMarkup(
           <BacklogIndexView items={items} filters={filters} />,
-          readOnly,
         ),
       };
     }
@@ -274,7 +258,6 @@ function renderBody({
       status: 200,
       markup: renderRecordMarkup(
         <BacklogItemView item={item} ledger={ledger} nav={nav} />,
-        readOnly,
       ),
     };
   }
@@ -291,7 +274,6 @@ function renderBody({
           filters={filters}
           sort={sort}
         />,
-        readOnly,
       ),
     };
   }
@@ -312,7 +294,6 @@ function renderBody({
     status: 200,
     markup: renderRecordMarkup(
       <RoadmapThemeView theme={theme} ledger={ledger} nav={nav} />,
-      readOnly,
     ),
   };
 }

@@ -1269,7 +1269,7 @@ describe("PATCH end-to-end — atomic write integrity (PRODUCT inv 36)", () => {
 // ── {20.29} GET / cross-ledger nav (SPEC §5 slice 6) ─────────────────────────
 
 describe("GET / — cross-ledger nav ({20.29} SPEC §5 slice 6)", () => {
-  test("launched on roadmap, /?ledger=task-list&record=20 → 200 read-only task", async () => {
+  test("launched on roadmap, /?ledger=task-list&record=20 → 200 editable sibling task", async () => {
     // All three siblings co-located in the launch dir (the real KH layout).
     await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
     await writeFixtureTaskList(join(testDir, "task-list.json"));
@@ -1285,16 +1285,16 @@ describe("GET / — cross-ledger nav ({20.29} SPEC §5 slice 6)", () => {
     expect(html).toContain('data-record-kind="task"');
     expect(html).toContain('data-record-id="20"');
     expect(html).toContain("Per-Task mirror"); // real Task 20 title
-    // Read-only: no edit affordances on the sibling. (The bare class name
-    // appears in the inlined stylesheet, so assert on the actual button
-    // markup / the dispatcher hooks instead.)
-    expect(html).not.toContain("data-edit-action");
-    expect(html).not.toContain("data-edit-field");
-    expect(html).not.toContain('class="record-view-pencil-button"');
-    // Read-only banner naming the launched (roadmap) + sibling (task list).
-    expect(html).toContain("data-ledger-banner");
-    expect(html).toContain("Back to launched ledger");
-    expect(html).toContain("Roadmap"); // launched ledger named
+    // {editable-ledger-switch} The switched-to sibling is EDITABLE — edit
+    // affordances present, exactly as on the launched ledger (the slug write
+    // seam routes its writes to the sibling). The read-only sibling banner is
+    // gone; siblings are first-class editable targets now.
+    expect(html).toContain("data-edit-action");
+    expect(html).not.toContain("data-ledger-banner");
+    expect(html).not.toContain("Back to launched ledger");
+    // The editable ledger switcher is mounted, marking the switched-to sibling.
+    expect(html).toContain("data-ledger-switcher");
+    expect(html).toContain('data-active-ledger="task-list"');
   });
 
   test("launched on task-list, /?ledger=roadmap&record=10 → 200 theme content", async () => {
@@ -1359,6 +1359,9 @@ describe("GET / — cross-ledger nav ({20.29} SPEC §5 slice 6)", () => {
     expect(html).toContain('data-record-id="10"');
     // Launched ledger is editable → pencils present.
     expect(html).toContain("data-edit-action");
+    // The switcher is mounted on the launched page too, marking it active.
+    expect(html).toContain("data-ledger-switcher");
+    expect(html).toContain('data-active-ledger="roadmap"');
   });
 
   test("?ledger=roadmap on a roadmap launch is identical to bare ?record (self)", async () => {
@@ -1409,7 +1412,7 @@ describe("GET / — reverse appears-in-themes backlinks ({20.30})", () => {
     expect(html).toContain("theme 10: Procurement intelligence");
   });
 
-  test("following that backlink (/?ledger=roadmap&record=10) lands on the theme, read-only", async () => {
+  test("following that backlink (/?ledger=roadmap&record=10) lands on the theme, editable", async () => {
     await writeFixtureBacklog(join(testDir, "product-backlog.json"));
     await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
     handle = startPatchServer({
@@ -1422,9 +1425,10 @@ describe("GET / — reverse appears-in-themes backlinks ({20.30})", () => {
     expect(html).toContain('data-record-kind="roadmap-theme"');
     expect(html).toContain('data-record-id="10"');
     expect(html).toContain("Procurement intelligence");
-    // Sibling roadmap is read-only; launched ledger is the backlog.
-    expect(html).toContain("data-ledger-banner");
-    expect(html).not.toContain("data-edit-action");
+    // {editable-ledger-switch} The switched-to sibling roadmap is EDITABLE;
+    // the read-only banner is gone.
+    expect(html).toContain("data-edit-action");
+    expect(html).not.toContain("data-ledger-banner");
   });
 
   test("launched on backlog WITHOUT a roadmap sibling → no backlink row", async () => {
