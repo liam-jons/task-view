@@ -78,6 +78,27 @@ export function crossLedgerRecordHref(
 }
 
 /**
+ * Intra-ledger record href that PRESERVES the active sibling selection.
+ *
+ * Record / index-row / nav-strip links are static SSR anchors with no
+ * client-side click interception, so a bare `/?record=<id>` drops the page's
+ * `?ledger=<slug>` and the server falls back to the LAUNCHED ledger (opening
+ * the wrong record). When a sibling is the active editable target
+ * (`activeSlug` set — i.e. the page URL carries `?ledger=<slug>`), emit the
+ * slug-qualified form so the link resolves within that sibling. With no active
+ * slug (launched ledger / no `?ledger=`), it stays byte-for-byte the bare
+ * back-compat form (`/?record=<id>`).
+ */
+export function activeRecordHref(
+  recordId: string,
+  activeSlug?: LedgerSlug | null,
+): string {
+  return activeSlug
+    ? crossLedgerRecordHref(activeSlug, recordId)
+    : recordRouteHref(recordId);
+}
+
+/**
  * In-page anchor id for an index row (`record-20`). Emitted as the `id`
  * attribute of each index `<tr>` AND used as the fragment of the record's
  * "Back to …" link, so returning from a record scrolls the index back to the

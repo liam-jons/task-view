@@ -41,13 +41,14 @@ import {
 } from "@task-view/ui/record-view/types";
 import {
   decodeBacklogFilters,
+  decodeLedgerParam,
   decodeRoadmapFilters,
   decodeSort,
   decodeTaskListFilters,
 } from "@task-view/ui/record-view/url-state";
 import {
+  activeRecordHref,
   indexHrefWithAnchor,
-  recordRouteHref,
 } from "@task-view/ui/record-view/anchors";
 import { ThemePicker } from "@task-view/ui/record-view/theme-picker";
 import { LedgerSwitcher } from "@task-view/ui/record-view/ledger-switcher";
@@ -205,6 +206,11 @@ function renderBody({
   siblings,
 }: RenderViewerInput): RenderedBody {
   const recordParam = search.get("record");
+  // editable-ledger-switch fix: preserve the page's active `?ledger=<slug>` on
+  // every intra-ledger nav link (index rows, dep links, prev/next/back) so a
+  // switched-to sibling doesn't silently fall back to the launched ledger.
+  // `null` on the launched path (no `?ledger=`) → bare back-compat hrefs.
+  const activeSlug = decodeLedgerParam(search);
 
   if (detected.kind === "task-list") {
     const tasks = detected.data.tasks;
@@ -214,7 +220,12 @@ function renderBody({
       return {
         status: 200,
         markup: renderRecordMarkup(
-          <TaskListIndexView tasks={tasks} filters={filters} sort={sort} />,
+          <TaskListIndexView
+            tasks={tasks}
+            filters={filters}
+            sort={sort}
+            activeSlug={activeSlug}
+          />,
         ),
       };
     }
@@ -223,11 +234,16 @@ function renderBody({
     // {20.29}: thread the sibling roadmap so the capability_theme chip
     // resolves a title (SPEC §6).
     const ledger = buildLedgerContext({ tasks, roadmap: siblings?.roadmap });
-    const nav = computeTaskNav(tasks, task);
+    const nav = computeTaskNav(tasks, task, activeSlug);
     return {
       status: 200,
       markup: renderRecordMarkup(
-        <TaskListView task={task} ledger={ledger} nav={nav} />,
+        <TaskListView
+          task={task}
+          ledger={ledger}
+          nav={nav}
+          activeSlug={activeSlug}
+        />,
       ),
     };
   }
@@ -239,7 +255,11 @@ function renderBody({
       return {
         status: 200,
         markup: renderRecordMarkup(
-          <BacklogIndexView items={items} filters={filters} />,
+          <BacklogIndexView
+            items={items}
+            filters={filters}
+            activeSlug={activeSlug}
+          />,
         ),
       };
     }
@@ -253,11 +273,16 @@ function renderBody({
       backlogItems: items,
       roadmap: siblings?.roadmap,
     });
-    const nav = computeBacklogNav(items, item);
+    const nav = computeBacklogNav(items, item, activeSlug);
     return {
       status: 200,
       markup: renderRecordMarkup(
-        <BacklogItemView item={item} ledger={ledger} nav={nav} />,
+        <BacklogItemView
+          item={item}
+          ledger={ledger}
+          nav={nav}
+          activeSlug={activeSlug}
+        />,
       ),
     };
   }
@@ -273,6 +298,7 @@ function renderBody({
           roadmap={detected.data}
           filters={filters}
           sort={sort}
+          activeSlug={activeSlug}
         />,
       ),
     };
@@ -289,7 +315,7 @@ function renderBody({
 
   const theme = themes.find((t) => t.id === recordParam);
   if (!theme) return renderNotFound("roadmap-theme", recordParam);
-  const nav = computeThemeNav(themes, theme);
+  const nav = computeThemeNav(themes, theme, activeSlug);
   return {
     status: 200,
     markup: renderRecordMarkup(
@@ -339,16 +365,23 @@ function renderNotFound(kind: string, requested: string): RenderedBody {
   return { status: 404, markup };
 }
 
-function computeTaskNav(tasks: readonly Task[], current: Task): NavStripData {
+function computeTaskNav(
+  tasks: readonly Task[],
+  current: Task,
+  activeSlug?: LedgerSlug | null,
+): NavStripData {
   const idx = tasks.findIndex((t) => t.id === current.id);
   const prev = idx > 0 ? tasks[idx - 1] : null;
   const next = idx >= 0 && idx < tasks.length - 1 ? tasks[idx + 1] : null;
   return {
-    prevHref: prev ? recordRouteHref(prev.id) : null,
+    prevHref: prev ? activeRecordHref(prev.id, activeSlug) : null,
     prevLabel: prev ? `ID-${prev.id}: ${prev.title}` : null,
-    nextHref: next ? recordRouteHref(next.id) : null,
+    nextHref: next ? activeRecordHref(next.id, activeSlug) : null,
     nextLabel: next ? `ID-${next.id}: ${next.title}` : null,
-    indexHref: indexHrefWithAnchor(current.id),
+    indexHref: indexHrefWithAnchor(
+      current.id,
+      activeSlug ? `ledger=${activeSlug}` : undefined,
+    ),
     indexLabel: "Back to ledger index",
   };
 }
@@ -356,16 +389,20 @@ function computeTaskNav(tasks: readonly Task[], current: Task): NavStripData {
 function computeBacklogNav(
   items: readonly BacklogItem[],
   current: BacklogItem,
+  activeSlug?: LedgerSlug | null,
 ): NavStripData {
   const idx = items.findIndex((i) => i.id === current.id);
   const prev = idx > 0 ? items[idx - 1] : null;
   const next = idx >= 0 && idx < items.length - 1 ? items[idx + 1] : null;
   return {
-    prevHref: prev ? recordRouteHref(prev.id) : null,
+    prevHref: prev ? activeRecordHref(prev.id, activeSlug) : null,
     prevLabel: prev ? `#${prev.id}: ${prev.description}` : null,
-    nextHref: next ? recordRouteHref(next.id) : null,
+    nextHref: next ? activeRecordHref(next.id, activeSlug) : null,
     nextLabel: next ? `#${next.id}: ${next.description}` : null,
-    indexHref: indexHrefWithAnchor(current.id),
+    indexHref: indexHrefWithAnchor(
+      current.id,
+      activeSlug ? `ledger=${activeSlug}` : undefined,
+    ),
     indexLabel: "Back to backlog index",
   };
 }
@@ -373,16 +410,20 @@ function computeBacklogNav(
 function computeThemeNav(
   themes: readonly RoadmapTheme[],
   current: RoadmapTheme,
+  activeSlug?: LedgerSlug | null,
 ): NavStripData {
   const idx = themes.findIndex((t) => t.id === current.id);
   const prev = idx > 0 ? themes[idx - 1] : null;
   const next = idx >= 0 && idx < themes.length - 1 ? themes[idx + 1] : null;
   return {
-    prevHref: prev ? recordRouteHref(prev.id) : null,
+    prevHref: prev ? activeRecordHref(prev.id, activeSlug) : null,
     prevLabel: prev ? `${prev.id}: ${prev.title}` : null,
-    nextHref: next ? recordRouteHref(next.id) : null,
+    nextHref: next ? activeRecordHref(next.id, activeSlug) : null,
     nextLabel: next ? `${next.id}: ${next.title}` : null,
-    indexHref: indexHrefWithAnchor(current.id),
+    indexHref: indexHrefWithAnchor(
+      current.id,
+      activeSlug ? `ledger=${activeSlug}` : undefined,
+    ),
     indexLabel: "Back to roadmap index",
   };
 }

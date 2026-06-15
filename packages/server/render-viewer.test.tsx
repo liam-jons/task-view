@@ -107,6 +107,63 @@ describe("renderViewer — client-script reference (ID-20.24)", () => {
   });
 });
 
+describe("renderViewer — active ?ledger= is preserved on intra-ledger links", () => {
+  // Regression for the switched-ledger bug: from a sibling page (?ledger=<slug>)
+  // the record/index/nav links dropped the slug, so the server fell back to the
+  // launched ledger and opened the wrong record. renderBody now derives the
+  // active slug from `search` (decodeLedgerParam) and threads it through.
+  test("backlog index reached via ?ledger=backlog → row links keep the slug", () => {
+    const { html } = renderViewer({
+      detected: BACKLOG_DETECTED,
+      search: new URLSearchParams("ledger=backlog"),
+    });
+    // `&` is HTML-escaped in the attribute value.
+    expect(html).toContain("/?ledger=backlog&amp;record=ID-30");
+  });
+
+  test("launched ledger (no ?ledger=) → bare row links (byte-for-byte back-compat)", () => {
+    const { html } = renderViewer({
+      detected: BACKLOG_DETECTED,
+      search: new URLSearchParams(),
+    });
+    expect(html).toContain('href="/?record=ID-30"');
+    expect(html).not.toContain("ledger=backlog");
+  });
+
+  test("record page via ?ledger=backlog → back-to-index link keeps the slug + anchor", () => {
+    const detected: KnownDetected = {
+      kind: "backlog",
+      data: {
+        document_name: "Product Backlog",
+        document_purpose: "fixture",
+        related_documents: [],
+        items: [
+          {
+            id: "ID-30",
+            description: "An item",
+            type: "feature",
+            status: "ready",
+            priority: "high",
+            rank: 3,
+            track: "platform",
+            effort_estimate: "M",
+            dependencies: [],
+            session_refs: [],
+            commit_refs: [],
+            cross_doc_links: [],
+            notes: null,
+          },
+        ],
+      },
+    } as unknown as KnownDetected;
+    const { html } = renderViewer({
+      detected,
+      search: new URLSearchParams("ledger=backlog&record=ID-30"),
+    });
+    expect(html).toContain('href="/?ledger=backlog#record-ID-30"');
+  });
+});
+
 // ── record-view-styling: <style> + <html> class (SV-50, SV-51) ──────────────
 
 const TASK_LIST_DETECTED: KnownDetected = {

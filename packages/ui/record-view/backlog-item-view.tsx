@@ -27,7 +27,7 @@ import {
   DetailsBodyWithJournal,
   MarkdownBody,
 } from "./markdown-renderer";
-import { recordRouteHref } from "./anchors";
+import { activeRecordHref, type LedgerSlug } from "./anchors";
 import { PriorityBadge, StatusBadge } from "./status-badge";
 import { renderAppearsInThemes } from "./task-list-view";
 import type { LedgerContext, NavStripData } from "./types";
@@ -36,7 +36,8 @@ export const BacklogItemView: React.FC<{
   item: BacklogItem;
   ledger: LedgerContext;
   nav: NavStripData;
-}> = ({ item, ledger, nav }) => {
+  activeSlug?: LedgerSlug | null;
+}> = ({ item, ledger, nav, activeSlug }) => {
   const missingDeps = item.dependencies.filter(
     (depId) => !ledger.backlogItemIds.has(depId),
   );
@@ -108,7 +109,7 @@ export const BacklogItemView: React.FC<{
               item.dependencies.map((depId) => (
                 <MaybeRecordLink
                   key={depId}
-                  href={recordRouteHref(depId)}
+                  href={activeRecordHref(depId, activeSlug)}
                   label={depId}
                   exists={ledger.backlogItemIds.has(depId)}
                 />

@@ -34,7 +34,7 @@ import React from "react";
 import type { BacklogItem } from "@task-view/schemas/backlog";
 import { BacklogStatus } from "@task-view/schemas/backlog";
 import { Priority } from "@task-view/schemas/work-status";
-import { indexRowAnchorId, recordRouteHref } from "./anchors";
+import { activeRecordHref, indexRowAnchorId, type LedgerSlug } from "./anchors";
 import { IndexSearchBox } from "./index-search";
 import {
   applyBacklogFilters,
@@ -53,12 +53,15 @@ export interface BacklogIndexViewProps {
    * (`z.string().min(1)`), so the Zod schema cannot enumerate them.
    */
   trackOptions?: readonly string[];
+  /** Active sibling ledger slug (preserved on row links); null on launched. */
+  activeSlug?: LedgerSlug | null;
 }
 
 export const BacklogIndexView: React.FC<BacklogIndexViewProps> = ({
   items,
   filters,
   trackOptions,
+  activeSlug,
 }) => {
   const tracks =
     trackOptions ?? Array.from(new Set(items.map((i) => i.track))).sort();
@@ -166,7 +169,11 @@ export const BacklogIndexView: React.FC<BacklogIndexViewProps> = ({
           </thead>
           <tbody>
             {sorted.map((item) => (
-              <BacklogItemRow key={item.id} item={item} />
+              <BacklogItemRow
+                key={item.id}
+                item={item}
+                activeSlug={activeSlug}
+              />
             ))}
           </tbody>
         </table>
@@ -195,7 +202,10 @@ export const BacklogIndexView: React.FC<BacklogIndexViewProps> = ({
  *     mode form per per-task-mirror inv 30 visual treatment; this row
  *     just exposes the affordance.
  */
-const BacklogItemRow: React.FC<{ item: BacklogItem }> = ({ item }) => {
+const BacklogItemRow: React.FC<{
+  item: BacklogItem;
+  activeSlug?: LedgerSlug | null;
+}> = ({ item, activeSlug }) => {
   const rankValue = item.rank ?? null;
   const fieldKey = `items>${item.id}>rank`;
   return (
@@ -224,7 +234,7 @@ const BacklogItemRow: React.FC<{ item: BacklogItem }> = ({ item }) => {
       </td>
       <td>
         <a
-          href={recordRouteHref(item.id)}
+          href={activeRecordHref(item.id, activeSlug)}
           data-item-link={item.id}
         >
           {item.id}

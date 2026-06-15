@@ -10,7 +10,7 @@
  */
 import React from "react";
 import type { Task } from "@task-view/schemas/task-list";
-import { indexRowAnchorId, recordRouteHref } from "./anchors";
+import { activeRecordHref, indexRowAnchorId, type LedgerSlug } from "./anchors";
 import { PriorityBadge, StatusBadge } from "./status-badge";
 import { IndexSearchBox } from "./index-search";
 import { SortableColumnHeader } from "./sortable-header";
@@ -25,7 +25,8 @@ export const TaskListIndexView: React.FC<{
   tasks: readonly Task[];
   filters?: TaskListFilterState;
   sort?: SortState;
-}> = ({ tasks, filters, sort }) => {
+  activeSlug?: LedgerSlug | null;
+}> = ({ tasks, filters, sort, activeSlug }) => {
   const f = filters ?? { q: null };
   const s = sort ?? { field: null, dir: "asc" };
   const visible = sortTasksForIndex(applyTaskListFilters(tasks, f), s);
@@ -102,7 +103,7 @@ export const TaskListIndexView: React.FC<{
               >
                 <td>
                   <a
-                    href={recordRouteHref(task.id)}
+                    href={activeRecordHref(task.id, activeSlug)}
                     data-task-link={task.id}
                   >
                     ID-{task.id}

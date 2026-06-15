@@ -1020,6 +1020,41 @@ td:focus-within > .record-view-pencil-button,
 }
 
 /* ================================================================== */
+/* editable-ledger-switch §2 — top-of-page ledger switcher            */
+/* (replaces the removed ledger-banner). A flex row of editable        */
+/* switch targets, aligned to the centred page column; the `gap` is     */
+/* what separates the ledger names (anchors render with no whitespace). */
+/* ================================================================== */
+.record-view-ledger-switcher {
+  max-width: 64rem;
+  margin-inline: auto;
+  padding: 0.5rem clamp(1rem, 4vw, 1.5rem) 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.record-view-ledger-switcher-item {
+  color: var(--muted-foreground);
+  text-decoration: none;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius) - 2px);
+  font-size: 0.8rem;
+}
+.record-view-ledger-switcher-item:hover,
+.record-view-ledger-switcher-item:focus-visible {
+  color: var(--foreground);
+  background: var(--muted);
+}
+.record-view-ledger-switcher-item[aria-current="page"] {
+  color: var(--foreground);
+  background: var(--muted);
+  border-color: var(--border);
+  font-weight: 600;
+}
+
+/* ================================================================== */
 /* SV-43 — reduced motion: zero the transitions this file introduces. */
 /* ================================================================== */
 @media (prefers-reduced-motion: reduce) {

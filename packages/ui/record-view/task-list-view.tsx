@@ -34,12 +34,13 @@ import {
   MarkdownBody,
 } from "./markdown-renderer";
 import {
+  activeRecordHref,
   crossLedgerRecordHref,
-  recordRouteHref,
   subtaskAnchorId,
   subtaskDepLabel,
   subtaskHref,
   taskDepLabel,
+  type LedgerSlug,
 } from "./anchors";
 import { PriorityBadge, StatusBadge } from "./status-badge";
 import type { LedgerContext, NavStripData } from "./types";
@@ -138,7 +139,8 @@ export const TaskListView: React.FC<{
   ledger: LedgerContext;
   nav: NavStripData;
   githubBaseUrl?: string | null;
-}> = ({ task, ledger, nav, githubBaseUrl = null }) => {
+  activeSlug?: LedgerSlug | null;
+}> = ({ task, ledger, nav, githubBaseUrl = null, activeSlug }) => {
   // Broken-target detection at render time (page-top warning aggregation).
   const missingTaskDeps = task.dependencies.filter(
     (depId) => !ledger.taskIds.has(depId),
@@ -263,7 +265,7 @@ export const TaskListView: React.FC<{
               task.dependencies.map((depId) => (
                 <MaybeRecordLink
                   key={depId}
-                  href={recordRouteHref(depId)}
+                  href={activeRecordHref(depId, activeSlug)}
                   label={taskDepLabel(depId)}
                   exists={ledger.taskIds.has(depId)}
                 />

@@ -4,6 +4,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import {
+  activeRecordHref,
   crossLedgerRecordHref,
   indexHrefWithAnchor,
   indexRowAnchorId,
@@ -71,6 +72,31 @@ describe("crossLedgerRecordHref ({20.29} cross-ledger nav, SPEC §5 slice 2)", (
     // Regression guard: the cross-ledger builder must not change the
     // bare intra-ledger href contract.
     expect(recordRouteHref("6")).toBe("/?record=6");
+  });
+});
+
+describe("activeRecordHref — preserve the active sibling on intra-ledger links", () => {
+  test("with an active slug → slug-qualified /?ledger=<slug>&record=<id>", () => {
+    // Regression: on a switched-to sibling page, record/index/nav links must
+    // carry ?ledger=<slug> so they resolve within that sibling instead of
+    // falling back to the launched ledger.
+    expect(activeRecordHref("284", "backlog")).toBe(
+      "/?ledger=backlog&record=284",
+    );
+    expect(activeRecordHref("10", "roadmap")).toBe("/?ledger=roadmap&record=10");
+  });
+
+  test("with no active slug (null / undefined) → bare back-compat form", () => {
+    // Launched ledger (no ?ledger= in the URL): links stay byte-for-byte the
+    // bare intra-ledger form.
+    expect(activeRecordHref("6", null)).toBe("/?record=6");
+    expect(activeRecordHref("6")).toBe("/?record=6");
+  });
+
+  test("URL-encodes the record id, keeps the slug literal", () => {
+    expect(activeRecordHref("a b", "task-list")).toBe(
+      "/?ledger=task-list&record=a%20b",
+    );
   });
 });
 

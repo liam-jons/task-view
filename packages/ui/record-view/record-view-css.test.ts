@@ -127,6 +127,9 @@ const EMITTED_CLASSES: readonly string[] = [
   // OQ-3 theme picker toolbar (emitted by wrapHtml + ThemePicker)
   "record-view-toolbar",
   "record-view-theme-picker",
+  // editable-ledger-switch §2 ledger switcher (emitted by LedgerSwitcher)
+  "record-view-ledger-switcher",
+  "record-view-ledger-switcher-item",
   // §3.10 markdown body
   "record-view-markdown-body",
   "record-view-details",

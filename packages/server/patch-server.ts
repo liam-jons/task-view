@@ -2547,7 +2547,17 @@ const shutdownSubscribers = new Set<
 >();
 const SSE_ENCODER = new TextEncoder();
 
-function handleShutdownEvents(): Response {
+function handleShutdownEvents(
+  request: Request,
+  server: import("bun").Server<undefined>,
+): Response {
+  // Long-lived SSE stream: silent between the initial ": connected" comment and
+  // the eventual `shutdown` event. Bun.serve's default idleTimeout (10s) would
+  // drop this socket — logging "[Bun.serve]: request timed out after 10 seconds"
+  // and forcing the EventSource to reconnect (a window in which a shutdown
+  // broadcast could be missed). Disable the idle timeout for THIS request only;
+  // every other endpoint keeps the 10s guard.
+  server.timeout(request, 0);
   let registered: ReadableStreamDefaultController<Uint8Array> | null = null;
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -2591,7 +2601,10 @@ export function broadcastShutdown(): void {
  * other than `ctx`.
  */
 function buildFetchHandler(ctx: RequestContext) {
-  return async function fetchHandler(request: Request): Promise<Response> {
+  return async function fetchHandler(
+    request: Request,
+    server: import("bun").Server<undefined>,
+  ): Promise<Response> {
     // ID-90 U9: every request counts as activity for the idle-exit window.
     ctx.onRequest?.();
 
@@ -2616,7 +2629,7 @@ function buildFetchHandler(ctx: RequestContext) {
 
     // GET /api/shutdown-events — SSE channel for close-tab-on-exit.
     if (path === "/api/shutdown-events" && request.method === "GET") {
-      return handleShutdownEvents();
+      return handleShutdownEvents(request, server);
     }
 
     // ID-90 U9 slug routing (TECH §Proposed changes U9 / PRODUCT inv 56):

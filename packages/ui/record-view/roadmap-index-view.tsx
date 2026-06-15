@@ -10,7 +10,7 @@
  */
 import React from "react";
 import type { Roadmap } from "@task-view/schemas/roadmap";
-import { indexRowAnchorId, recordRouteHref } from "./anchors";
+import { activeRecordHref, indexRowAnchorId, type LedgerSlug } from "./anchors";
 import { StatusBadge } from "./status-badge";
 import { IndexSearchBox } from "./index-search";
 import { SortableColumnHeader } from "./sortable-header";
@@ -25,7 +25,8 @@ export const RoadmapIndexView: React.FC<{
   roadmap: Roadmap;
   filters?: RoadmapFilterState;
   sort?: SortState;
-}> = ({ roadmap, filters, sort }) => {
+  activeSlug?: LedgerSlug | null;
+}> = ({ roadmap, filters, sort, activeSlug }) => {
   const f = filters ?? { q: null };
   const s = sort ?? { field: null, dir: "asc" };
   const visible = sortThemesForIndex(applyRoadmapFilters(roadmap.themes, f), s);
@@ -91,7 +92,7 @@ export const RoadmapIndexView: React.FC<{
               >
                 <td>
                   <a
-                    href={recordRouteHref(theme.id)}
+                    href={activeRecordHref(theme.id, activeSlug)}
                     data-theme-link={theme.id}
                   >
                     {theme.id}
