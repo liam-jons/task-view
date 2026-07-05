@@ -15,6 +15,7 @@ import { PriorityBadge, StatusBadge } from "./status-badge";
 import { IndexSearchBox } from "./index-search";
 import { SortableColumnHeader } from "./sortable-header";
 import { sortTasksForIndex } from "./task-list-sort";
+import { doneSubtaskCount } from "@task-view/shared/subtask-progress";
 import {
   applyTaskListFilters,
   type SortState,
@@ -116,7 +117,7 @@ export const TaskListIndexView: React.FC<{
                 <td>
                   <PriorityBadge priority={task.priority} />
                 </td>
-                <td>{task.subtasks.length}</td>
+                <td>{`${doneSubtaskCount(task.subtasks)}/${task.subtasks.length}`}</td>
               </tr>
             ))}
           </tbody>

@@ -27,6 +27,7 @@ import type {
 } from "@task-view/schemas/backlog";
 import type { Roadmap } from "@task-view/schemas/roadmap";
 import type { Task } from "@task-view/schemas/task-list";
+import { doneSubtaskCount } from "@task-view/shared/subtask-progress";
 
 // ID-90 U8: umbrellas is additionally excluded — no mirror dir means no
 // index.md (PRODUCT invariant 53). WS-C C2: retros likewise have no mirror dir
@@ -103,8 +104,11 @@ function renderTaskListIndex(tasks: readonly Task[]): string {
   lines.push("|----|-------|--------|----------|----------|");
   for (const task of tasks) {
     const safeTitle = escapePipe(task.title);
+    // Subtasks cell reports completed/total (done + cancelled count as
+    // complete — shared with the read-side index view via doneSubtaskCount).
+    const subtasksCell = `${doneSubtaskCount(task.subtasks)}/${task.subtasks.length}`;
     lines.push(
-      `| [ID-${task.id}](ID-${task.id}.md) | ${safeTitle} | ${task.status} | ${task.priority} | ${task.subtasks.length} |`,
+      `| [ID-${task.id}](ID-${task.id}.md) | ${safeTitle} | ${task.status} | ${task.priority} | ${subtasksCell} |`,
     );
   }
   lines.push("");

@@ -86,35 +86,36 @@ describe("TaskListIndexView (TECH §4.3)", () => {
     expect(html).toContain('id="record-21"');
   });
 
-  test("renders subtask count per task", () => {
+  test("renders completed/total subtasks per task (done + cancelled count as complete)", () => {
+    const mkSub = (id: string, status: string) => ({
+      id,
+      title: `S${id}`,
+      description: `S${id} desc`,
+      details: "",
+      status,
+      dependencies: [],
+      testStrategy: null,
+    });
     const tasks = [
       mkTask({
         id: "20",
         subtasks: [
-          {
-            id: "1",
-            title: "S1",
-            description: "S1 desc",
-            details: "",
-            status: "pending",
-            dependencies: [],
-            testStrategy: null,
-          },
-          {
-            id: "2",
-            title: "S2",
-            description: "S2 desc",
-            details: "",
-            status: "pending",
-            dependencies: [],
-            testStrategy: null,
-          },
-        ],
+          mkSub("1", "done"),
+          mkSub("2", "cancelled"),
+          mkSub("3", "pending"),
+          mkSub("4", "deferred"),
+        ] as Task["subtasks"],
       }),
     ];
     const html = renderToStaticMarkup(<TaskListIndexView tasks={tasks} />);
-    // The Subtasks column for ID 20 reports 2
-    expect(html).toMatch(/data-task-row="20"[\s\S]*?<td>2<\/td>\s*<\/tr>/);
+    // done(1) + cancelled(1) = 2 complete of 4 total → "2/4"
+    expect(html).toMatch(/data-task-row="20"[\s\S]*?<td>2\/4<\/td>\s*<\/tr>/);
+  });
+
+  test("subtasks cell reads 0/0 for an atomic Task with no subtasks", () => {
+    const tasks = [mkTask({ id: "20", subtasks: [] })];
+    const html = renderToStaticMarkup(<TaskListIndexView tasks={tasks} />);
+    expect(html).toMatch(/data-task-row="20"[\s\S]*?<td>0\/0<\/td>\s*<\/tr>/);
   });
 
   test("renders empty-state when tasks list is empty (PRODUCT inv 47)", () => {

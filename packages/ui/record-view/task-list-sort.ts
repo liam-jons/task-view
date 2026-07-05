@@ -6,17 +6,20 @@
  * `sort.field === null` (or an unrecognised field) keeps the ledger's natural
  * (JSON array) order — the default the index has always rendered. Sortable
  * columns: id (numeric), title, status (both alphabetic), priority (canonical
- * MoSCoW→ranked ordinal, reused from backlog-sort), subtasks (count).
+ * MoSCoW→ranked ordinal, reused from backlog-sort), subtasks (open count =
+ * total − done, so Tasks still carrying unfinished Subtasks sort apart from
+ * fully-resolved ones).
  */
 import type { SortState } from "./url-state";
 import { PRIORITY_ORDINALS } from "./backlog-sort";
+import { doneSubtaskCount } from "@task-view/shared/subtask-progress";
 
 type SortableTask = {
   id: string;
   title: string;
   status: string;
   priority: string;
-  subtasks: readonly unknown[];
+  subtasks: readonly { status: string }[];
 };
 
 const TASK_SORT_FIELDS = new Set<string>([
@@ -58,7 +61,13 @@ function taskFieldCompare(
         (PRIORITY_ORDINALS[b.priority as keyof typeof PRIORITY_ORDINALS] ?? 99)
       );
     case "subtasks":
-      return a.subtasks.length - b.subtasks.length;
+      // Sort by OPEN subtask count (total − done) rather than raw total, so a
+      // done Task hiding a deferred Subtask surfaces alongside other unfinished
+      // work rather than reading as complete.
+      return (
+        (a.subtasks.length - doneSubtaskCount(a.subtasks)) -
+        (b.subtasks.length - doneSubtaskCount(b.subtasks))
+      );
     default:
       return 0;
   }

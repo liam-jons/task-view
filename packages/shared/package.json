@@ -9,7 +9,8 @@
     "./config": "./config.ts",
     "./draft": "./draft.ts",
     "./extract-code-paths": "./extract-code-paths.ts",
-    "./repo": "./repo.ts"
+    "./repo": "./repo.ts",
+    "./subtask-progress": "./subtask-progress.ts"
   },
   "dependencies": {}
 }

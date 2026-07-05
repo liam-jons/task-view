@@ -150,7 +150,42 @@ describe("renderIndexMd — Task-list (TECH §4.3)", () => {
     expect(md).toContain(
       "| ID | Title | Status | Priority | Subtasks |",
     );
-    expect(md).toContain("| [ID-20](ID-20.md) | Twenty | in_progress | must | 1 |");
+    // Subtasks cell is completed/total — ID-20 has 1 pending subtask → 0/1.
+    expect(md).toContain("| [ID-20](ID-20.md) | Twenty | in_progress | must | 0/1 |");
+  });
+
+  test("Subtasks cell reports completed/total (done + cancelled count as complete)", () => {
+    const mkSub = (id: string, status: string) => ({
+      id,
+      title: `S${id}`,
+      description: "d",
+      details: "",
+      status,
+      dependencies: [],
+      testStrategy: null,
+    });
+    const fixture = {
+      ...taskListFixture,
+      tasks: [
+        {
+          ...taskListFixture.tasks[0],
+          id: "30",
+          title: "Thirty",
+          subtasks: [
+            mkSub("1", "done"),
+            mkSub("2", "cancelled"),
+            mkSub("3", "pending"),
+            mkSub("4", "deferred"),
+          ],
+        },
+      ],
+    };
+    const detected = detectSchema(fixture);
+    const md = renderIndexMd(detected);
+    // done(1) + cancelled(1) = 2 complete of 4 total.
+    expect(md).toContain(
+      "| [ID-30](ID-30.md) | Thirty | in_progress | must | 2/4 |",
+    );
   });
 
   test("escapes pipe characters in title cells", () => {
