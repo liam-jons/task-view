@@ -21,11 +21,11 @@
 /* ================================================================== */
 
 .record-view-task-list-index,
-.record-view-roadmap-index,
+.record-view-initiatives-index,
 .record-view-backlog-index,
 .record-view-task-page,
 .record-view-backlog-item,
-.record-view-roadmap-theme,
+.record-view-initiative,
 .record-view-not-found {
   display: block;
   max-width: 64rem;
@@ -40,11 +40,11 @@
 /* Headings (SV-12). Scoped to the page roots so we never touch markdown-body
    headings (those get their own floor under SV-30). */
 .record-view-task-list-index > header h1,
-.record-view-roadmap-index > header h1,
+.record-view-initiatives-index > header h1,
 .record-view-backlog-index > header h1,
 .record-view-task-page > header h1,
 .record-view-backlog-item > header h1,
-.record-view-roadmap-theme > header h1,
+.record-view-initiative > header h1,
 .record-view-not-found h1 {
   font-size: clamp(1.75rem, 4vw, 2rem);
   font-weight: 600;
@@ -55,7 +55,7 @@
 
 .record-view-task-page > section > h2,
 .record-view-backlog-item > section > h2,
-.record-view-roadmap-theme > section > h2,
+.record-view-initiative > section > h2,
 .record-view-task-subtasks > h2 {
   font-size: 1.35rem;
   font-weight: 600;
@@ -78,24 +78,27 @@
    restore full foreground on the value span. */
 .record-view-task-page > header h1,
 .record-view-backlog-item > header h1,
-.record-view-roadmap-theme > header h1,
-.record-view-subtask-block > h3 {
+.record-view-initiative > header h1,
+.record-view-subtask-block > h3,
+.record-view-sub-initiative > header h3,
+.record-view-project > header h3 {
   color: var(--muted-foreground);
 }
 .record-view-task-page > header h1 .record-view-field-value,
 .record-view-backlog-item > header h1 .record-view-field-value,
-.record-view-roadmap-theme > header h1 .record-view-field-value,
-.record-view-subtask-block > h3 .record-view-field-value {
+.record-view-initiative > header h1 .record-view-field-value,
+.record-view-subtask-block > h3 .record-view-field-value,
+.record-view-sub-initiative > header h3 .record-view-field-value,
+.record-view-project > header h3 .record-view-field-value {
   color: var(--foreground);
 }
 
 /* SV-13 — mono for code + ids + rank values + commit refs. */
 .record-view-task-page code,
 .record-view-backlog-item code,
-.record-view-roadmap-theme code,
 .record-view-not-found code,
 .record-view-task-list-table a[data-task-link],
-.record-view-roadmap-index-table a[data-theme-link],
+.record-view-initiatives-index-table a[data-initiative-link],
 .record-view-backlog-table a[data-item-link],
 .record-view-rank-value {
   font-family: var(--font-mono);
@@ -103,7 +106,7 @@
 
 /* Count / caption text (SV-12). */
 .record-view-task-list-index-count,
-.record-view-roadmap-index-count,
+.record-view-initiatives-index-count,
 .record-view-backlog-index-count {
   font-size: 0.8rem;
   color: var(--muted-foreground);
@@ -157,7 +160,7 @@
 /* ================================================================== */
 
 .record-view-task-list-table,
-.record-view-roadmap-index-table,
+.record-view-initiatives-index-table,
 .record-view-backlog-table {
   width: 100%;
   border-collapse: collapse;
@@ -166,7 +169,7 @@
 }
 
 .record-view-task-list-table th,
-.record-view-roadmap-index-table th,
+.record-view-initiatives-index-table th,
 .record-view-backlog-table th {
   text-align: left;
   font-weight: 600;
@@ -182,7 +185,7 @@
 }
 
 .record-view-task-list-table td,
-.record-view-roadmap-index-table td,
+.record-view-initiatives-index-table td,
 .record-view-backlog-table td {
   padding: 0.5rem 0.75rem;
   border-bottom: 1px solid color-mix(in oklab, var(--border) 50%, transparent);
@@ -191,12 +194,12 @@
 
 /* SV-15 zebra + hover — background-only tints (text stays a fg token, SV-42). */
 .record-view-task-list-table tbody tr:nth-child(even),
-.record-view-roadmap-index-table tbody tr:nth-child(even),
+.record-view-initiatives-index-table tbody tr:nth-child(even),
 .record-view-backlog-table tbody tr:nth-child(even) {
   background: color-mix(in oklab, var(--muted) 18%, transparent);
 }
 .record-view-task-list-table tbody tr:hover,
-.record-view-roadmap-index-table tbody tr:hover,
+.record-view-initiatives-index-table tbody tr:hover,
 .record-view-backlog-table tbody tr:hover {
   background: color-mix(in oklab, var(--muted) 35%, transparent);
 }
@@ -243,7 +246,7 @@
 .record-view-record-link,
 .record-view-doc-link,
 .record-view-task-list-table a,
-.record-view-roadmap-index-table a,
+.record-view-initiatives-index-table a,
 .record-view-backlog-table a,
 .record-view-nav-strip a,
 .record-view-not-found a {
@@ -257,8 +260,8 @@
 .record-view-doc-link:focus-visible,
 .record-view-task-list-table a:hover,
 .record-view-task-list-table a:focus-visible,
-.record-view-roadmap-index-table a:hover,
-.record-view-roadmap-index-table a:focus-visible,
+.record-view-initiatives-index-table a:hover,
+.record-view-initiatives-index-table a:focus-visible,
 .record-view-backlog-table a:hover,
 .record-view-backlog-table a:focus-visible,
 .record-view-nav-strip a:hover,
@@ -954,6 +957,60 @@ td:focus-within > .record-view-pencil-button,
   /* intentionally minimal — inherits surrounding type. */
 }
 
+/* ================================================================== */
+/* ID-148.10 Checker fix — initiatives tree-view styling parity.       */
+/* The nested initiative -> sub-initiative -> project tree has no      */
+/* table analog; a project/sub-initiative is a CARD (same tokens as    */
+/* .record-view-frontmatter-card), matching the file's existing card   */
+/* idiom rather than inventing a new visual language.                  */
+/* ================================================================== */
+
+.record-view-initiative-projects,
+.record-view-initiative-sub-initiatives {
+  margin-top: 0.5rem;
+}
+
+.record-view-project,
+.record-view-sub-initiative {
+  background: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.85rem 1.1rem;
+  margin: 0.85rem 0;
+}
+.record-view-sub-initiative-projects {
+  margin-top: 0.5rem;
+}
+
+.record-view-project-summary,
+.record-view-project-status,
+.record-view-project-description,
+.record-view-project-substrate-doc,
+.record-view-project-blocking,
+.record-view-sub-initiative-status,
+.record-view-sub-initiative-substrate-doc,
+.record-view-sub-initiative-description {
+  margin: 0.5rem 0;
+}
+
+/* "No direct projects." / "No sub-initiatives." / "None." placeholders —
+   lighter than the top-level SV-28 empty states (SV-28 is for a whole
+   EMPTY LEDGER; these are small inline placeholders nested in a tree). */
+.record-view-empty-section,
+.record-view-empty-linked {
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+/* Whole-record create/move affordances — layout via the shared
+   .record-view-edit-form flex row (see SV-33 below); these two rules add
+   only the small top margin that separates them from preceding content. */
+.record-view-project-create-form,
+.record-view-move-form {
+  margin-top: 0.5rem;
+}
+
 /* Subtask detail wrappers (structural; keep readable spacing). */
 .record-view-subtask-block {
   margin: 1.25rem 0;
@@ -977,21 +1034,22 @@ td:focus-within > .record-view-pencil-button,
   margin: 0.5rem 0 1rem;
 }
 
-/* Roadmap-theme link-list sections + cross-doc / notes wrappers. */
-.record-view-roadmap-theme-description,
-.record-view-roadmap-theme-cross-doc-links,
-.record-view-roadmap-theme-notes,
-.record-view-roadmap-theme-linked-tasks,
-.record-view-roadmap-theme-linked-backlog,
+/* Initiative/Project link-list sections (ID-148.10, repurposed from the
+   retired roadmap-theme wrappers — cross-doc-links/notes have no Project/
+   Initiative analog, INV-2, so those two are dropped rather than renamed). */
+.record-view-initiative-description,
+.record-view-initiative-transitional-links,
+.record-view-project-linked-tasks,
+.record-view-project-linked-backlog,
 .record-view-backlog-notes,
 .record-view-backlog-details,
 .record-view-backlog-test-strategy,
 .record-view-backlog-header {
   margin: 0.75rem 0;
 }
-.record-view-roadmap-theme-linked-tasks ul,
-.record-view-roadmap-theme-linked-backlog ul,
-.record-view-roadmap-theme-cross-doc-links ul {
+.record-view-project-linked-tasks ul,
+.record-view-project-linked-backlog ul,
+.record-view-initiative-transitional-links ul {
   margin: 0.5rem 0;
   padding-left: 1.5rem;
   list-style: disc;

@@ -472,24 +472,34 @@ const MoveLinkedRecordForm: React.FC<{
   const label = section === "linked_tasks" ? "task" : "backlog item";
   return (
     <form
-      className="record-view-move-form"
+      className="record-view-move-form record-view-edit-form"
       data-move-form
       data-move-section={section}
       data-source-slug={sourceSlug}
     >
       <label>
         {`Move ${label} ID`}
-        <input type="text" data-move-id aria-label={`Move ${label} id`} />
+        <input
+          type="text"
+          className="record-view-text-input"
+          data-move-id
+          aria-label={`Move ${label} id`}
+        />
       </label>
       <label>
         To project (slug)
         <input
           type="text"
+          className="record-view-text-input"
           data-move-target
           aria-label={`Move ${label} to project slug`}
         />
       </label>
-      <button type="button" data-move-action>
+      <button
+        type="button"
+        className="record-view-save-button"
+        data-move-action
+      >
         Move
       </button>
     </form>
@@ -509,7 +519,7 @@ const CreateProjectForm: React.FC<{ initiativePath: string }> = ({
   initiativePath,
 }) => (
   <form
-    className="record-view-project-create-form"
+    className="record-view-project-create-form record-view-edit-form"
     data-project-create-form
     data-initiative-path={initiativePath}
   >
@@ -517,6 +527,7 @@ const CreateProjectForm: React.FC<{ initiativePath: string }> = ({
       New project slug
       <input
         type="text"
+        className="record-view-text-input"
         data-project-create-slug
         aria-label="New project slug"
         required
@@ -526,12 +537,17 @@ const CreateProjectForm: React.FC<{ initiativePath: string }> = ({
       Title
       <input
         type="text"
+        className="record-view-text-input"
         data-project-create-title
         aria-label="New project title"
         required
       />
     </label>
-    <button type="button" data-project-create-action>
+    <button
+      type="button"
+      className="record-view-save-button"
+      data-project-create-action
+    >
       Add project
     </button>
   </form>
