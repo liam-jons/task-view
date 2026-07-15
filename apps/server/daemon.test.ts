@@ -6,8 +6,9 @@
  * Each test spawns `bun apps/server/index.ts` with the new flags against
  * a temp ledger directory and observes the daemon from outside:
  *
- *   - `--serve-dir <dir>`: scans + registers ALL known documents (incl.
- *     umbrellas); bare routes serve the deterministic launch document.
+ *   - `--serve-dir <dir>`: scans + registers ALL known documents (ID-148.10:
+ *     `roadmap` repurposed to `initiatives`; `umbrellas` fully retired);
+ *     bare routes serve the deterministic launch document.
  *   - `--port-file <path>`: atomic `{port, pid, version, ledgerDir}`
  *     handle once listening.
  *   - `--idle-exit <minutes>`: the daemon exits by itself after the idle
@@ -51,9 +52,9 @@ afterEach(async () => {
   await rm(testDir, { recursive: true, force: true });
 });
 
-// ── Fixtures (synthetic, all four kinds) ─────────────────────────────────────
+// ── Fixtures (synthetic, all three ID-148.10 kinds) ──────────────────────────
 
-async function writeAllFour(dir: string): Promise<void> {
+async function writeAllThree(dir: string): Promise<void> {
   await writeFile(
     join(dir, "task-list.json"),
     JSON.stringify(
@@ -87,17 +88,16 @@ async function writeAllFour(dir: string): Promise<void> {
     "utf8",
   );
   await writeFile(
-    join(dir, "product-roadmap.json"),
+    join(dir, "initiatives.json"),
     JSON.stringify(
       {
-        document_name: "Knowledge Hub Roadmap",
+        document_name: "Canonical Platform - Initiatives",
         document_purpose: "Synthetic fixture.",
-        date: "2026-05-25",
-        status: "Active",
-        forward_looking_only: true,
+        date: "2026-07-15",
+        status: "active",
         related_documents: [],
         last_updated: "synthetic fixture",
-        themes: [],
+        initiatives: [],
       },
       null,
       2,
@@ -112,30 +112,6 @@ async function writeAllFour(dir: string): Promise<void> {
         document_purpose: "Synthetic fixture.",
         related_documents: [],
         items: [],
-      },
-      null,
-      2,
-    ),
-    "utf8",
-  );
-  await writeFile(
-    join(dir, "umbrellas.json"),
-    JSON.stringify(
-      {
-        document_name: "umbrellas",
-        document_purpose: "Synthetic fixture.",
-        last_updated: "kh-main-S1 synthetic fixture",
-        related_documents: [],
-        umbrellas: [
-          {
-            id: "synthetic-umbrella",
-            title: "Synthetic Umbrella",
-            substrate_doc: "docs/synthetic-umbrella.md",
-            task_ids: ["20"],
-            status: "in_progress",
-            phase: "Phase 1",
-          },
-        ],
       },
       null,
       2,
@@ -179,8 +155,8 @@ async function readStream(stream: ReadableStream<Uint8Array> | null): Promise<st
 // ── --serve-dir + --port-file + /api/health ─────────────────────────────────
 
 describe("daemon: --serve-dir + --port-file + health", () => {
-  test("registers all four documents, writes the handle once listening, serves slug routes loopback-only", async () => {
-    await writeAllFour(testDir);
+  test("registers all three documents, writes the handle once listening, serves slug routes loopback-only", async () => {
+    await writeAllThree(testDir);
     const portFile = join(testDir, "handle.json");
     proc = spawnDaemon([
       "--serve-dir",
@@ -219,18 +195,16 @@ describe("daemon: --serve-dir + --port-file + health", () => {
     expect(body.ledgerDir).toBe(resolve(testDir));
     expect(body.documents.map((d) => d.slug).sort()).toEqual([
       "backlog",
-      "roadmap",
+      "initiatives",
       "task-list",
-      "umbrellas",
     ]);
 
     // Slug routes serve every document; bare routes serve the launch pick
     // (task-list — first in the deterministic preference order).
     for (const [slug, kind] of [
       ["task-list", "task-list"],
-      ["roadmap", "roadmap"],
+      ["initiatives", "initiatives"],
       ["backlog", "backlog"],
-      ["umbrellas", "umbrellas"],
     ] as const) {
       const res = await fetch(`${base}/api/ledger/${slug}`);
       expect(`${slug}:${res.status}`).toBe(`${slug}:200`);
@@ -250,7 +224,7 @@ describe("daemon: --serve-dir + --port-file + health", () => {
   });
 
   test("--serve-dir + a positional path is a usage error", async () => {
-    await writeAllFour(testDir);
+    await writeAllThree(testDir);
     proc = spawnDaemon([
       join(testDir, "task-list.json"),
       "--serve-dir",
@@ -267,7 +241,7 @@ describe("daemon: --serve-dir + --port-file + health", () => {
 
 describe("daemon: --idle-exit", () => {
   test("exits by itself after the idle window (real timer, generous tolerance)", async () => {
-    await writeAllFour(testDir);
+    await writeAllThree(testDir);
     const portFile = join(testDir, "handle.json");
     // 0.02 minutes = 1.2s idle window; poll interval clamps to 300ms.
     proc = spawnDaemon([
@@ -292,7 +266,7 @@ describe("daemon: --idle-exit", () => {
   }, 30_000);
 
   test("--idle-exit with a non-positive value is a usage error", async () => {
-    await writeAllFour(testDir);
+    await writeAllThree(testDir);
     proc = spawnDaemon([
       "--serve-dir",
       testDir,
@@ -309,7 +283,7 @@ describe("daemon: --idle-exit", () => {
 
 describe("daemon: --require-denylist", () => {
   test("unset denylist env + armed daemon → loud 500 client-name-guard-config on mutation", async () => {
-    await writeAllFour(testDir);
+    await writeAllThree(testDir);
     const portFile = join(testDir, "handle.json");
     proc = spawnDaemon(
       [

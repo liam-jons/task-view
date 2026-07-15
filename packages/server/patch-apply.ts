@@ -27,14 +27,22 @@
  *     (e.g. '4'). FieldPath is uniformly string[] and the stored subtask
  *     id is now itself a digit-string, so we compare string-to-string on
  *     subtask lookup (no Number()-parse).
- *   - Roadmap (ID-20.19 themes[]):
- *       ['themes', themeId, 'status' | 'notes' | 'title' | ...]
+ *   - Initiatives (ID-148.10, TECH §3.1(b), INV-13 — repurposed roadmap arm):
+ *       ['projects', projectSlug, field]
+ *         addresses a Project by its GLOBALLY-UNIQUE slug — tree-walked
+ *         through `initiatives[]` + recursive `sub-initiatives[]`
+ *         regardless of which node currently owns it.
+ *       ['initiatives', dottedPath, field]
+ *         addresses an Initiative (bare path, e.g. `"4"`) or a
+ *         sub-initiative (dotted path, e.g. `"4.2"`, `"4.2.1"`).
+ *     A "move" (re-parenting a task/backlog id between two projects) is NOT
+ *     a distinct op — it compiles to TWO ['projects', slug, 'linked_tasks'|
+ *     'linked_backlog'] patches in ONE batch, which the existing §5.5
+ *     all-or-nothing multi-patch machinery already applies atomically
+ *     (one Zod parse, one gate cycle, record-set delta ∅ since no project
+ *     is added or removed — only field CONTENTS change).
  *   - Backlog:
  *       ['items', itemId, 'description' | 'status' | ...]
- *   - Umbrellas (ID-90 U8 — PRODUCT inv 49–50):
- *       ['umbrellas', umbrellaId, 'task_ids' | 'status' | 'phase' | ...]
- *     Membership edits are field PATCHes on task_ids[] — the umbrella
- *     id-set itself never changes through this walk (record-set delta none).
  *
  * Why id-based not index-based: the canonical JSON ordering is the
  * Planner's decision; clients shouldn't have to track indices across
@@ -43,14 +51,13 @@
 
 import { TaskListSchema, type TaskList } from "@task-view/schemas/task-list";
 import { TaskSchema, SubtaskSchema } from "@task-view/schemas/task-list";
-import { RoadmapSchema, type Roadmap } from "@task-view/schemas/roadmap";
-import { RoadmapThemeSchema } from "@task-view/schemas/roadmap";
-import { BacklogSchema, BacklogItemSchema, type BacklogDocument } from "@task-view/schemas/backlog";
 import {
-  UmbrellasSchema,
-  UmbrellaEntrySchema,
-  type Umbrellas,
-} from "@task-view/schemas/umbrellas";
+  InitiativesSchema,
+  ProjectSchema,
+  InitiativeSchema,
+  type InitiativesDocument,
+} from "@task-view/schemas/initiatives";
+import { BacklogSchema, BacklogItemSchema, type BacklogDocument } from "@task-view/schemas/backlog";
 import {
   RetrosSchema,
   RetroRecordSchema,
@@ -58,6 +65,11 @@ import {
 } from "@task-view/schemas/retro";
 import { ZodError } from "zod";
 import type { DetectSchemaResult } from "./detect-schema";
+import {
+  findProjectBySlug,
+  resolveInitiativeNode,
+  type TreeDoc,
+} from "./initiatives-tree";
 
 // ── Schema-keyset sets ────────────────────────────────────────────────────────
 //
@@ -75,11 +87,12 @@ import type { DetectSchemaResult } from "./detect-schema";
 // on the instance. Genuinely unknown / typo'd fields are absent from the shape
 // and are still rejected as walk-errors — exactly as before.
 //
-// For task-list (TaskSchema, SubtaskSchema) and roadmap (RoadmapThemeSchema)
-// the final Zod re-parse uses `.strict()` and would also catch unknown keys as
-// a schema-error. For backlog (BacklogItemSchema) the schema does NOT use
-// `.strict()` (it strips unknown keys silently), so the schema-keyset guard is
-// ESSENTIAL — without it a typo'd field would silently no-op and return 200.
+// For task-list (TaskSchema, SubtaskSchema) and initiatives (InitiativeSchema,
+// ProjectSchema) the final Zod re-parse uses `.strict()`/not respectively (see
+// below) and would also catch unknown keys as a schema-error where `.strict()`
+// applies. For backlog (BacklogItemSchema) the schema does NOT use `.strict()`
+// (it strips unknown keys silently), so the schema-keyset guard is ESSENTIAL —
+// without it a typo'd field would silently no-op and return 200.
 //
 // Each Set is derived from the Zod `.shape` object of the corresponding schema.
 // `.strict()` and `.superRefine()` both preserve the `.shape` accessor on
@@ -87,12 +100,27 @@ import type { DetectSchemaResult } from "./detect-schema";
 
 const TASK_KNOWN_FIELDS = new Set(Object.keys(TaskSchema.shape));
 const SUBTASK_KNOWN_FIELDS = new Set(Object.keys(SubtaskSchema.shape));
-const ROADMAP_THEME_KNOWN_FIELDS = new Set(Object.keys(RoadmapThemeSchema.shape));
 const BACKLOG_ITEM_KNOWN_FIELDS = new Set(Object.keys(BacklogItemSchema.shape));
-// ID-90 U8: umbrellas walk — same schema-keyset guard discipline. The
-// UmbrellaEntrySchema IS `.strict()`, but the keyset guard keeps the
-// walk-error-vs-schema-error boundary identical to the other three kinds.
-const UMBRELLA_KNOWN_FIELDS = new Set(Object.keys(UmbrellaEntrySchema.shape));
+// ID-148.10 (INV-13): the two initiatives node shapes. `ProjectSchema` and
+// `InitiativeSchema` are plain `z.object(...)` — `.shape` is available.
+// `SubInitiativeSchema` is a `z.lazy(...)` wrapper (required for the
+// recursive typing) whose inner shape is not accessor-stable across zod
+// versions, so its known-field set is declared literally here — it mirrors
+// `InitiativeSchema`'s fields minus the initiative-4 transitional
+// `linked_tasks`/`linked_backlog` tolerance (`initiatives-schema.ts`'s
+// `SubInitiativeSchema` z.lazy() body is the source of truth; keep in sync).
+const PROJECT_KNOWN_FIELDS = new Set(Object.keys(ProjectSchema.shape));
+const INITIATIVE_KNOWN_FIELDS = new Set(Object.keys(InitiativeSchema.shape));
+const SUB_INITIATIVE_KNOWN_FIELDS = new Set([
+  "id",
+  "title",
+  "description",
+  "substrate_doc",
+  "status",
+  "projects",
+  "originating_session",
+  "sub-initiatives",
+]);
 // WS-C C2: retro record field keyset — same schema-keyset guard discipline.
 // RetroRecordSchema IS `.strict()`, but the keyset guard keeps the
 // walk-error-vs-schema-error boundary identical to the other kinds.
@@ -296,64 +324,81 @@ function applyTaskListPatch(
 }
 
 /**
- * Walk a fieldPath into a Roadmap snapshot and apply a single patch.
+ * Walk a fieldPath into an Initiatives snapshot and apply a single patch
+ * (ID-148.10, TECH §3.1(b), INV-13 — repurposed roadmap arm).
  *
- * Roadmap shape note (ID-20.19): the Phase-B themes[] roadmap replaced the
- * retired sections[]/items[] model. A roadmap record is a theme resolved
- * by id; patches address a single field directly on the theme
- * (`['themes', themeId, fieldName]`). There is no nested item layer.
+ * Two addressable shapes:
+ *   - `['projects', slug, field]` — a Project, tree-walk-found by its
+ *     globally-unique slug anywhere under `initiatives[]` +
+ *     recursive `sub-initiatives[]`.
+ *   - `['initiatives', dottedPath, field]` — an Initiative (bare path, e.g.
+ *     `"4"`) or a sub-initiative (dotted path, e.g. `"4.2"`).
  */
-function applyRoadmapPatch(
-  snapshot: Roadmap,
+function applyInitiativesPatch(
+  snapshot: InitiativesDocument,
   patch: FieldPatch,
 ): null | { fieldPath: string[]; detail: string } {
-  const [head, themeId, ...rest] = patch.fieldPath;
-  if (head !== "themes") {
+  const [head, id, ...rest] = patch.fieldPath;
+  if (head !== "projects" && head !== "initiatives") {
     return {
       fieldPath: patch.fieldPath,
-      detail: `Roadmap patches must start with 'themes'; got "${head ?? "<empty>"}".`,
+      detail: `Initiatives patches must start with 'projects' or 'initiatives'; got "${head ?? "<empty>"}".`,
     };
   }
-  if (themeId == null || themeId === "") {
+  if (id == null || id === "") {
     return {
       fieldPath: patch.fieldPath,
-      detail: `Missing theme id at fieldPath[1].`,
+      detail: `Missing record id at fieldPath[1].`,
     };
   }
-  const themeIdx = snapshot.themes.findIndex((t) => t.id === themeId);
-  if (themeIdx === -1) {
-    return {
-      fieldPath: patch.fieldPath,
-      detail: `Theme id "${themeId}" not found in canonical themes[].`,
-    };
-  }
-  const theme = snapshot.themes[themeIdx];
-
-  if (rest.length === 0) {
-    return {
-      fieldPath: patch.fieldPath,
-      detail: `FieldPath must address a field within the Theme, not the Theme object itself.`,
-    };
-  }
-
-  // Direct theme-level field: ['themes', themeId, fieldName]
   if (rest.length !== 1) {
     return {
       fieldPath: patch.fieldPath,
-      detail: `Theme fieldPath must address a single field after the themeId; got ${rest.length} additional segment(s).`,
+      detail: `Initiatives fieldPath must address a single field after the id; got ${rest.length} additional segment(s).`,
     };
   }
   const field = rest[0];
-  // ID-20.26: guard against schema known-key set (not instance hasOwnProperty)
-  // so that optional fields absent on the record instance can still be SET.
-  if (!ROADMAP_THEME_KNOWN_FIELDS.has(field)) {
+  const doc = snapshot as unknown as TreeDoc;
+
+  if (head === "projects") {
+    const located = findProjectBySlug(doc, id);
+    if (!located) {
+      return {
+        fieldPath: patch.fieldPath,
+        detail: `Project slug "${id}" not found in canonical initiatives tree.`,
+      };
+    }
+    if (!PROJECT_KNOWN_FIELDS.has(field)) {
+      return {
+        fieldPath: patch.fieldPath,
+        detail: `Field "${field}" is not a known field on Project records. Known fields: ${[...PROJECT_KNOWN_FIELDS].join(", ")}.`,
+      };
+    }
+    const applyErr = applyValueToLeaf(located.project, field, patch);
+    if (applyErr) return { fieldPath: patch.fieldPath, detail: applyErr };
+    return null;
+  }
+
+  // head === "initiatives"
+  const node = resolveInitiativeNode(doc, id);
+  if (!node) {
     return {
       fieldPath: patch.fieldPath,
-      detail: `Field "${field}" is not a known field on RoadmapTheme records. Known fields: ${[...ROADMAP_THEME_KNOWN_FIELDS].join(", ")}.`,
+      detail: `Initiative path "${id}" not found in canonical initiatives[]/sub-initiatives[] tree.`,
+    };
+  }
+  const isTopLevel = !id.includes(".");
+  const knownFields = isTopLevel
+    ? INITIATIVE_KNOWN_FIELDS
+    : SUB_INITIATIVE_KNOWN_FIELDS;
+  if (!knownFields.has(field)) {
+    return {
+      fieldPath: patch.fieldPath,
+      detail: `Field "${field}" is not a known field on ${isTopLevel ? "Initiative" : "SubInitiative"} records. Known fields: ${[...knownFields].join(", ")}.`,
     };
   }
   const applyErr = applyValueToLeaf(
-    theme as unknown as Record<string, unknown>,
+    node as unknown as Record<string, unknown>,
     field,
     patch,
   );
@@ -411,59 +456,6 @@ function applyBacklogPatch(
   }
   const applyErr = applyValueToLeaf(
     item as unknown as Record<string, unknown>,
-    field,
-    patch,
-  );
-  if (applyErr) return { fieldPath: patch.fieldPath, detail: applyErr };
-  return null;
-}
-
-/**
- * Walk a fieldPath into an Umbrellas snapshot and apply a single patch
- * (ID-90 U8). Mirrors the serialiser's umbrellas walk in scoped-serialise.ts
- * (record 6) — membership edits address `['umbrellas', id, 'task_ids']`.
- */
-function applyUmbrellasPatch(
-  snapshot: Umbrellas,
-  patch: FieldPatch,
-): null | { fieldPath: string[]; detail: string } {
-  const [head, umbrellaId, ...rest] = patch.fieldPath;
-  if (head !== "umbrellas") {
-    return {
-      fieldPath: patch.fieldPath,
-      detail: `Umbrellas patches must start with 'umbrellas'; got "${head ?? "<empty>"}".`,
-    };
-  }
-  if (umbrellaId == null || umbrellaId === "") {
-    return {
-      fieldPath: patch.fieldPath,
-      detail: `Missing umbrella id at fieldPath[1].`,
-    };
-  }
-  const umbrellaIdx = snapshot.umbrellas.findIndex((u) => u.id === umbrellaId);
-  if (umbrellaIdx === -1) {
-    return {
-      fieldPath: patch.fieldPath,
-      detail: `Umbrella id "${umbrellaId}" not found in canonical umbrellas[].`,
-    };
-  }
-  const umbrella = snapshot.umbrellas[umbrellaIdx];
-
-  if (rest.length !== 1) {
-    return {
-      fieldPath: patch.fieldPath,
-      detail: `Umbrella fieldPath must address a single field after the umbrellaId; got ${rest.length} additional segment(s).`,
-    };
-  }
-  const field = rest[0];
-  if (!UMBRELLA_KNOWN_FIELDS.has(field)) {
-    return {
-      fieldPath: patch.fieldPath,
-      detail: `Field "${field}" is not a known field on Umbrella records. Known fields: ${[...UMBRELLA_KNOWN_FIELDS].join(", ")}.`,
-    };
-  }
-  const applyErr = applyValueToLeaf(
-    umbrella as unknown as Record<string, unknown>,
     field,
     patch,
   );
@@ -557,19 +549,28 @@ export function applyTaskListPatches(
   }
 }
 
-export function applyRoadmapPatches(
-  snapshot: Roadmap,
+/**
+ * Apply a batch of FieldPatch entries to an Initiatives canonical snapshot
+ * and re-parse via InitiativesSchema (ID-148.10). Same single-validation-pass
+ * + clone-on-entry contract as the other appliers. A batch MAY address
+ * multiple DIFFERENT projects/initiatives in one call (each patch resolves
+ * its own fieldPath independently) — this is what makes the "atomic move"
+ * op (INV-13) just a 2-patch batch through this same function, with no
+ * dedicated server operation required.
+ */
+export function applyInitiativesPatches(
+  snapshot: InitiativesDocument,
   patches: readonly FieldPatch[],
-): ApplyPatchesResult<Roadmap> {
+): ApplyPatchesResult<InitiativesDocument> {
   if (patches.length === 0) return { ok: false, kind: "empty-patches" };
   for (const patch of patches) {
-    const err = applyRoadmapPatch(snapshot, patch);
+    const err = applyInitiativesPatch(snapshot, patch);
     if (err) {
       return { ok: false, kind: "walk-error", fieldPath: err.fieldPath, detail: err.detail };
     }
   }
   try {
-    const parsed = RoadmapSchema.parse(snapshot);
+    const parsed = InitiativesSchema.parse(snapshot);
     return { ok: true, parsed };
   } catch (err) {
     if (err instanceof ZodError) {
@@ -629,33 +630,6 @@ export function applyRetroPatches(
 }
 
 /**
- * Apply a batch of FieldPatch entries to an Umbrellas canonical snapshot
- * and re-parse via UmbrellasSchema (ID-90 U8). Same single-validation-pass
- * + clone-on-entry contract as the other three appliers.
- */
-export function applyUmbrellasPatches(
-  snapshot: Umbrellas,
-  patches: readonly FieldPatch[],
-): ApplyPatchesResult<Umbrellas> {
-  if (patches.length === 0) return { ok: false, kind: "empty-patches" };
-  for (const patch of patches) {
-    const err = applyUmbrellasPatch(snapshot, patch);
-    if (err) {
-      return { ok: false, kind: "walk-error", fieldPath: err.fieldPath, detail: err.detail };
-    }
-  }
-  try {
-    const parsed = UmbrellasSchema.parse(snapshot);
-    return { ok: true, parsed };
-  } catch (err) {
-    if (err instanceof ZodError) {
-      return { ok: false, kind: "schema-error", zodError: err };
-    }
-    throw err;
-  }
-}
-
-/**
  * Dispatch a patch batch to the per-kind applier. Returns the
  * discriminated-union result with a matching `kind` payload.
  *
@@ -666,9 +640,7 @@ export function applyUmbrellasPatches(
 export function applyPatches(
   detected: DetectSchemaResult,
   patches: readonly FieldPatch[],
-): ApplyPatchesResult<
-  TaskList | Roadmap | BacklogDocument | Umbrellas | RetrosDocument
-> {
+): ApplyPatchesResult<TaskList | InitiativesDocument | BacklogDocument | RetrosDocument> {
   if (detected.kind === "unknown") {
     throw new Error(
       `Cannot apply patches to unknown ledger kind (document_name: ${detected.documentName ?? "null"}).`,
@@ -679,14 +651,11 @@ export function applyPatches(
     // responsibility — see function jsdoc above.
     return applyTaskListPatches(detected.data, patches);
   }
-  if (detected.kind === "roadmap") {
-    return applyRoadmapPatches(detected.data, patches);
+  // ID-148.10: repurposed roadmap arm — nested initiatives walk.
+  if (detected.kind === "initiatives") {
+    return applyInitiativesPatches(detected.data, patches);
   }
-  // ID-90 U8: fourth dispatcher arm — the umbrellas walk.
-  if (detected.kind === "umbrellas") {
-    return applyUmbrellasPatches(detected.data, patches);
-  }
-  // WS-C C2: fifth dispatcher arm — the retros walk.
+  // WS-C C2: fourth dispatcher arm — the retros walk.
   if (detected.kind === "retro") {
     return applyRetroPatches(detected.data, patches);
   }

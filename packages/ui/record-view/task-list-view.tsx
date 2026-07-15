@@ -46,43 +46,40 @@ import { PriorityBadge, StatusBadge } from "./status-badge";
 import type { LedgerContext, NavStripData } from "./types";
 
 /**
- * Chip label for the capability_theme cross-ledger row ({20.29} §6).
- * `theme <id>: <title>` when the sibling roadmap resolved a title;
- * bare `theme <id>` otherwise (sibling absent / id missing in the roadmap).
+ * Chip label for the {20.30} reverse-backlink row. `project <slug>: <title>`
+ * when the sibling initiatives document resolved a title; bare
+ * `project <slug>` otherwise (sibling absent / slug missing in the tree).
  */
-function capabilityThemeChipLabel(
-  themeId: string,
-  title: string | null,
-): string {
-  return title !== null ? `theme ${themeId}: ${title}` : `theme ${themeId}`;
+function projectChipLabel(slug: string, title: string | null): string {
+  return title !== null ? `project ${slug}: ${title}` : `project ${slug}`;
 }
 
 /**
- * Render the {20.30} reverse cross-ledger backlinks — the roadmap themes
- * whose `linked_tasks` / `linked_backlog` reference THIS record. Each chip is
- * a cross-ledger link to `?ledger=roadmap&record=<themeId>`, with the title
- * resolved from the sibling roadmap when available (bare id otherwise). The
- * caller renders the surrounding frontmatter row only when `themeIds` is
- * non-empty, so this never produces an empty list. Shared by the Task and
- * Backlog item pages (the two reverse-edge targets).
+ * Render the {20.30} reverse cross-ledger backlinks — the initiatives
+ * PROJECTS (any depth, INV-13) whose `linked_tasks` / `linked_backlog`
+ * reference THIS record (ID-148.10, repurposed from roadmap themes). Each
+ * chip is a cross-ledger link to `?ledger=initiatives&record=<projectSlug>`,
+ * with the title resolved from the sibling initiatives document when
+ * available (bare slug otherwise). The caller renders the surrounding
+ * frontmatter row only when `projectSlugs` is non-empty, so this never
+ * produces an empty list. Shared by the Task and Backlog item pages (the
+ * two reverse-edge targets).
  */
-export function renderAppearsInThemes(
-  themeIds: readonly string[],
-  ledger: Pick<LedgerContext, "roadmapThemesById" | "roadmapThemeIds">,
+export function renderAppearsInProjects(
+  projectSlugs: readonly string[],
+  ledger: Pick<LedgerContext, "projectsBySlug" | "projectIds">,
 ): React.ReactNode {
   return interleave(
-    themeIds.map((themeId) => (
+    projectSlugs.map((slug) => (
       <MaybeRecordLink
-        key={themeId}
-        href={crossLedgerRecordHref("roadmap", themeId)}
-        label={capabilityThemeChipLabel(
-          themeId,
-          ledger.roadmapThemesById.get(themeId)?.title ?? null,
-        )}
-        // The id came FROM a theme in this roadmap, so it resolves; fall back
-        // to the presence set defensively (a sibling-less render has neither).
-        exists={ledger.roadmapThemeIds.has(themeId)}
-        crossLedger="roadmap"
+        key={slug}
+        href={crossLedgerRecordHref("initiatives", slug)}
+        label={projectChipLabel(slug, ledger.projectsBySlug.get(slug)?.title ?? null)}
+        // The slug came FROM a project in this tree, so it resolves; fall
+        // back to the presence set defensively (a sibling-less render has
+        // neither).
+        exists={ledger.projectIds.has(slug)}
+        crossLedger="initiatives"
       />
     )),
     ", ",
@@ -198,46 +195,26 @@ export const TaskListView: React.FC<{
       label: "Updated",
       value: task.updatedAt,
     },
-    // {20.29}: capability_theme is a forward cross-ledger edge to the
-    // roadmap sibling. Rendered ONLY when set (SPEC §5 slice 5 / §6) as a
-    // clickable chip → /?ledger=roadmap&record=<themeId>. The theme title
-    // is resolved from the sibling roadmap when the server threads it into
-    // the LedgerContext; otherwise the chip falls back to the bare id.
-    ...(typeof task.capability_theme === "string" &&
-    task.capability_theme !== ""
-      ? [
-          {
-            key: "capability_theme",
-            label: "Capability theme",
-            value: (
-              <MaybeRecordLink
-                href={crossLedgerRecordHref("roadmap", task.capability_theme)}
-                label={capabilityThemeChipLabel(
-                  task.capability_theme,
-                  ledger.roadmapThemesById.get(task.capability_theme)?.title ??
-                    null,
-                )}
-                exists={true}
-                crossLedger="roadmap"
-              />
-            ),
-          } satisfies FrontmatterRow,
-        ]
-      : []),
-    // {20.30}: reverse cross-ledger backlinks — the roadmap themes whose
-    // `linked_tasks` reference this Task (computed at load from the sibling
-    // roadmap's forward edges). Distinct from `capability_theme`: a Task can
-    // be listed by a theme without that theme being its capability_theme, and
-    // a Task with no capability_theme can still appear in a theme. Rendered
-    // only when at least one theme references it.
+    // ID-148.10 (TECH §3.1(d), INV-12(d)): `capability_theme` is a
+    // roadmap-only concept with no initiatives analog — its WRITE path
+    // (the promote-transaction third leg) is retired, and this view no
+    // longer renders it as a live cross-ledger link (the target kind,
+    // "roadmap theme", no longer exists). The field itself is dormant
+    // legacy data on Task (cleanup deferred to a separate task per TECH
+    // §8) — simply not surfaced here any more.
+    //
+    // {20.30}: reverse cross-ledger backlinks — the initiatives PROJECTS
+    // (any depth, INV-13) whose `linked_tasks` reference this Task
+    // (computed at load from every project's forward edges, tree-wide).
+    // Rendered only when at least one project references it.
     ...((): FrontmatterRow[] => {
-      const themeIds = ledger.themesByLinkedTask.get(task.id) ?? [];
-      if (themeIds.length === 0) return [];
+      const projectSlugs = ledger.projectsByLinkedTask.get(task.id) ?? [];
+      if (projectSlugs.length === 0) return [];
       return [
         {
-          key: "appears_in_themes",
-          label: "Appears in themes",
-          value: renderAppearsInThemes(themeIds, ledger),
+          key: "appears_in_projects",
+          label: "Appears in projects",
+          value: renderAppearsInProjects(projectSlugs, ledger),
         },
       ];
     })(),

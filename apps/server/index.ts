@@ -143,7 +143,7 @@ function printHelp(): void {
       "                       denylist env is unset (CI posture, invariant 34).",
       "",
       "Without a path argument, task-view scans the current working directory",
-      "for `document_name`-bearing JSON files (task-list.json, product-roadmap.json,",
+      "for `document_name`-bearing JSON files (task-list.json, initiatives.json,",
       "product-backlog.json).",
     ].join("\n"),
   );
@@ -157,7 +157,7 @@ async function inferPathFromCwd(): Promise<string | null> {
   if (scan.kind === "none") {
     console.error(
       `No known ledger JSON files found in ${cwd}.\n` +
-        `Expected one of: task-list.json, product-roadmap.json, product-backlog.json.\n` +
+        `Expected one of: task-list.json, initiatives.json, product-backlog.json.\n` +
         `Pass an explicit path: task-view <path-to-ledger.json>`,
     );
     return null;
@@ -225,7 +225,7 @@ async function resolveLaunchTarget(positional: string): Promise<LaunchTarget | n
       console.error(
         `task-view: could not resolve a sibling ledger for mirror ${positional}.\n` +
           `No known ledger JSON found in ${resolved.searchedDir}.\n` +
-          `Expected one of: task-list.json, product-roadmap.json, product-backlog.json.`,
+          `Expected one of: task-list.json, initiatives.json, product-backlog.json.`,
       );
       return null;
     case "multiple-ledgers":

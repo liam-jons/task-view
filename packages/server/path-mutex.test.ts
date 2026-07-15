@@ -167,7 +167,7 @@ describe("withPathLocks — multi-path lexicographic acquisition (transaction)",
     const paths = [
       "/tmp/u9-mutex/dl/task-list.json",
       "/tmp/u9-mutex/dl/product-backlog.json",
-      "/tmp/u9-mutex/dl/product-roadmap.json",
+      "/tmp/u9-mutex/dl/initiatives.json",
     ];
     const completed: number[] = [];
     const txs = Array.from({ length: 12 }, (_, i) =>

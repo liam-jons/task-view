@@ -54,8 +54,8 @@ describe("crossLedgerRecordHref ({20.29} cross-ledger nav, SPEC §5 slice 2)", (
     expect(crossLedgerRecordHref("task-list", "6")).toBe(
       "/?ledger=task-list&record=6",
     );
-    expect(crossLedgerRecordHref("roadmap", "10")).toBe(
-      "/?ledger=roadmap&record=10",
+    expect(crossLedgerRecordHref("initiatives", "10")).toBe(
+      "/?ledger=initiatives&record=10",
     );
     expect(crossLedgerRecordHref("backlog", "45")).toBe(
       "/?ledger=backlog&record=45",
@@ -83,7 +83,7 @@ describe("activeRecordHref — preserve the active sibling on intra-ledger links
     expect(activeRecordHref("284", "backlog")).toBe(
       "/?ledger=backlog&record=284",
     );
-    expect(activeRecordHref("10", "roadmap")).toBe("/?ledger=roadmap&record=10");
+    expect(activeRecordHref("10", "initiatives")).toBe("/?ledger=initiatives&record=10");
   });
 
   test("with no active slug (null / undefined) → bare back-compat form", () => {

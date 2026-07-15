@@ -14,10 +14,11 @@
 import React from "react";
 import type { LedgerSlug } from "./anchors";
 
-/** Human-readable display name per nav slug. */
+/** Human-readable display name per nav slug. ID-148.10: `roadmap` repurposed
+ * to `initiatives`. */
 const LEDGER_DISPLAY_NAME: Record<LedgerSlug, string> = {
   "task-list": "Task List",
-  roadmap: "Roadmap",
+  initiatives: "Initiatives",
   backlog: "Backlog",
 };
 
@@ -25,7 +26,11 @@ const LEDGER_DISPLAY_NAME: Record<LedgerSlug, string> = {
  * Canonical render order — stable regardless of directory scan order so the
  * switcher reads the same on every page.
  */
-const LEDGER_ORDER: readonly LedgerSlug[] = ["task-list", "roadmap", "backlog"];
+const LEDGER_ORDER: readonly LedgerSlug[] = [
+  "task-list",
+  "initiatives",
+  "backlog",
+];
 
 export const LedgerSwitcher: React.FC<{
   /** Viewer-renderable ledger slugs present in the launch directory. */

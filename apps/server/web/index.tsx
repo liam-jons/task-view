@@ -102,9 +102,10 @@ const CONTAINER_SELECTOR =
 // via the slug write seam (`/api/ledger/<slug>/…`), and each ledger's base
 // mtime is tracked separately so an edit to one never 409s against another's.
 
-/** True for the three viewer-renderable ledger slugs. */
+/** True for the three viewer-renderable ledger slugs (ID-148.10: `roadmap`
+ * repurposed to `initiatives`). */
 function isLedgerSlug(s: string | null | undefined): s is LedgerSlug {
-  return s === "task-list" || s === "roadmap" || s === "backlog";
+  return s === "task-list" || s === "initiatives" || s === "backlog";
 }
 
 /**
@@ -848,14 +849,15 @@ function clearInlineError(container: HTMLElement): void {
  * not the backlog — the confirm still proceeds, just without the orphan
  * warning (the core delete must never be blocked by a soft warning fetch).
  *
- * GET /api/ledger returns only the ACTIVE ledger, so cross-ledger roadmap
- * `linked_backlog` refs are not covered here (the pure helper supports them;
- * the sibling roadmap is simply not on the page). See the follow-up note.
+ * GET /api/ledger returns only the ACTIVE ledger, so cross-ledger
+ * initiatives `linked_backlog` refs (ID-148.10) are not covered here (the
+ * pure helper supports them; the sibling initiatives document is simply
+ * not on the page). See the follow-up note.
  */
 async function scanBacklogReferences(id: string): Promise<BacklogReferences> {
   const empty: BacklogReferences = {
     dependents: [],
-    themes: [],
+    projects: [],
     hasReferences: false,
   };
   try {
@@ -1266,7 +1268,7 @@ export function wireIndexSearch(): void {
 
 // ── Index column sort (docs/notes/ledger-sorting.md) ──────────────────────────
 //
-// The task-list / roadmap index headers render `<button data-sort-trigger=
+// The task-list / initiatives index headers render `<button data-sort-trigger=
 // "<field>">`. A click cycles the column sort (ascending → descending → off)
 // via `nextSortForField`, PRESERVING every other param (search `q`,
 // `?ledger=`), and navigates; the SSR re-sorts. Backlog is intentionally

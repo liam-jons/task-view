@@ -21,7 +21,8 @@
  *     ALL known documents via slug routes, but bare `/api/ledger/*`
  *     back-compat routing needs ONE launch document. The pick is
  *     deterministic: KNOWN_DOCUMENT_NAMES preference order (task-list →
- *     roadmap → backlog → umbrellas), so repeated daemon spawns against
+ *     initiatives → backlog → retros — ID-148.10 repurposes the roadmap
+ *     arm; umbrellas is fully retired), so repeated daemon spawns against
  *     the same directory always agree.
  *
  * These live in packages/server (not apps/server) so they sit INSIDE the
@@ -240,7 +241,7 @@ export function createParentDeathMonitor(
 /**
  * Pick the launch document for a `--serve-dir` daemon from a
  * `scanForLedgers` result. Deterministic: KNOWN_DOCUMENT_NAMES preference
- * order (task-list → roadmap → backlog → umbrellas). Returns null when the
+ * order (task-list → initiatives → backlog → retros). Returns null when the
  * directory holds no known document (the daemon fails loudly — invariant
  * 54's never-hang posture starts at spawn).
  */

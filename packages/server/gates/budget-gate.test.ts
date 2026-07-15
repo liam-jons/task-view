@@ -18,14 +18,16 @@ import {
   type BudgetGate,
 } from "./budget-gate";
 import type { TaskList, Task } from "@task-view/schemas/task-list";
-import type { Roadmap } from "@task-view/schemas/roadmap";
+import type { InitiativesDocument } from "@task-view/schemas/initiatives";
 import type { BacklogDocument } from "@task-view/schemas/backlog";
 
 // ── Fixtures (synthetic) ─────────────────────────────────────────────────────
 
 /** Budgets under test (from the U0 registry): task.description 1500,
  * task.status_note 300, subtask.description 250, subtask.testStrategy 300,
- * theme.description 1500, theme.notes 300, item.title 80, item.description 500. */
+ * project.summary 500, project.description 1500, initiative.description
+ * 1500 (ID-148.10, repurposed from theme.description/notes), item.title 80,
+ * item.description 500. */
 
 function makeTask(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -67,23 +69,49 @@ function makeTaskList(taskOverrides: Partial<Record<string, unknown>> = {}): Tas
   } as unknown as TaskList;
 }
 
-function makeRoadmap(themeOverrides: Partial<Record<string, unknown>> = {}): Roadmap {
+/** A single top-level initiative carrying one direct project (id "3-project")
+ * — mirrors the retired single-theme fixture shape, now split across the two
+ * initiatives node kinds (ID-148.10). `projectOverrides` merges onto the
+ * project; `initiativeOverrides` onto the owning initiative. */
+function makeInitiatives(
+  projectOverrides: Partial<Record<string, unknown>> = {},
+  initiativeOverrides: Partial<Record<string, unknown>> = {},
+): InitiativesDocument {
   return {
-    document_name: "Knowledge Hub Roadmap",
-    document_purpose: "Synthetic test roadmap.",
-    themes: [
+    document_name: "Canonical Platform - Initiatives",
+    document_purpose: "Synthetic test initiatives ledger.",
+    date: "2026-07-15",
+    status: "active",
+    related_documents: [],
+    last_updated: "kh-main-S473 synthetic fixture",
+    initiatives: [
       {
         id: "3",
-        title: "Synthetic theme",
-        status: "now",
-        description: "Short theme description.",
-        notes: null,
-        linked_tasks: [],
-        linked_backlog: [],
-        ...themeOverrides,
+        title: "Synthetic initiative",
+        description: "Short initiative description.",
+        status: "active",
+        originating_session: [],
+        "sub-initiatives": [],
+        ...initiativeOverrides,
+        projects: [
+          {
+            id: "3-project",
+            title: "Synthetic project",
+            summary: "Short summary.",
+            description: "Short project description.",
+            substrate_doc: "",
+            status: "idea",
+            blocked_by: [],
+            blocking: [],
+            linked_tasks: [],
+            linked_backlog: [],
+            originating_session: [],
+            ...projectOverrides,
+          },
+        ],
       },
     ],
-  } as unknown as Roadmap;
+  } as unknown as InitiativesDocument;
 }
 
 function makeBacklog(itemOverrides: Partial<Record<string, unknown>> = {}): BacklogDocument {
@@ -174,7 +202,7 @@ describe("checkBudget — create mode (mutatedField undefined)", () => {
   });
 
   test("non-subtask rejection suggests trim + --force (no `details` advice)", () => {
-    // `task`/`theme`/`item` have no unbudgeted `details` journal home, so the
+    // `task`/`project`/`item` have no unbudgeted `details` journal home, so the
     // remedy advises trimming + --force only — never the subtask-only clause.
     const result = checkBudget({
       recordKind: "task",
@@ -394,16 +422,91 @@ describe("checkBudgetForPatches", () => {
     }
   });
 
-  test("roadmap theme notes over budget rejects with the theme label", () => {
-    const snapshot = makeRoadmap({ notes: OVER_300 });
+  // ── ID-148.10: initiatives — TWO addressable node shapes (INV-13) ─────────
+
+  test("initiatives: project summary over budget rejects with the project label (slug addressing)", () => {
+    const OVER_500 = "s".repeat(510);
+    const snapshot = makeInitiatives({ summary: OVER_500 });
     const outcome = checkBudgetForPatches(
-      "roadmap",
+      "initiatives",
       snapshot,
-      [{ fieldPath: ["themes", "3", "notes"], newValue: OVER_300 }],
+      [{ fieldPath: ["projects", "3-project", "summary"], newValue: OVER_500 }],
       { force: false },
     );
     expect(outcome.ok).toBe(false);
-    if (!outcome.ok) expect(outcome.detail).toContain("on theme 3");
+    if (!outcome.ok) {
+      expect(outcome.detail).toContain(
+        "summary is 510 chars (budget 500, over by 10) on project 3-project",
+      );
+    }
+  });
+
+  test("initiatives: initiative description over budget rejects with the initiative label (path addressing)", () => {
+    const snapshot = makeInitiatives({}, { description: OVER_1500 });
+    const outcome = checkBudgetForPatches(
+      "initiatives",
+      snapshot,
+      [{ fieldPath: ["initiatives", "3", "description"], newValue: OVER_1500 }],
+      { force: false },
+    );
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.detail).toContain(
+        "description is 1510 chars (budget 1500, over by 10) on initiative 3",
+      );
+    }
+  });
+
+  test("initiatives: ATOMIC MOVE batch (2 patches on 2 DIFFERENT projects) budgets each independently", () => {
+    // A move is a 2-patch batch touching two projects' link arrays — this
+    // isn't a budgeted field, but the grouping-per-record mechanism must
+    // still resolve BOTH projects (not just the first) via the tree-walk.
+    const nested = {
+      ...makeInitiatives(),
+      initiatives: [
+        {
+          ...makeInitiatives().initiatives[0],
+          "sub-initiatives": [
+            {
+              id: "1",
+              title: "Sub",
+              description: "d",
+              status: "planned",
+              projects: [
+                {
+                  id: "nested-project",
+                  title: "Nested",
+                  summary: "s",
+                  description: "d",
+                  substrate_doc: "",
+                  status: "backlog",
+                  blocked_by: [],
+                  blocking: [],
+                  linked_tasks: [],
+                  linked_backlog: [],
+                  originating_session: [],
+                },
+              ],
+              originating_session: [],
+              "sub-initiatives": [],
+            },
+          ],
+        },
+      ],
+    } as unknown as InitiativesDocument;
+    const outcome = checkBudgetForPatches(
+      "initiatives",
+      nested,
+      [
+        { fieldPath: ["projects", "3-project", "linked_tasks"], newValue: [] },
+        {
+          fieldPath: ["projects", "nested-project", "linked_tasks"],
+          newValue: ["20"],
+        },
+      ],
+      { force: false },
+    );
+    expect(outcome).toEqual({ ok: true, warnings: [] });
   });
 
   test("backlog item title over budget rejects with the item label", () => {
@@ -465,8 +568,8 @@ describe("checkBudgetForCreate", () => {
 
   test("under-budget create passes clean", () => {
     const outcome = checkBudgetForCreate(
-      "theme",
-      { id: "9", description: "fine", notes: "fine" },
+      "project",
+      { id: "new-project", summary: "fine", description: "fine" },
       { force: false },
     );
     expect(outcome).toEqual({ ok: true, warnings: [] });
@@ -474,19 +577,19 @@ describe("checkBudgetForCreate", () => {
 
   // KH ports (ID-90.13 U11): ledger-cli-budget.test.ts ID-35.27 — the
   // budget-exceeded SUBJECT is recordKind-discriminated on every create
-  // surface (`theme <id>` / `item <id>`, matching the task/subtask labels
-  // asserted above).
-  test("over-budget theme create detail reads `theme <id>` (ID-35.27 port)", () => {
+  // surface (`project <id>` / `item <id>`, matching the task/subtask labels
+  // asserted above). ID-148.10: `theme` is repurposed to `project`.
+  test("over-budget project create detail reads `project <id>` (ID-35.27 port, ID-148.10)", () => {
     const outcome = checkBudgetForCreate(
-      "theme",
-      { id: "9", description: "fine", notes: "n".repeat(310) },
+      "project",
+      { id: "9-project", summary: "s".repeat(510), description: "fine" },
       { force: false },
     );
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) {
       expect(outcome.error).toBe("budget-exceeded");
-      expect(outcome.detail).toContain("notes is 310 chars");
-      expect(outcome.detail).toContain("on theme 9");
+      expect(outcome.detail).toContain("summary is 510 chars");
+      expect(outcome.detail).toContain("on project 9-project");
     }
   });
 

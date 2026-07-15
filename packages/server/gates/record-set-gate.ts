@@ -18,13 +18,24 @@
  *
  * Hook point: POST-SERIALISATION / PRE-`atomicWriteFile` in every mutating
  * handler — on the exact bytes about to land (PRODUCT invariant 22). Deltas
- * per operation: PATCH / umbrella-PATCH `none`; POST record/subtask `add`
- * (`add-many` bulk); DELETE `remove`; promote per-leg at stage time:
- * task-list `+1`, backlog `−1`, roadmap `∅` (invariant 23). A violation
- * rejects with `record-set-violation` and NOTHING is written.
+ * per operation: PATCH `none` (INCLUDING the initiatives "atomic move"
+ * 2-patch batch, ID-148.10 INV-13 — a move re-parents a task/backlog id
+ * between two projects' fields; the project SET is unchanged); POST
+ * record/subtask `add` (`add-many` bulk); DELETE `remove`.
+ *
+ * ID-148.10 (Option C — repurposed roadmap arm): the `initiatives` kind is
+ * NOT a flat top-level collection like `tasks[]`/`items[]`/`retros[]` — it
+ * is a TREE (`initiatives[]` -> `projects[]` + recursive
+ * `sub-initiatives[]`). This gate's "record set" for `initiatives` is the
+ * GLOBALLY-UNIQUE project SLUG set, flattened tree-wide via
+ * `initiatives-tree.ts`'s `allProjectSlugs` — the same tree-walk primitive
+ * `record-mutate.ts`/`patch-apply.ts` use, so the gate can never drift from
+ * the mutate/patch arms on what counts as "the record set" (INV-13: "the
+ * record-set gate ... walk[s] the whole tree, not a flat array").
  */
 
 import type { DetectSchemaResult } from "../detect-schema";
+import { allProjectSlugs, type TreeDoc } from "../initiatives-tree";
 
 type KnownDetected = Exclude<DetectSchemaResult, { kind: "unknown" }>;
 
@@ -44,19 +55,14 @@ export type RecordSetDelta =
 
 /**
  * A collection descriptor: which id-set inside a parsed ledger document the
- * gate guards. Top-level collections (`tasks` / `themes` / `items` /
- * `umbrellas`) guard the record-level id-set; `subtasks` guards one task's
- * subtask id-set.
- *
- * ID-90.11: `umbrellas` added — the U8 registration left the gate
- * descriptor without a fourth-kind arm, so every umbrellas membership
- * PATCH (the ONLY mutation the kind supports, PRODUCT invariants 49–50)
- * rejected with `record-set-violation: could not locate the items
- * collection`. The header above always intended "umbrella-PATCH `none`";
- * this closes that gap.
+ * gate guards. Top-level collections (`tasks` / `items` / `retros`) guard
+ * the record-level id-set; `subtasks` guards one task's subtask id-set;
+ * `projects` (ID-148.10, INV-13) guards the GLOBALLY-UNIQUE project-slug set
+ * flattened across the WHOLE initiatives tree (not a single top-level
+ * array — see `collectionIds`).
  */
 export type CollectionDescriptor =
-  | { collection: "tasks" | "themes" | "items" | "umbrellas" | "retros" }
+  | { collection: "tasks" | "projects" | "items" | "retros" }
   | { collection: "subtasks"; taskId: string };
 
 /**
@@ -79,6 +85,13 @@ export function collectionIds(
     ) as { subtasks?: unknown } | undefined;
     if (!task || !Array.isArray(task.subtasks)) return null;
     return new Set(task.subtasks.map((s) => (s as { id: IdValue }).id));
+  }
+  if (descriptor.collection === "projects") {
+    // ID-148.10 (INV-13): the tree-flattened, globally-unique project-slug
+    // set — NOT a single top-level array. A malformed/absent `initiatives`
+    // array is still a genuine "could not locate" violation.
+    if (!Array.isArray((doc as TreeDoc).initiatives)) return null;
+    return new Set(allProjectSlugs(doc as TreeDoc));
   }
   const arr = doc[descriptor.collection];
   if (!Array.isArray(arr)) return null;
@@ -103,14 +116,15 @@ export function beforeCollectionIds(
   if (descriptor.collection === "tasks" && detected.kind === "task-list") {
     return new Set(detected.data.tasks.map((t) => t.id));
   }
-  if (descriptor.collection === "themes" && detected.kind === "roadmap") {
-    return new Set(detected.data.themes.map((t) => t.id));
+  // ID-148.10: repurposed roadmap arm — tree-flattened project-slug set.
+  if (
+    descriptor.collection === "projects" &&
+    detected.kind === "initiatives"
+  ) {
+    return new Set(allProjectSlugs(detected.data as unknown as TreeDoc));
   }
   if (descriptor.collection === "items" && detected.kind === "backlog") {
     return new Set(detected.data.items.map((it) => it.id));
-  }
-  if (descriptor.collection === "umbrellas" && detected.kind === "umbrellas") {
-    return new Set(detected.data.umbrellas.map((u) => u.id));
   }
   // WS-C C2: retros — session-id record set.
   if (descriptor.collection === "retros" && detected.kind === "retro") {
@@ -200,16 +214,15 @@ export function checkRecordSet(
   return { ok: true };
 }
 
-/** Map a detected document kind to its top-level record collection. */
+/** Map a detected document kind to its top-level record collection.
+ * ID-148.10: `initiatives` maps to the tree-flattened `projects` descriptor
+ * (see `CollectionDescriptor` / `collectionIds`), not a literal top-level
+ * array key. */
 export function topLevelCollectionFor(
   kind: KnownDetected["kind"],
 ): CollectionDescriptor {
   if (kind === "task-list") return { collection: "tasks" };
-  if (kind === "roadmap") return { collection: "themes" };
-  // ID-90.11: the fourth kind's id-set lives under the `umbrellas` key —
-  // the pre-U9 fallthrough to `items` made every umbrellas PATCH a
-  // record-set-violation (see CollectionDescriptor note).
-  if (kind === "umbrellas") return { collection: "umbrellas" };
+  if (kind === "initiatives") return { collection: "projects" };
   // WS-C C2: the retro kind's id-set lives under the `retros` key.
   if (kind === "retro") return { collection: "retros" };
   return { collection: "items" };

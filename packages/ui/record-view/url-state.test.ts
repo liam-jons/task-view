@@ -5,14 +5,14 @@
 import { describe, expect, test } from "bun:test";
 import {
   applyBacklogFilters,
-  applyRoadmapFilters,
+  applyInitiativesFilters,
   applyTaskListFilters,
   decodeBacklogFilters,
   decodeLedgerParam,
-  decodeRoadmapFilters,
+  decodeInitiativesFilters,
   decodeTaskListFilters,
   encodeBacklogFilters,
-  encodeRoadmapFilters,
+  encodeInitiativesFilters,
   encodeTaskListFilters,
   decodeSort,
   encodeSort,
@@ -274,22 +274,22 @@ describe("Task-list keyword search (decodeTaskListFilters / apply)", () => {
   });
 });
 
-describe("Roadmap keyword search (decodeRoadmapFilters / apply)", () => {
-  const themes = [
+describe("Initiatives keyword search (decodeInitiativesFilters / apply, ID-148.10)", () => {
+  const initiatives = [
     { id: "1", title: "Platform" },
     { id: "2", title: "Growth" },
   ];
 
   test("decode/encode q round-trip", () => {
-    expect(decodeRoadmapFilters("q=plat")).toEqual({ q: "plat" });
-    expect(encodeRoadmapFilters({ q: null })).toBe("");
+    expect(decodeInitiativesFilters("q=plat")).toEqual({ q: "plat" });
+    expect(encodeInitiativesFilters({ q: null })).toBe("");
   });
 
-  test("applyRoadmapFilters matches title + id", () => {
-    expect(applyRoadmapFilters(themes, { q: "growth" }).map((t) => t.id)).toEqual([
-      "2",
-    ]);
-    expect(applyRoadmapFilters(themes, { q: null })).toHaveLength(2);
+  test("applyInitiativesFilters matches title + id", () => {
+    expect(
+      applyInitiativesFilters(initiatives, { q: "growth" }).map((i) => i.id),
+    ).toEqual(["2"]);
+    expect(applyInitiativesFilters(initiatives, { q: null })).toHaveLength(2);
   });
 });
 
@@ -353,7 +353,9 @@ describe("nextSearchForQuery (client search navigation — preserves other param
   });
 
   test("preserves a cross-ledger ?ledger= slug", () => {
-    expect(nextSearchForQuery("ledger=roadmap", "x")).toBe("ledger=roadmap&q=x");
+    expect(nextSearchForQuery("ledger=initiatives", "x")).toBe(
+      "ledger=initiatives&q=x",
+    );
   });
 });
 
@@ -371,7 +373,7 @@ describe("nextSearchForFlag (boolean toggle param — preserves other params)", 
 describe("decodeLedgerParam ({20.29} cross-ledger nav, SPEC §5 slice 2)", () => {
   test("returns the slug for a valid ?ledger=<slug>", () => {
     expect(decodeLedgerParam("ledger=task-list&record=6")).toBe("task-list");
-    expect(decodeLedgerParam("ledger=roadmap&record=10")).toBe("roadmap");
+    expect(decodeLedgerParam("ledger=initiatives&record=10")).toBe("initiatives");
     expect(decodeLedgerParam("ledger=backlog&record=45")).toBe("backlog");
   });
 
@@ -387,7 +389,7 @@ describe("decodeLedgerParam ({20.29} cross-ledger nav, SPEC §5 slice 2)", () =>
   });
 
   test("accepts a URLSearchParams as well as a string", () => {
-    const params = new URLSearchParams("ledger=roadmap&record=10");
-    expect(decodeLedgerParam(params)).toBe("roadmap");
+    const params = new URLSearchParams("ledger=initiatives&record=10");
+    expect(decodeLedgerParam(params)).toBe("initiatives");
   });
 });

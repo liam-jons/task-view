@@ -8,9 +8,10 @@
  * `.md` files happens in `@task-view/ui` record-view components; this
  * module just emits the deterministic text mirror.
  *
- * Layout (mirrors `mirror-generator.ts` §3.1):
- *   <dir>/task-list.json       → <dir>/tasks/index.md
- *   <dir>/product-roadmap.json → <dir>/roadmap/index.md
+ * Layout (mirrors `mirror-generator.ts` §3.1; ID-148.10 repurposes the
+ * roadmap arm):
+ *   <dir>/task-list.json  → <dir>/tasks/index.md
+ *   <dir>/initiatives.json → <dir>/initiatives/index.md
  *   <dir>/product-backlog.json → <dir>/backlog/index.md
  *
  * Idempotency: same canonical input → byte-identical index.md output.
@@ -25,17 +26,17 @@ import { resolveMirrorDir } from "./mirror-generator";
 import type {
   BacklogItem,
 } from "@task-view/schemas/backlog";
-import type { Roadmap } from "@task-view/schemas/roadmap";
+import type { InitiativesDocument } from "@task-view/schemas/initiatives";
 import type { Task } from "@task-view/schemas/task-list";
 import { doneSubtaskCount } from "@task-view/shared/subtask-progress";
 
-// ID-90 U8: umbrellas is additionally excluded — no mirror dir means no
-// index.md (PRODUCT invariant 53). WS-C C2: retros likewise have no mirror dir
-// / index.md yet, so they are excluded too (the name predates the second
-// exclusion; it denotes the mirrored-and-indexed kinds).
+// ID-148.10: `umbrellas` is retired entirely — nothing left to exclude for
+// it. WS-C C2: retros have a mirror dir now (INV-9) but no index.md concept
+// yet — still excluded (the name predates the umbrellas exclusion; it now
+// denotes the indexed kinds, a strict subset of the mirrored kinds).
 export type LedgerKindExceptUnknown = Exclude<
   DetectSchemaResult["kind"],
-  "unknown" | "umbrellas" | "retro"
+  "unknown" | "retro"
 >;
 
 /**
@@ -51,23 +52,19 @@ export function renderIndexMd(detected: DetectSchemaResult): string {
   if (detected.kind === "unknown") {
     throw new Error("Cannot render index.md for unknown ledger kind.");
   }
-  // ID-90 U8: umbrellas carry no mirror dir, hence no index.md (inv 53).
-  if (detected.kind === "umbrellas") {
-    throw new Error(
-      "Cannot render index.md for the umbrellas kind — umbrellas documents have no mirror directory (PRODUCT invariant 53).",
-    );
-  }
-  // WS-C C2: retros carry no mirror dir yet, hence no index.md.
+  // WS-C C2: retros carry a mirror dir now (INV-9) but no index.md concept
+  // yet, hence no index.md.
   if (detected.kind === "retro") {
     throw new Error(
-      "Cannot render index.md for the retro kind — retro documents have no mirror directory yet (WS-C C2).",
+      "Cannot render index.md for the retro kind — retro documents have no index.md concept yet (WS-C C2).",
     );
   }
   if (detected.kind === "task-list") {
     return renderTaskListIndex(detected.data.tasks);
   }
-  if (detected.kind === "roadmap") {
-    return renderRoadmapIndex(detected.data);
+  // ID-148.10: repurposed roadmap arm.
+  if (detected.kind === "initiatives") {
+    return renderInitiativesIndex(detected.data);
   }
   // backlog
   return renderBacklogIndex(detected.data.items);
@@ -115,26 +112,50 @@ function renderTaskListIndex(tasks: readonly Task[]): string {
   return lines.join("\n");
 }
 
-function renderRoadmapIndex(roadmap: Roadmap): string {
+/** Count every project under an initiative, INCLUDING nested sub-initiatives
+ * (recursive) — used for the index table's project-count column. */
+function totalProjectCount(
+  node: InitiativesDocument["initiatives"][number],
+): number {
+  let count = node.projects.length;
+  for (const sub of node["sub-initiatives"]) {
+    count += totalProjectCountForSub(sub);
+  }
+  return count;
+}
+
+function totalProjectCountForSub(
+  node: InitiativesDocument["initiatives"][number]["sub-initiatives"][number],
+): number {
+  let count = node.projects.length;
+  for (const sub of node["sub-initiatives"]) {
+    count += totalProjectCountForSub(sub);
+  }
+  return count;
+}
+
+/** ID-148.10: repurposed roadmap arm — one row per TOP-LEVEL initiative
+ * (INV-9; nested sub-initiatives are NOT separate rows). */
+function renderInitiativesIndex(doc: InitiativesDocument): string {
   const lines: string[] = [];
   lines.push("---");
-  lines.push("type: roadmap-index");
-  lines.push(`theme_count: ${roadmap.themes.length}`);
+  lines.push("type: initiatives-index");
+  lines.push(`initiative_count: ${doc.initiatives.length}`);
   lines.push("---");
   lines.push("");
-  lines.push("# Roadmap");
+  lines.push("# Initiatives");
   lines.push("");
-  if (roadmap.themes.length === 0) {
-    lines.push("_The Roadmap ledger has no themes._");
+  if (doc.initiatives.length === 0) {
+    lines.push("_The Initiatives ledger has no initiatives._");
     lines.push("");
     return lines.join("\n");
   }
-  lines.push("| ID | Title | Time horizon | Status | Linked tasks |");
-  lines.push("|----|-------|--------------|--------|--------------|");
-  for (const theme of roadmap.themes) {
-    const title = escapePipe(theme.title);
+  lines.push("| ID | Title | Status | Projects |");
+  lines.push("|----|-------|--------|----------|");
+  for (const initiative of doc.initiatives) {
+    const title = escapePipe(initiative.title);
     lines.push(
-      `| [${theme.id}](${theme.id}.md) | ${title} | ${theme.time_horizon} | ${theme.status} | ${theme.linked_tasks.length} |`,
+      `| [${initiative.id}](${initiative.id}.md) | ${title} | ${initiative.status} | ${totalProjectCount(initiative)} |`,
     );
   }
   lines.push("");

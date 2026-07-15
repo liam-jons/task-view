@@ -62,15 +62,14 @@ const minimalTaskListJson = JSON.stringify({
   ],
 }, null, 2);
 
-const minimalRoadmapJson = JSON.stringify({
-  document_name: "Knowledge Hub Roadmap",
-  document_purpose: "Forward-looking roadmap.",
-  date: "2026-05-21",
-  status: "Active",
-  forward_looking_only: true,
+const minimalInitiativesJson = JSON.stringify({
+  document_name: "Canonical Platform - Initiatives",
+  document_purpose: "Structured record of active initiatives.",
+  date: "2026-07-15",
+  status: "active",
   related_documents: [],
-  last_updated: "kh-prod-readiness-S63 representative fixture",
-  sections: [],
+  last_updated: "kh-main-S473 representative fixture",
+  initiatives: [],
 }, null, 2);
 
 const minimalBacklogJson = JSON.stringify({
@@ -127,19 +126,18 @@ describe("resolveLedgerForPath — mirror .md path (record-level)", () => {
     expect(result.recordId).toBe("15");
   });
 
-  test("resolves Roadmap theme mirrors by bare-digit id (no prefix to strip — ID-20.19 themes[])", async () => {
-    // The Phase-B themes[] roadmap (ID-20.19) replaced the retired
-    // sections[]/items[] model; a roadmap mirror is `{themeId}.md` with no
-    // 'section-' prefix.
-    const ledgerPath = join(testDir, "product-roadmap.json");
-    await writeFile(ledgerPath, minimalRoadmapJson, "utf8");
-    const mirrorDir = join(testDir, "roadmap");
+  test("resolves Initiatives mirrors by bare top-level initiative id (no prefix to strip — ID-148.10)", async () => {
+    // ID-148.10 repurposes the roadmap arm — an initiatives mirror is
+    // `{topLevelInitiativeId}.md` with no prefix.
+    const ledgerPath = join(testDir, "initiatives.json");
+    await writeFile(ledgerPath, minimalInitiativesJson, "utf8");
+    const mirrorDir = join(testDir, "initiatives");
     await mkdir(mirrorDir, { recursive: true });
     await writeFile(join(mirrorDir, "3.md"), "", "utf8");
 
     const result = await resolveLedgerForPath(join(mirrorDir, "3.md"));
     if (result.kind !== "ledger") throw new Error("Expected ledger result");
-    expect(result.documentName).toBe("Knowledge Hub Roadmap");
+    expect(result.documentName).toBe("Canonical Platform - Initiatives");
     expect(result.recordId).toBe("3");
   });
 
@@ -169,7 +167,7 @@ describe("resolveLedgerForPath — error cases (PRODUCT inv 43 alignment)", () =
 
   test("returns kind:'multiple-ledgers' when mirror parent dir contains multiple ledger JSONs", async () => {
     await writeFile(join(testDir, "task-list.json"), minimalTaskListJson, "utf8");
-    await writeFile(join(testDir, "product-roadmap.json"), minimalRoadmapJson, "utf8");
+    await writeFile(join(testDir, "initiatives.json"), minimalInitiativesJson, "utf8");
     const mirrorDir = join(testDir, "tasks");
     await mkdir(mirrorDir, { recursive: true });
     await writeFile(join(mirrorDir, "ID-20.md"), "", "utf8");
@@ -178,7 +176,7 @@ describe("resolveLedgerForPath — error cases (PRODUCT inv 43 alignment)", () =
     expect(result.kind).toBe("multiple-ledgers");
     if (result.kind === "multiple-ledgers") {
       expect(result.paths.sort()).toEqual([
-        join(testDir, "product-roadmap.json"),
+        join(testDir, "initiatives.json"),
         join(testDir, "task-list.json"),
       ]);
     }
@@ -224,15 +222,15 @@ describe("scanForLedgers (TECH §2.3)", () => {
 
   test("finds all three when all three canonical-named files present", async () => {
     await writeFile(join(testDir, "task-list.json"), minimalTaskListJson, "utf8");
-    await writeFile(join(testDir, "product-roadmap.json"), minimalRoadmapJson, "utf8");
+    await writeFile(join(testDir, "initiatives.json"), minimalInitiativesJson, "utf8");
     await writeFile(join(testDir, "product-backlog.json"), minimalBacklogJson, "utf8");
     const result = await scanForLedgers(testDir);
     expect(result.kind).toBe("multiple");
     if (result.kind === "multiple") {
       expect(result.paths).toHaveLength(3);
       expect(result.paths.sort()).toEqual([
+        join(testDir, "initiatives.json"),
         join(testDir, "product-backlog.json"),
-        join(testDir, "product-roadmap.json"),
         join(testDir, "task-list.json"),
       ]);
     }
@@ -295,7 +293,7 @@ describe("buildLedgerLaunchUrl — ?record= preselection (TECH §2.2 last paragr
     expect(url).toBe("http://localhost:8765/");
   });
 
-  test("resolves Roadmap theme records by bare-digit id (no &section= fragment — ID-20.19)", () => {
+  test("resolves Initiatives project/initiative records by bare id (no &section= fragment — ID-148.10)", () => {
     const url = buildLedgerLaunchUrl("http://localhost:8765", {
       recordId: "3",
     });

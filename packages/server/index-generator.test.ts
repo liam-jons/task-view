@@ -64,40 +64,69 @@ const taskListFixture = {
   ],
 };
 
-const roadmapFixture = {
-  document_name: "Knowledge Hub Roadmap" as const,
+const initiativesFixture = {
+  document_name: "Canonical Platform - Initiatives" as const,
   document_purpose: "fixture",
-  date: "2026-05-21",
-  status: "Active" as const,
-  forward_looking_only: true as const,
+  date: "2026-07-15",
+  status: "active",
   related_documents: [],
   last_updated: "fixture",
-  themes: [
+  initiatives: [
     {
       id: "1",
-      title: "Theme 1",
-      description: "Theme 1 description.",
-      time_horizon: "now" as const,
-      status: "in_progress" as const,
-      linked_tasks: ["20", "21"],
-      linked_backlog: [],
-      session_refs: [],
-      commit_refs: [],
-      cross_doc_links: [],
-      notes: null,
+      title: "Initiative 1",
+      description: "Initiative 1 description.",
+      status: "active",
+      projects: [
+        {
+          id: "project-a",
+          title: "Project A",
+          summary: "s",
+          description: "d",
+          substrate_doc: "",
+          status: "idea",
+          blocked_by: [],
+          blocking: [],
+          linked_tasks: ["20", "21"],
+          linked_backlog: [],
+          originating_session: [],
+        },
+      ],
+      originating_session: [],
+      "sub-initiatives": [
+        {
+          id: "1",
+          title: "Nested sub",
+          description: "d",
+          status: "planned",
+          projects: [
+            {
+              id: "project-b",
+              title: "Project B",
+              summary: "s",
+              description: "d",
+              substrate_doc: "",
+              status: "backlog",
+              blocked_by: [],
+              blocking: [],
+              linked_tasks: [],
+              linked_backlog: [],
+              originating_session: [],
+            },
+          ],
+          originating_session: [],
+          "sub-initiatives": [],
+        },
+      ],
     },
     {
       id: "42",
-      title: "Theme 42 | pipe",
-      description: "Theme 42 description.",
-      time_horizon: "later" as const,
-      status: "pending" as const,
-      linked_tasks: [],
-      linked_backlog: [],
-      session_refs: [],
-      commit_refs: [],
-      cross_doc_links: [],
-      notes: null,
+      title: "Initiative 42 | pipe",
+      description: "Initiative 42 description.",
+      status: "proposed",
+      projects: [],
+      originating_session: [],
+      "sub-initiatives": [],
     },
   ],
 };
@@ -209,25 +238,26 @@ describe("renderIndexMd — Task-list (TECH §4.3)", () => {
   });
 });
 
-// ── Roadmap index ─────────────────────────────────────────────────────────────
+// ── Initiatives index (ID-148.10, repurposed roadmap arm) ─────────────────────
 
-describe("renderIndexMd — Roadmap themes[] (ID-20.19)", () => {
-  test("emits themes table with ID / Title / Time horizon / Status / Linked tasks", () => {
-    const detected = detectSchema(roadmapFixture);
+describe("renderIndexMd — Initiatives (ID-148.10)", () => {
+  test("emits ONE row per TOP-LEVEL initiative with ID / Title / Status / Projects (recursive count)", () => {
+    const detected = detectSchema(initiativesFixture);
     const md = renderIndexMd(detected);
-    expect(md).toContain("type: roadmap-index");
-    expect(md).toContain("theme_count: 2");
-    expect(md).toContain("# Roadmap");
-    expect(md).toContain("| ID | Title | Time horizon | Status | Linked tasks |");
-    expect(md).toContain("| [1](1.md) | Theme 1 | now | in_progress | 2 |");
+    expect(md).toContain("type: initiatives-index");
+    expect(md).toContain("initiative_count: 2");
+    expect(md).toContain("# Initiatives");
+    expect(md).toContain("| ID | Title | Status | Projects |");
+    // Initiative 1 has 1 direct project + 1 nested project (sub-initiative) = 2.
+    expect(md).toContain("| [1](1.md) | Initiative 1 | active | 2 |");
     // Pipe in the title is escaped so the table doesn't break.
-    expect(md).toContain("| [42](42.md) | Theme 42 \\| pipe | later | pending | 0 |");
+    expect(md).toContain("| [42](42.md) | Initiative 42 \\| pipe | proposed | 0 |");
   });
 
-  test("emits empty-state when themes list is empty", () => {
-    const detected = detectSchema({ ...roadmapFixture, themes: [] });
+  test("emits empty-state when initiatives list is empty", () => {
+    const detected = detectSchema({ ...initiativesFixture, initiatives: [] });
     const md = renderIndexMd(detected);
-    expect(md).toContain("_The Roadmap ledger has no themes._");
+    expect(md).toContain("_The Initiatives ledger has no initiatives._");
   });
 });
 
@@ -305,12 +335,12 @@ describe("indexMdPath (PRODUCT inv 52 cross-platform path separators)", () => {
     expect(path.endsWith("index.md")).toBe(true);
   });
 
-  test("Roadmap index.md sits inside `roadmap/` sibling dir", () => {
+  test("Initiatives index.md sits inside `initiatives/` sibling dir (ID-148.10)", () => {
     const path = indexMdPath(
-      "roadmap",
-      `/repo/docs/reference/product-roadmap.json`,
+      "initiatives",
+      `/repo/docs/reference/initiatives.json`,
     );
-    expect(path).toContain("roadmap");
+    expect(path).toContain("initiatives");
     expect(path.endsWith("index.md")).toBe(true);
   });
 

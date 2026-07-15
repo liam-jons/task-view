@@ -1,16 +1,23 @@
 /**
  * Tests for mirror-generator — TECH §3.1, §3.2, §3.3, §3.4.
  *
- * Acceptance gates (per ID-20.7 PLAN):
+ * Acceptance gates (per ID-20.7 PLAN, extended by ID-148.10 INV-9):
  *   - "mirror generator produces byte-identical output across runs (snapshot test)"
  *   - "orphan deletion verified by removing a Task and re-running"
+ *   - detect-schema routes initiatives; mirror-generator emits initiatives +
+ *     retros mirrors (ID-148.10 testStrategy).
  *
  * Covers:
- *   §3.1 — output layout: sibling `tasks/` / `roadmap/` / `backlog/` dir
+ *   §3.1 — output layout: sibling `tasks/` / `initiatives/` / `backlog/` /
+ *          `retros/` dir (ID-148.10: `roadmap` repurposed to `initiatives`;
+ *          `retros` newly added — was previously excluded, INV-9).
  *   §3.2 — record-id filename rule (Liam-ratified OQ-C): raw id with
  *          filesystem-unsafe characters substituted to `-`; Task-list
- *          gets `ID-` prefix; Roadmap theme + Backlog item use the raw id.
+ *          gets `ID-` prefix; Initiative (top-level) / Backlog item / Retro
+ *          use the raw id.
  *   §3.3 — per-mode mirror content shape (YAML frontmatter + markdown body).
+ *          Initiatives: ONE mirror per TOP-LEVEL initiative, nested
+ *          sub-initiative -> project tree renders inline (INV-9).
  *   §3.4 — idempotency (byte-identical) + orphan deletion + atomic
  *          write-to-temp + rename.
  */
@@ -44,7 +51,7 @@ afterEach(async () => {
 const makeTaskList = (taskIds: string[]) => ({
   document_name: "Knowledge Hub Task List",
   document_purpose: "Active + recently-closed structured work — Taskmaster JSON shape.",
-  related_documents: ["docs/reference/product-roadmap.json"],
+  related_documents: ["docs/reference/initiatives.json"],
   tasks: taskIds.map((id) => ({
     id,
     title: `Task ${id} title`,
@@ -80,40 +87,75 @@ const makeTaskList = (taskIds: string[]) => ({
   })),
 });
 
-const makeRoadmap = () => ({
-  document_name: "Knowledge Hub Roadmap",
-  document_purpose: "Forward-looking roadmap of Knowledge Hub phases and themes.",
-  date: "2026-05-21",
-  status: "Active",
-  forward_looking_only: true,
+/**
+ * A two-initiative fixture (ID-148.10): initiative "1" carries ONE direct
+ * project; initiative "2" carries a nested sub-initiative "2.1" with its
+ * own project — so both the flat-project and nested-tree render paths are
+ * exercised in a single fixture.
+ */
+const makeInitiatives = () => ({
+  document_name: "Canonical Platform - Initiatives",
+  document_purpose: "Structured record of active initiatives and their constituent projects.",
+  date: "2026-07-15",
+  status: "active",
   related_documents: ["docs/reference/product-backlog.json"],
-  last_updated: "kh-prod-readiness-S63 representative fixture",
-  themes: [
+  last_updated: "kh-main-S473 representative fixture",
+  initiatives: [
     {
       id: "1",
       title: "Foundation",
       description: "Build the foundations.",
-      time_horizon: "now",
-      status: "in_progress",
-      linked_tasks: ["20"],
-      linked_backlog: [],
-      session_refs: ["kh-prod-readiness-S63"],
-      commit_refs: [],
-      cross_doc_links: [],
-      notes: null,
+      status: "active",
+      projects: [
+        {
+          id: "foundation-project",
+          title: "Foundation project",
+          summary: "One-sentence summary.",
+          description: "Fuller description.",
+          substrate_doc: "",
+          status: "in-progress",
+          blocked_by: [],
+          blocking: [],
+          linked_tasks: ["20"],
+          linked_backlog: [],
+          originating_session: ["S63"],
+        },
+      ],
+      originating_session: ["S63"],
+      "sub-initiatives": [],
     },
     {
       id: "2",
       title: "Expansion",
       description: "Expand the platform.",
-      time_horizon: "next",
-      status: "pending",
-      linked_tasks: [],
-      linked_backlog: ["45"],
-      session_refs: [],
-      commit_refs: [],
-      cross_doc_links: [],
-      notes: "Some notes.",
+      status: "proposed",
+      projects: [],
+      originating_session: [],
+      "sub-initiatives": [
+        {
+          id: "1",
+          title: "Sub expansion",
+          description: "Nested sub-initiative.",
+          status: "planned",
+          projects: [
+            {
+              id: "nested-project",
+              title: "Nested project",
+              summary: "Nested summary.",
+              description: "",
+              substrate_doc: "",
+              status: "backlog",
+              blocked_by: [],
+              blocking: [],
+              linked_tasks: [],
+              linked_backlog: ["45"],
+              originating_session: [],
+            },
+          ],
+          originating_session: [],
+          "sub-initiatives": [],
+        },
+      ],
     },
   ],
 });
@@ -121,7 +163,7 @@ const makeRoadmap = () => ({
 const makeBacklog = () => ({
   document_name: "Product Backlog",
   document_purpose: "Forward-looking backlog of unscheduled work items.",
-  related_documents: ["docs/reference/product-roadmap.json"],
+  related_documents: ["docs/reference/initiatives.json"],
   items: [
     {
       id: "1",
@@ -152,6 +194,34 @@ const makeBacklog = () => ({
       notes: null,
       details: "Pre-thought details.",
       testStrategy: "Acceptance line.",
+    },
+  ],
+});
+
+const makeRetros = () => ({
+  document_name: "Knowledge Hub Retros",
+  document_purpose: "Session retros.",
+  related_documents: [],
+  last_updated: "kh-main-S473 fixture",
+  retros: [
+    {
+      id: "S473",
+      session_id: "kh-main-S473",
+      date: "2026-07-15",
+      track: "main",
+      session_refs: [],
+      commit_refs: [],
+      cross_doc_links: [],
+      bugs_discovered: [{ text: "Found a bug.", cross_doc_links: [] }],
+      failed_assumptions: [],
+      architecture_decisions: [],
+      rejected_approaches: [],
+      workflow_improvements: [],
+      unresolved_questions: [],
+      deprecated: false,
+      deprecation_reason: null,
+      superseding_record_id: null,
+      last_conflict_check: null,
     },
   ],
 });
@@ -191,14 +261,9 @@ describe("computeRecordFilename (TECH §3.2 prefix rules)", () => {
     expect(computeRecordFilename("task-list", { id: "15" })).toBe("ID-15.md");
   });
 
-  test("Roadmap mode (item) uses raw id with '.md' suffix", () => {
-    expect(computeRecordFilename("roadmap", { id: "3.1.8" })).toBe("3.1.8.md");
-    expect(computeRecordFilename("roadmap", { id: "9.18" })).toBe("9.18.md");
-  });
-
-  test("Roadmap mode (theme) uses raw id with '.md' suffix (ID-20.19)", () => {
-    expect(computeRecordFilename("roadmap", { id: "1" })).toBe("1.md");
-    expect(computeRecordFilename("roadmap", { id: "42" })).toBe("42.md");
+  test("Initiatives mode uses the raw TOP-LEVEL initiative id with '.md' suffix (ID-148.10, INV-9)", () => {
+    expect(computeRecordFilename("initiatives", { id: "1" })).toBe("1.md");
+    expect(computeRecordFilename("initiatives", { id: "42" })).toBe("42.md");
   });
 
   test("Backlog mode uses raw id with '.md' suffix", () => {
@@ -207,17 +272,24 @@ describe("computeRecordFilename (TECH §3.2 prefix rules)", () => {
       "C2-PA5.md",
     );
   });
+
+  test("Retro mode uses the raw session id with '.md' suffix (ID-148.10, INV-9)", () => {
+    expect(computeRecordFilename("retro", { id: "S473" })).toBe("S473.md");
+  });
 });
 
 describe("computeMirrorDirName (TECH §3.1 sibling dir layout)", () => {
   test("task-list → 'tasks'", () => {
     expect(computeMirrorDirName("task-list")).toBe("tasks");
   });
-  test("roadmap → 'roadmap'", () => {
-    expect(computeMirrorDirName("roadmap")).toBe("roadmap");
+  test("initiatives → 'initiatives' (ID-148.10, repurposed from 'roadmap')", () => {
+    expect(computeMirrorDirName("initiatives")).toBe("initiatives");
   });
   test("backlog → 'backlog'", () => {
     expect(computeMirrorDirName("backlog")).toBe("backlog");
+  });
+  test("retro → 'retros' (ID-148.10, INV-9 — newly mirrored)", () => {
+    expect(computeMirrorDirName("retro")).toBe("retros");
   });
 });
 
@@ -298,50 +370,74 @@ describe("generateMirrors — Task-list mode (TECH §3.3, §3.4)", () => {
   });
 });
 
-describe("generateMirrors — Roadmap mode (TECH §3.3)", () => {
+describe("generateMirrors — Initiatives mode (ID-148.10, TECH §3.3, INV-9)", () => {
   beforeEach(async () => {
-    ledgerPath = join(testDir, "product-roadmap.json");
-    mirrorDir = join(testDir, "roadmap");
+    ledgerPath = join(testDir, "initiatives.json");
+    mirrorDir = join(testDir, "initiatives");
     await writeFile(
       ledgerPath,
-      JSON.stringify(makeRoadmap(), null, 2),
+      JSON.stringify(makeInitiatives(), null, 2),
       "utf8",
     );
   });
 
-  test("creates one mirror per theme keyed by theme id (ID-20.19)", async () => {
+  test("creates ONE mirror per TOP-LEVEL initiative id (not per project, not per sub-initiative)", async () => {
     const parsed = JSON.parse(await readFile(ledgerPath, "utf8"));
     const detected = detectSchema(parsed);
+    expect(detected.kind).toBe("initiatives");
     await generateMirrors(detected, ledgerPath);
     const files = (await readdir(mirrorDir)).sort();
     expect(files).toEqual(["1.md", "2.md"]);
   });
 
-  test("theme mirror contains description + frontmatter type 'roadmap-theme'", async () => {
+  test("initiative mirror contains description + frontmatter type 'initiative' + its direct project", async () => {
     const parsed = JSON.parse(await readFile(ledgerPath, "utf8"));
     const detected = detectSchema(parsed);
     await generateMirrors(detected, ledgerPath);
     const content = await readFile(join(mirrorDir, "1.md"), "utf8");
-    expect(content).toContain('type: roadmap-theme');
+    expect(content).toContain("type: initiative");
     expect(content).toContain('id: "1"');
-    expect(content).toContain("time_horizon: now");
-    expect(content).toContain("status: in_progress");
-    expect(content).toContain('linked_tasks: ["20"]');
+    expect(content).toContain("status: active");
     expect(content).toContain("# 1: Foundation");
     expect(content).toContain("Build the foundations.");
+    expect(content).toContain("## Projects");
+    expect(content).toContain("foundation-project");
+    expect(content).toContain("Foundation project");
+    expect(content).toContain("Linked tasks: 20");
   });
 
-  test("theme mirror with notes emits a Notes section", async () => {
+  test("initiative mirror renders the NESTED sub-initiative -> project tree inline (INV-9 — one file, no separate sub-initiative file)", async () => {
     const parsed = JSON.parse(await readFile(ledgerPath, "utf8"));
     const detected = detectSchema(parsed);
     await generateMirrors(detected, ledgerPath);
     const content = await readFile(join(mirrorDir, "2.md"), "utf8");
-    expect(content).toContain('type: roadmap-theme');
-    expect(content).toContain('id: "2"');
-    expect(content).toContain("time_horizon: next");
-    expect(content).toContain('linked_backlog: ["45"]');
-    expect(content).toContain("## Notes");
-    expect(content).toContain("Some notes.");
+    expect(content).toContain("# 2: Expansion");
+    expect(content).toContain("## Sub-initiatives");
+    expect(content).toContain("Sub expansion");
+    expect(content).toContain("nested-project");
+    expect(content).toContain("Nested project");
+    expect(content).toContain("Linked backlog: 45");
+    // No separate mirror file exists for the sub-initiative or its project.
+    const files = await readdir(mirrorDir);
+    expect(files).not.toContain("2.1.md");
+    expect(files).not.toContain("nested-project.md");
+  });
+
+  test("initiative with no direct projects renders the '_none_' placeholder", async () => {
+    const parsed = JSON.parse(await readFile(ledgerPath, "utf8"));
+    const detected = detectSchema(parsed);
+    await generateMirrors(detected, ledgerPath);
+    const content = await readFile(join(mirrorDir, "2.md"), "utf8");
+    expect(content).toContain("## Projects");
+    // Initiative 2 has zero DIRECT projects (only a nested one) — the
+    // Projects section for the top-level node itself is empty.
+    const projectsSectionIdx = content.indexOf("## Projects");
+    const subInitiativesSectionIdx = content.indexOf("## Sub-initiatives");
+    const projectsSection = content.slice(
+      projectsSectionIdx,
+      subInitiativesSectionIdx,
+    );
+    expect(projectsSection).toContain("_none_");
   });
 });
 
@@ -380,6 +476,36 @@ describe("generateMirrors — Backlog mode (TECH §3.3)", () => {
     const content = await readFile(join(mirrorDir, "2.md"), "utf8");
     expect(content).toContain("Pre-thought details.");
     expect(content).toContain("Acceptance line.");
+  });
+});
+
+describe("generateMirrors — Retro mode (ID-148.10, INV-9 — newly mirrored)", () => {
+  beforeEach(async () => {
+    ledgerPath = join(testDir, "product-retros.json");
+    mirrorDir = join(testDir, "retros");
+    await writeFile(ledgerPath, JSON.stringify(makeRetros(), null, 2), "utf8");
+  });
+
+  test("creates one mirror per retro record keyed by session id", async () => {
+    const parsed = JSON.parse(await readFile(ledgerPath, "utf8"));
+    const detected = detectSchema(parsed);
+    expect(detected.kind).toBe("retro");
+    await generateMirrors(detected, ledgerPath);
+    const files = (await readdir(mirrorDir)).sort();
+    expect(files).toEqual(["S473.md"]);
+  });
+
+  test("retro mirror contains frontmatter type 'retro' + the six category headings", async () => {
+    const parsed = JSON.parse(await readFile(ledgerPath, "utf8"));
+    const detected = detectSchema(parsed);
+    await generateMirrors(detected, ledgerPath);
+    const content = await readFile(join(mirrorDir, "S473.md"), "utf8");
+    expect(content).toContain("type: retro");
+    expect(content).toContain('id: "S473"');
+    expect(content).toContain("## Bugs discovered");
+    expect(content).toContain("Found a bug.");
+    expect(content).toContain("## Failed assumptions");
+    expect(content).toContain("_none_");
   });
 });
 
@@ -432,6 +558,37 @@ describe("generateRecordMirror — scoped single-record regen (Subtask 20.23)", 
     expect(result.written).toEqual([]);
     expect(result.deleted).toEqual([]);
   });
+
+  test("initiatives: scoped regen by a PROJECT SLUG writes only the owning top-level initiative's mirror (INV-9)", async () => {
+    const ledger = makeInitiatives();
+    ledgerPath = join(testDir, "initiatives.json");
+    await writeFile(ledgerPath, JSON.stringify(ledger, null, 2), "utf8");
+    const detected = detectSchema(ledger);
+    await generateMirrors(detected, ledgerPath);
+    mirrorDir = join(testDir, "initiatives");
+    const untouchedBefore = await readFile(join(mirrorDir, "1.md"), "utf8");
+
+    // "nested-project" lives under initiative "2"'s sub-initiative "1".
+    const result = await generateRecordMirror(
+      detected,
+      ledgerPath,
+      "nested-project",
+    );
+    expect(result.written).toEqual(["2.md"]);
+
+    const untouchedAfter = await readFile(join(mirrorDir, "1.md"), "utf8");
+    expect(untouchedAfter).toBe(untouchedBefore);
+  });
+
+  test("initiatives: scoped regen by an INITIATIVE PATH writes the correct top-level mirror (INV-9)", async () => {
+    const ledger = makeInitiatives();
+    ledgerPath = join(testDir, "initiatives.json");
+    await writeFile(ledgerPath, JSON.stringify(ledger, null, 2), "utf8");
+    const detected = detectSchema(ledger);
+
+    const result = await generateRecordMirror(detected, ledgerPath, "2.1");
+    expect(result.written).toEqual(["2.md"]);
+  });
 });
 
 describe("generateMirrors — idempotency (TECH §3.4)", () => {
@@ -455,11 +612,11 @@ describe("generateMirrors — idempotency (TECH §3.4)", () => {
     expect(second).toBe(first);
   });
 
-  test("produces byte-identical output across repeated runs (Roadmap mode)", async () => {
-    ledgerPath = join(testDir, "product-roadmap.json");
-    mirrorDir = join(testDir, "roadmap");
-    await writeFile(ledgerPath, JSON.stringify(makeRoadmap(), null, 2), "utf8");
-    const detected = detectSchema(makeRoadmap());
+  test("produces byte-identical output across repeated runs (Initiatives mode)", async () => {
+    ledgerPath = join(testDir, "initiatives.json");
+    mirrorDir = join(testDir, "initiatives");
+    await writeFile(ledgerPath, JSON.stringify(makeInitiatives(), null, 2), "utf8");
+    const detected = detectSchema(makeInitiatives());
     await generateMirrors(detected, ledgerPath);
     const first = await readFile(join(mirrorDir, "1.md"), "utf8");
     await generateMirrors(detected, ledgerPath);
@@ -506,16 +663,16 @@ describe("generateMirrors — orphan deletion (TECH §3.4)", () => {
     expect((await readdir(mirrorDir)).sort()).toEqual(["ID-20.md"]);
   });
 
-  test("removes mirrors for Roadmap themes no longer in canonical (ID-20.19)", async () => {
-    ledgerPath = join(testDir, "product-roadmap.json");
-    mirrorDir = join(testDir, "roadmap");
-    await writeFile(ledgerPath, JSON.stringify(makeRoadmap(), null, 2), "utf8");
-    await generateMirrors(detectSchema(makeRoadmap()), ledgerPath);
+  test("removes mirrors for top-level initiatives no longer in canonical (ID-148.10)", async () => {
+    ledgerPath = join(testDir, "initiatives.json");
+    mirrorDir = join(testDir, "initiatives");
+    await writeFile(ledgerPath, JSON.stringify(makeInitiatives(), null, 2), "utf8");
+    await generateMirrors(detectSchema(makeInitiatives()), ledgerPath);
     expect((await readdir(mirrorDir)).sort()).toEqual(["1.md", "2.md"]);
 
-    // Drop theme 2 from the canonical
-    const trimmed = makeRoadmap();
-    trimmed.themes = trimmed.themes.filter((t) => t.id !== "2");
+    // Drop initiative 2 from the canonical
+    const trimmed = makeInitiatives();
+    trimmed.initiatives = trimmed.initiatives.filter((i) => i.id !== "2");
     await writeFile(ledgerPath, JSON.stringify(trimmed, null, 2), "utf8");
     await generateMirrors(detectSchema(trimmed), ledgerPath);
     expect((await readdir(mirrorDir)).sort()).toEqual(["1.md"]);
@@ -589,62 +746,5 @@ describe("generateMirrors — atomic write (TECH §3.4)", () => {
     expect(files.filter((f) => f.endsWith(".tmp") || f.includes(".tmp."))).toEqual(
       [],
     );
-  });
-});
-
-// ── ID-90 U8 — umbrellas kind: EMPTY mirror plan (PRODUCT invariant 53) ───────
-
-describe("generateMirrors — umbrellas kind returns the EMPTY plan (ID-90 U8, inv 53)", () => {
-  const makeUmbrellas = () => ({
-    document_name: "umbrellas",
-    document_purpose: "Umbrella groupings of Tasks (Linear-Initiative analogue).",
-    last_updated: "kh-main-S1 synthetic fixture",
-    related_documents: [],
-    umbrellas: [
-      {
-        id: "test-umbrella",
-        title: "Test Umbrella",
-        substrate_doc: "docs/reference/test-umbrella.md",
-        task_ids: ["20"],
-        status: "in_progress",
-        phase: "Phase 1",
-      },
-    ],
-  });
-
-  test("generateMirrors writes nothing and creates NO mirror directory, ever", async () => {
-    ledgerPath = join(testDir, "umbrellas.json");
-    await writeFile(
-      ledgerPath,
-      JSON.stringify(makeUmbrellas(), null, 2),
-      "utf8",
-    );
-    const result = await generateMirrors(detectSchema(makeUmbrellas()), ledgerPath);
-    expect(result.written).toEqual([]);
-    expect(result.deleted).toEqual([]);
-    expect(result.mirrorDir).toBe("");
-    // Invariant 53: no mirror dir, EVER — the canonical file stays the only
-    // entry in the directory.
-    const entries = await readdir(testDir);
-    expect(entries).toEqual(["umbrellas.json"]);
-  });
-
-  test("generateRecordMirror writes nothing and creates NO mirror directory", async () => {
-    ledgerPath = join(testDir, "umbrellas.json");
-    await writeFile(
-      ledgerPath,
-      JSON.stringify(makeUmbrellas(), null, 2),
-      "utf8",
-    );
-    const result = await generateRecordMirror(
-      detectSchema(makeUmbrellas()),
-      ledgerPath,
-      "test-umbrella",
-    );
-    expect(result.written).toEqual([]);
-    expect(result.deleted).toEqual([]);
-    expect(result.mirrorDir).toBe("");
-    const entries = await readdir(testDir);
-    expect(entries).toEqual(["umbrellas.json"]);
   });
 });

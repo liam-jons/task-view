@@ -21,9 +21,11 @@ const TASK_MIRROR_PREFIX = "ID-";
  * layer (and mirrored server-side in `packages/server/cross-ledger.ts`)
  * because `packages/ui` must not import from `packages/server` — the slug
  * string set is a tiny, stable contract shared by both. Keep the two in
- * sync (both derive from the same SPEC §2 table).
+ * sync (both derive from the same SPEC §2 table). ID-148.10: `roadmap` is
+ * repurposed to `initiatives` (viewer-navigable WITH editing, OQ2);
+ * `umbrellas` was never a viewer-navigable slug and is now fully retired.
  */
-export type LedgerSlug = "task-list" | "roadmap" | "backlog";
+export type LedgerSlug = "task-list" | "initiatives" | "backlog";
 
 /**
  * In-page anchor id for a sibling Subtask (`subtask-3`). Used as the
@@ -45,8 +47,8 @@ export function subtaskHref(subtaskId: string): string {
  * Href to another record's page on the live loopback server, from any
  * record or index page.
  *
- * The server routes every record kind (Task / Roadmap theme / Backlog
- * item) purely on the `?record=<id>` query param — see
+ * The server routes every record kind (Task / Initiative / Project /
+ * Backlog item) purely on the `?record=<id>` query param — see
  * `packages/server/render-viewer.tsx`. The record id is unique within a
  * ledger and the server already knows the ledger kind, so one builder
  * serves all three kinds. There is no per-kind `.md` route on the live

@@ -83,10 +83,10 @@ describe("PRODUCT inv 48 — Schema validation failure on load surfaces ZodError
     }
   });
 
-  test("Roadmap schema rejection surfaces ZodError too (all three modes)", () => {
+  test("Initiatives schema rejection surfaces ZodError too (ID-148.10, repurposed roadmap arm)", () => {
     const invalid = {
-      document_name: "Knowledge Hub Roadmap",
-      // Missing date, sections, etc.
+      document_name: "Canonical Platform - Initiatives",
+      // Missing date, initiatives, etc.
     };
     expect(() => detectSchema(invalid)).toThrow(ZodError);
   });

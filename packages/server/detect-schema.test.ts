@@ -1,14 +1,13 @@
 /**
  * Tests for detectSchema — TECH §2.1.
  *
- * Acceptance gate (per ID-20.7 PLAN):
- *   "detectSchema unit tests cover all 3 known values + unknown rejection."
- *
- * Three-way schema discrimination:
- *   - "Knowledge Hub Task List" → TaskListSchema parse → { kind: 'task-list', data }
- *   - "Knowledge Hub Roadmap"   → RoadmapSchema parse  → { kind: 'roadmap', data }
- *   - "Product Backlog"          → BacklogSchema parse  → { kind: 'backlog', data }
- *   - Anything else (including unparseable input)        → { kind: 'unknown', documentName }
+ * Four-way schema discrimination (ID-148.10, TECH §3.1(b) — repurposed
+ * roadmap arm, umbrellas RETIRED):
+ *   - "Knowledge Hub Task List"          → TaskListSchema parse    → { kind: 'task-list', data }
+ *   - "Canonical Platform - Initiatives" → InitiativesSchema parse → { kind: 'initiatives', data }
+ *   - "Product Backlog"                    → BacklogSchema parse    → { kind: 'backlog', data }
+ *   - "Knowledge Hub Retros"               → RetrosSchema parse     → { kind: 'retro', data }
+ *   - Anything else (including unparseable input) → { kind: 'unknown', documentName }
  *
  * PRODUCT inv 4 asymmetry: BacklogSchema.document_name is z.string().min(1)
  * (not a z.literal), so detectSchema matches on the canonical VALUE
@@ -44,27 +43,36 @@ const minimalTaskList = {
   ],
 };
 
-const minimalRoadmap = {
-  document_name: "Knowledge Hub Roadmap",
-  document_purpose: "Forward-looking roadmap of Knowledge Hub phases and themes.",
-  date: "2026-05-21",
-  status: "Active",
-  forward_looking_only: true,
+const minimalInitiatives = {
+  document_name: "Canonical Platform - Initiatives",
+  document_purpose: "Structured record of active initiatives and their constituent projects.",
+  date: "2026-07-15",
+  status: "active",
   related_documents: [],
-  last_updated: "kh-prod-readiness-S63 representative fixture",
-  themes: [
+  last_updated: "kh-main-S473 representative fixture",
+  initiatives: [
     {
       id: "1",
       title: "Foundation",
-      description: "Foundation theme description.",
-      time_horizon: "now",
-      status: "in_progress",
-      linked_tasks: [],
-      linked_backlog: [],
-      session_refs: [],
-      commit_refs: [],
-      cross_doc_links: [],
-      notes: null,
+      description: "Foundation initiative description.",
+      status: "active",
+      projects: [
+        {
+          id: "foundation-project",
+          title: "Foundation project",
+          summary: "Summary.",
+          description: "Description.",
+          substrate_doc: "",
+          status: "in-progress",
+          blocked_by: [],
+          blocking: [],
+          linked_tasks: [],
+          linked_backlog: [],
+          originating_session: [],
+        },
+      ],
+      originating_session: [],
+      "sub-initiatives": [],
     },
   ],
 };
@@ -91,23 +99,6 @@ const minimalBacklog = {
   ],
 };
 
-const minimalUmbrellas = {
-  document_name: "umbrellas",
-  document_purpose: "Umbrella groupings of Tasks (Linear-Initiative analogue).",
-  last_updated: "kh-main-S1 synthetic fixture",
-  related_documents: [],
-  umbrellas: [
-    {
-      id: "test-umbrella",
-      title: "Test Umbrella",
-      substrate_doc: "docs/reference/test-umbrella.md",
-      task_ids: ["1", "2"],
-      status: "in_progress",
-      phase: "Phase 1",
-    },
-  ],
-};
-
 describe("detectSchema — known document_name values", () => {
   test("routes 'Knowledge Hub Task List' to task-list kind with parsed data", () => {
     const result = detectSchema(minimalTaskList);
@@ -119,12 +110,13 @@ describe("detectSchema — known document_name values", () => {
     }
   });
 
-  test("routes 'Knowledge Hub Roadmap' to roadmap kind with parsed data", () => {
-    const result = detectSchema(minimalRoadmap);
-    expect(result.kind).toBe("roadmap");
-    if (result.kind === "roadmap") {
-      expect(result.data.document_name).toBe("Knowledge Hub Roadmap");
-      expect(result.data.themes).toHaveLength(1);
+  test("routes 'Canonical Platform - Initiatives' to initiatives kind with parsed nested data", () => {
+    const result = detectSchema(minimalInitiatives);
+    expect(result.kind).toBe("initiatives");
+    if (result.kind === "initiatives") {
+      expect(result.data.document_name).toBe("Canonical Platform - Initiatives");
+      expect(result.data.initiatives).toHaveLength(1);
+      expect(result.data.initiatives[0].projects[0].id).toBe("foundation-project");
     }
   });
 
@@ -137,32 +129,23 @@ describe("detectSchema — known document_name values", () => {
     }
   });
 
-  // ID-90 U8 — umbrellas registered as the FOURTH known document kind
-  // (PRODUCT invariant 49).
-  test("routes 'umbrellas' to umbrellas kind with parsed data (ID-90 U8, inv 49)", () => {
-    const result = detectSchema(minimalUmbrellas);
-    expect(result.kind).toBe("umbrellas");
-    if (result.kind === "umbrellas") {
-      expect(result.data.document_name).toBe("umbrellas");
-      expect(result.data.umbrellas).toHaveLength(1);
-      expect(result.data.umbrellas[0].id).toBe("test-umbrella");
-      expect(result.data.umbrellas[0].task_ids).toEqual(["1", "2"]);
-    }
-  });
-
-  test("KNOWN_DOCUMENT_NAMES carries the 'umbrellas' (ID-90 U8) + 'Knowledge Hub Retros' (WS-C C2) literals", () => {
-    expect(KNOWN_DOCUMENT_NAMES).toContain("umbrellas");
+  test("KNOWN_DOCUMENT_NAMES no longer carries 'umbrellas' (ID-148.10 retirement) and carries 4 literals", () => {
+    expect(KNOWN_DOCUMENT_NAMES).not.toContain("umbrellas");
+    expect(KNOWN_DOCUMENT_NAMES).toContain("Canonical Platform - Initiatives");
     expect(KNOWN_DOCUMENT_NAMES).toContain("Knowledge Hub Retros");
-    expect(KNOWN_DOCUMENT_NAMES).toHaveLength(5);
+    expect(KNOWN_DOCUMENT_NAMES).toHaveLength(4);
   });
 
-  test("throws ZodError when document_name matches umbrellas but body fails schema", () => {
-    expect(() =>
-      detectSchema({
-        document_name: "umbrellas",
-        // missing required fields
-      }),
-    ).toThrow();
+  test("'umbrellas' document_name is now UNKNOWN (retired kind, ID-148.10 INV-12(b))", () => {
+    const result = detectSchema({ document_name: "umbrellas" });
+    expect(result.kind).toBe("unknown");
+    if (result.kind === "unknown") expect(result.documentName).toBe("umbrellas");
+  });
+
+  test("'Knowledge Hub Roadmap' document_name is now UNKNOWN (repurposed to initiatives, ID-148.10)", () => {
+    const result = detectSchema({ document_name: "Knowledge Hub Roadmap" });
+    expect(result.kind).toBe("unknown");
+    if (result.kind === "unknown") expect(result.documentName).toBe("Knowledge Hub Roadmap");
   });
 });
 
@@ -218,10 +201,10 @@ describe("detectSchema — unknown / invalid input", () => {
     ).toThrow();
   });
 
-  test("throws ZodError when document_name matches Roadmap but body fails schema", () => {
+  test("throws ZodError when document_name matches Initiatives but body fails schema", () => {
     expect(() =>
       detectSchema({
-        document_name: "Knowledge Hub Roadmap",
+        document_name: "Canonical Platform - Initiatives",
         // missing required fields
       }),
     ).toThrow();
@@ -250,14 +233,15 @@ describe("detectSchema — discriminated union narrowing", () => {
     }
   });
 
-  test("roadmap branch exposes typed Roadmap data", () => {
-    const result = detectSchema(minimalRoadmap);
-    if (result.kind === "roadmap") {
-      const firstTheme = result.data.themes[0];
-      expect(firstTheme.time_horizon).toBe("now");
-      expect(firstTheme.status).toBe("in_progress");
+  test("initiatives branch exposes typed InitiativesDocument data (nested tree)", () => {
+    const result = detectSchema(minimalInitiatives);
+    if (result.kind === "initiatives") {
+      const firstInitiative = result.data.initiatives[0];
+      expect(firstInitiative.status).toBe("active");
+      expect(firstInitiative["sub-initiatives"]).toEqual([]);
+      expect(firstInitiative.projects[0].status).toBe("in-progress");
     } else {
-      throw new Error("Expected roadmap kind");
+      throw new Error("Expected initiatives kind");
     }
   });
 

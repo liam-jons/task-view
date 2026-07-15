@@ -3,9 +3,9 @@
  *
  * Sibling to `patch-apply.ts` (which handles FIELD-level edits on existing
  * records). This module handles WHOLE-record mutations:
- *   - `insertRecord` — append a new record (Task / roadmap theme / backlog
- *     item) to the matching collection, then re-parse the whole ledger via
- *     the vendored Zod schema. Duplicate id is rejected.
+ *   - `insertRecord` — append a new record (Task / initiatives Project /
+ *     backlog item) to the matching collection, then re-parse the whole
+ *     ledger via the vendored Zod schema. Duplicate id is rejected.
  *   - `removeRecord` — drop a record by id, then re-parse. Absent id is a
  *     not-found result.
  *
@@ -19,20 +19,28 @@
  *
  * The per-kind collection key:
  *   - task-list → `tasks[]`,  id is a bare-digit STRING (e.g. "42")
- *   - roadmap   → `themes[]`, id is a bare-digit STRING
  *   - backlog   → `items[]`,  id is a bare-digit STRING
+ *   - retro     → `retros[]`, id is a session id (`S<n>`)
+ *
+ * ID-148.10 (Option C, INV-13): `initiatives` is NOT a flat top-level
+ * collection — it is `initiatives[]` -> `projects[]` + recursive
+ * `sub-initiatives[]` -> `projects[]`, arbitrary depth. `insertRecord`
+ * requires a `parentPath` for initiatives (the dotted initiative/
+ * sub-initiative path to insert the new project under); `removeRecord`
+ * tree-walk-finds the project by its globally-unique slug wherever it
+ * lives. Both delegate the tree-walk itself to `initiatives-tree.ts` so the
+ * mutate/patch/serialise arms can never drift on tree-walk semantics.
  */
 
 import { TaskListSchema, type TaskList } from "@task-view/schemas/task-list";
-import { RoadmapSchema, type Roadmap } from "@task-view/schemas/roadmap";
+import {
+  InitiativesSchema,
+  type InitiativesDocument,
+} from "@task-view/schemas/initiatives";
 import {
   BacklogSchema,
   type BacklogDocument,
 } from "@task-view/schemas/backlog";
-import {
-  UmbrellasSchema,
-  type Umbrellas,
-} from "@task-view/schemas/umbrellas";
 import {
   RetrosSchema,
   type RetrosDocument,
@@ -40,6 +48,12 @@ import {
 import { ZodError } from "zod";
 
 import type { DetectSchemaResult } from "./detect-schema";
+import {
+  allProjectSlugs,
+  insertProjectAt,
+  removeProjectBySlug,
+  type TreeDoc,
+} from "./initiatives-tree";
 
 type KnownDetected = Exclude<DetectSchemaResult, { kind: "unknown" }>;
 
@@ -56,7 +70,8 @@ type KnownDetected = Exclude<DetectSchemaResult, { kind: "unknown" }>;
  *   - { ok: false, kind: 'schema-error', zodError } — the post-mutation
  *     Zod parse failed (e.g. the supplied record body is malformed).
  *   - { ok: false, kind: 'invalid-body', detail } — the supplied body was
- *     not a usable object (CREATE only).
+ *     not a usable object (CREATE only), or (initiatives only) the
+ *     `parentPath` was absent/unresolvable.
  */
 export type RecordMutateResult =
   | { ok: true; detected: KnownDetected; recordId: string }
@@ -82,15 +97,15 @@ function extractId(body: unknown): string | null {
 }
 
 /**
- * The top-level record-collection key for a detected ledger kind. WS-C C2
- * adds the `retro` arm (`retros`); umbrellas is included for completeness
- * though its creates are rejected upstream (membership edits are field
- * PATCHes, not record splices).
+ * The top-level record-collection key for a FLAT detected ledger kind
+ * (task-list / backlog / retro). `initiatives` is NOT flat — its
+ * insert/remove/existingIds handling branches separately via
+ * `initiatives-tree.ts` (INV-13).
  */
-function collectionKeyFor(kind: KnownDetected["kind"]): string {
+function collectionKeyFor(
+  kind: Exclude<KnownDetected["kind"], "initiatives">,
+): string {
   if (kind === "task-list") return "tasks";
-  if (kind === "roadmap") return "themes";
-  if (kind === "umbrellas") return "umbrellas";
   if (kind === "retro") return "retros";
   return "items";
 }
@@ -99,14 +114,11 @@ function existingIds(detected: KnownDetected): Set<string> {
   if (detected.kind === "task-list") {
     return new Set(detected.data.tasks.map((t) => t.id));
   }
-  if (detected.kind === "roadmap") {
-    return new Set(detected.data.themes.map((t) => t.id));
+  // ID-148.10: initiatives — the globally-unique project SLUG set,
+  // flattened tree-wide (INV-13).
+  if (detected.kind === "initiatives") {
+    return new Set(allProjectSlugs(detected.data as unknown as TreeDoc));
   }
-  // ID-90 U8: umbrellas — kebab-case umbrella entry ids.
-  if (detected.kind === "umbrellas") {
-    return new Set(detected.data.umbrellas.map((u) => u.id));
-  }
-  // WS-C C2: retros — session-id (`S<n>`) record ids.
   if (detected.kind === "retro") {
     return new Set(detected.data.retros.map((r) => r.id));
   }
@@ -127,17 +139,15 @@ function reparse(
 ):
   | {
       ok: true;
-      data: TaskList | Roadmap | BacklogDocument | Umbrellas | RetrosDocument;
+      data: TaskList | InitiativesDocument | BacklogDocument | RetrosDocument;
     }
   | { ok: false; zodError: ZodError } {
   try {
     if (kind === "task-list")
       return { ok: true, data: TaskListSchema.parse(raw) };
-    if (kind === "roadmap") return { ok: true, data: RoadmapSchema.parse(raw) };
-    // ID-90 U8: fourth known kind.
-    if (kind === "umbrellas")
-      return { ok: true, data: UmbrellasSchema.parse(raw) };
-    // WS-C C2: fifth known kind — retros.
+    // ID-148.10: repurposed roadmap arm.
+    if (kind === "initiatives")
+      return { ok: true, data: InitiativesSchema.parse(raw) };
     if (kind === "retro") return { ok: true, data: RetrosSchema.parse(raw) };
     return { ok: true, data: BacklogSchema.parse(raw) };
   } catch (err) {
@@ -148,15 +158,12 @@ function reparse(
 
 function rebuildDetected(
   kind: KnownDetected["kind"],
-  data: TaskList | Roadmap | BacklogDocument | Umbrellas | RetrosDocument,
+  data: TaskList | InitiativesDocument | BacklogDocument | RetrosDocument,
 ): KnownDetected {
   if (kind === "task-list")
     return { kind: "task-list", data: data as TaskList };
-  if (kind === "roadmap") return { kind: "roadmap", data: data as Roadmap };
-  // ID-90 U8: fourth known kind.
-  if (kind === "umbrellas")
-    return { kind: "umbrellas", data: data as Umbrellas };
-  // WS-C C2: fifth known kind — retros.
+  if (kind === "initiatives")
+    return { kind: "initiatives", data: data as InitiativesDocument };
   if (kind === "retro")
     return { kind: "retro", data: data as RetrosDocument };
   return { kind: "backlog", data: data as BacklogDocument };
@@ -167,19 +174,23 @@ function rebuildDetected(
 /**
  * Insert a new record into the detected ledger.
  *
- * The `record` body is the full record object (a Task / RoadmapTheme /
- * BacklogItem shape). The caller passes the PARSED-and-validated `detected`
- * snapshot; this function clones the raw `.data` so the input is never
- * mutated, appends the record, then re-parses the WHOLE document so the
- * schema's document-level invariants (e.g. backlog unique-id superRefine,
- * task sibling-dep superRefine) run.
+ * The `record` body is the full record object (a Task / initiatives Project
+ * / BacklogItem shape). The caller passes the PARSED-and-validated
+ * `detected` snapshot; this function clones the raw `.data` so the input is
+ * never mutated, appends the record, then re-parses the WHOLE document so
+ * the schema's document-level invariants run.
  *
  * Duplicate id is rejected with a `duplicate-id` result BEFORE the parse,
  * matching the existing 409/422 conventions (the caller maps it to 409).
+ *
+ * ID-148.10 (INV-13): for `detected.kind === "initiatives"`, `parentPath`
+ * is REQUIRED — the dotted initiative/sub-initiative path the new project
+ * inserts under. An absent or unresolvable path is `invalid-body`.
  */
 export function insertRecord(
   detected: KnownDetected,
   record: unknown,
+  parentPath?: string,
 ): RecordMutateResult {
   const newId = extractId(record);
   if (newId === null) {
@@ -197,26 +208,48 @@ export function insertRecord(
   // structuredClone the raw data so the caller's snapshot is untouched on
   // any failure path. We append to the cloned collection, then re-parse.
   const rawClone = structuredClone(detected.data) as Record<string, unknown>;
-  const collectionKey = collectionKeyFor(detected.kind);
-  const collection = rawClone[collectionKey];
-  if (!Array.isArray(collection)) {
-    // Defensive: a validated `detected` always carries the array, but guard
-    // against a future shape drift rather than throwing.
-    return {
-      ok: false,
-      kind: "invalid-body",
-      detail: `Ledger is missing its "${collectionKey}" collection.`,
-    };
-  }
-  collection.push(record);
 
-  // ID-90 F5/Bug3: advance the monotonic high-water mark by the inserted id
-  // (digit-string ids only; umbrellas use kebab-case ids and retros use
-  // caller-supplied session ids (`S<n>`) — neither carries the field).
-  if (detected.kind !== "umbrellas" && detected.kind !== "retro") {
-    const newIdNum = Number(newId);
-    if (!Number.isNaN(newIdNum)) {
-      stampHighWater(rawClone, effectiveHighWater(detected), newIdNum);
+  if (detected.kind === "initiatives") {
+    if (parentPath === undefined || parentPath === "") {
+      return {
+        ok: false,
+        kind: "invalid-body",
+        detail:
+          "initiatives project creates require a `parentPath` (the dotted initiative/sub-initiative path to insert under).",
+      };
+    }
+    const inserted = insertProjectAt(
+      rawClone as TreeDoc,
+      parentPath,
+      record,
+    );
+    if (!inserted.ok) {
+      return { ok: false, kind: "invalid-body", detail: inserted.detail };
+    }
+  } else {
+    const collectionKey = collectionKeyFor(detected.kind);
+    const collection = rawClone[collectionKey];
+    if (!Array.isArray(collection)) {
+      // Defensive: a validated `detected` always carries the array, but guard
+      // against a future shape drift rather than throwing.
+      return {
+        ok: false,
+        kind: "invalid-body",
+        detail: `Ledger is missing its "${collectionKey}" collection.`,
+      };
+    }
+    collection.push(record);
+
+    // ID-90 F5/Bug3: advance the monotonic high-water mark by the inserted id
+    // (digit-string ids only). Applies to task-list/backlog only — retro
+    // ids are caller-supplied session ids, and initiatives project ids are
+    // caller-supplied kebab slugs (handled in the branch above); neither
+    // carries the high-water field.
+    if (detected.kind === "task-list" || detected.kind === "backlog") {
+      const newIdNum = Number(newId);
+      if (!Number.isNaN(newIdNum)) {
+        stampHighWater(rawClone, effectiveHighWater(detected), newIdNum);
+      }
     }
   }
 
@@ -237,11 +270,34 @@ export function insertRecord(
  * mutated document is re-parsed (defensive — removal never breaks an
  * invariant, but the re-parse keeps the typed-snapshot contract identical
  * to insertRecord + applyPatches).
+ *
+ * ID-148.10 (INV-13): for `detected.kind === "initiatives"`, `recordId` is
+ * the project's globally-unique slug — tree-walk-found wherever it
+ * currently lives (no parent addressing needed for a delete).
  */
 export function removeRecord(
   detected: KnownDetected,
   recordId: string,
 ): RecordMutateResult {
+  if (detected.kind === "initiatives") {
+    const rawClone = structuredClone(detected.data) as Record<
+      string,
+      unknown
+    >;
+    const removed = removeProjectBySlug(rawClone as TreeDoc, recordId);
+    if (!removed.ok) {
+      return { ok: false, kind: "record-not-found", recordId };
+    }
+    const parsed = reparse(detected.kind, rawClone);
+    if (!parsed.ok)
+      return { ok: false, kind: "schema-error", zodError: parsed.zodError };
+    return {
+      ok: true,
+      detected: rebuildDetected(detected.kind, parsed.data),
+      recordId,
+    };
+  }
+
   if (!existingIds(detected).has(recordId)) {
     return { ok: false, kind: "record-not-found", recordId };
   }
@@ -256,13 +312,9 @@ export function removeRecord(
   );
 
   // ID-90 F5/Bug3: persist the PRE-removal high-water mark BEFORE the freed id
-  // disappears from the live set. This is the actual fix — removing the highest
-  // id (delete OR the promote remove-leg) used to lower the live max, letting
-  // the next allocation reuse the freed id. By stamping the pre-mutation
-  // effective mark, the freed top id is recorded and never re-handed-out.
-  // (umbrellas carry no field — kebab-case ids; retros use caller-supplied
-  // session ids — neither carries the high-water field.)
-  if (detected.kind !== "umbrellas" && detected.kind !== "retro") {
+  // disappears from the live set (task-list/backlog only — see insertRecord
+  // comment above for why retro/initiatives are excluded).
+  if (detected.kind === "task-list" || detected.kind === "backlog") {
     const prior = effectiveHighWater(detected);
     stampHighWater(rawClone, prior, prior);
   }
@@ -287,12 +339,14 @@ export function removeRecord(
 //   - the bulk `add-subtasks` fold-left create + `delete-subtask` removal
 //     (PRODUCT invariants 37-38; invariant 38's mutex half lands in record 11).
 
-/** The documented record kinds, each with structural create defaults. WS-C C2
- * adds `retro`. */
+/** The documented record kinds, each with structural create defaults.
+ * ID-148.10: `project` replaces the retired `theme` (initiatives projects
+ * are created via a dedicated tree-insert, not a flat-collection push, but
+ * still need the SAME structural-defaults treatment). */
 export type CreateRecordKind =
   | "subtask"
   | "task"
-  | "theme"
+  | "project"
   | "item"
   | "retro";
 
@@ -318,15 +372,18 @@ const CREATE_DEFAULTS: Record<CreateRecordKind, Record<string, unknown>> = {
     commit_refs: [],
     updatedAt: "",
   },
-  theme: {
-    status: "pending",
-    time_horizon: "later",
+  // ID-148.10: initiatives project structural defaults. `status: "idea"` is
+  // the lowest/untriaged PROJECT_STATUSES value (initiatives-schema.ts).
+  project: {
+    summary: "",
+    description: "",
+    substrate_doc: "",
+    status: "idea",
+    blocked_by: [],
+    blocking: [],
     linked_tasks: [],
     linked_backlog: [],
-    session_refs: [],
-    commit_refs: [],
-    cross_doc_links: [],
-    notes: null,
+    originating_session: [],
   },
   item: {
     // `type` / `track` are required scalars with no inherent empty value;
@@ -386,17 +443,21 @@ export function withCreateDefaults(
  * Per-record auto-id (ledger-cli.ts:645-674 port). Computes
  * `max(existingIds) + 1` for a collection, returning the correct primitive
  * TYPE:
- *   - `tasks` / `themes` / `items` → bare-digit STRING (`"186"`)
- *   - `subtasks`                    → bare-digit STRING (`"13"`), scoped to `taskId`
+ *   - `tasks` / `items` → bare-digit STRING (`"186"`)
+ *   - `subtasks`         → bare-digit STRING (`"13"`), scoped to `taskId`
  *
  * `max+1` is the monotonic semantics (never reuses a freed id; does NOT fill
  * gaps). For subtasks the now-string ids are mapped to numbers for the
  * `Math.max` before the result is String()-wrapped, preserving monotonic
  * numeric ordering (a raw string `Math.max` would mis-order mixed-width ids).
+ *
+ * ID-148.10: `themes` is RETIRED (no initiatives analog — initiatives
+ * project ids are caller-supplied kebab slugs, never auto-minted, mirroring
+ * how retro session ids are caller-supplied — see `insertRecord`).
  */
 export function nextId(
   detected: KnownDetected,
-  collectionKey: "tasks" | "themes" | "items" | "subtasks",
+  collectionKey: "tasks" | "items" | "subtasks",
   taskId?: string,
 ): string {
   if (collectionKey === "subtasks") {
@@ -419,7 +480,6 @@ export function nextId(
   if (
     !(
       (collectionKey === "tasks" && detected.kind === "task-list") ||
-      (collectionKey === "themes" && detected.kind === "roadmap") ||
       (collectionKey === "items" && detected.kind === "backlog")
     )
   ) {
@@ -447,13 +507,13 @@ export function nextId(
 // Backward-compatibility: a legacy ledger has no `_idHighWater`. We derive the
 // effective mark from `max(liveMax, storedHighWater ?? 0)`, so the first write
 // on a legacy ledger behaves identically to the old `max+1` AND seeds the field.
+//
+// ID-148.10: applies to task-list/backlog only — see `liveCollectionIds` below.
 
 /** The numeric ids currently present in a document's top-level id-collection. */
 function liveCollectionIds(detected: KnownDetected): number[] {
   let ids: string[] = [];
   if (detected.kind === "task-list") ids = detected.data.tasks.map((t) => t.id);
-  else if (detected.kind === "roadmap")
-    ids = detected.data.themes.map((t) => t.id);
   else if (detected.kind === "backlog")
     ids = detected.data.items.map((it) => it.id);
   return ids.map((id) => Number(id)).filter((n) => !Number.isNaN(n));
@@ -467,7 +527,7 @@ function storedHighWater(detected: KnownDetected): number {
 
 /**
  * The effective high-water mark = max(live numeric max, stored high-water).
- * Tasks/themes/items are 1-based; an empty + un-seeded document has effective
+ * Tasks/items are 1-based; an empty + un-seeded document has effective
  * mark 0 so the first allocation is 1 (unchanged from the legacy contract).
  */
 export function effectiveHighWater(detected: KnownDetected): number {

@@ -218,12 +218,12 @@ describe("pickLaunchDocument — deterministic preference for --serve-dir", () =
   test("one → that document", () => {
     const scan: ScanResult = {
       kind: "one",
-      path: "/tmp/x/umbrellas.json",
-      documentName: "umbrellas",
+      path: "/tmp/x/initiatives.json",
+      documentName: "Canonical Platform - Initiatives",
     };
     expect(pickLaunchDocument(scan)).toEqual({
-      path: "/tmp/x/umbrellas.json",
-      documentName: "umbrellas",
+      path: "/tmp/x/initiatives.json",
+      documentName: "Canonical Platform - Initiatives",
     });
   });
 
@@ -231,12 +231,12 @@ describe("pickLaunchDocument — deterministic preference for --serve-dir", () =
     const scan: ScanResult = {
       kind: "multiple",
       paths: [
-        "/tmp/x/umbrellas.json",
+        "/tmp/x/initiatives.json",
         "/tmp/x/product-backlog.json",
         "/tmp/x/task-list.json",
       ],
       perPathName: {
-        "/tmp/x/umbrellas.json": "umbrellas",
+        "/tmp/x/initiatives.json": "Canonical Platform - Initiatives",
         "/tmp/x/product-backlog.json": "Product Backlog",
         "/tmp/x/task-list.json": "Knowledge Hub Task List",
       },
@@ -247,12 +247,27 @@ describe("pickLaunchDocument — deterministic preference for --serve-dir", () =
     });
   });
 
-  test("multiple without a task-list → next in preference (roadmap, then backlog)", () => {
+  test("multiple without a task-list → next in preference (initiatives, then backlog)", () => {
     const scan: ScanResult = {
       kind: "multiple",
-      paths: ["/tmp/x/umbrellas.json", "/tmp/x/product-backlog.json"],
+      paths: ["/tmp/x/initiatives.json", "/tmp/x/product-backlog.json"],
       perPathName: {
-        "/tmp/x/umbrellas.json": "umbrellas",
+        "/tmp/x/initiatives.json": "Canonical Platform - Initiatives",
+        "/tmp/x/product-backlog.json": "Product Backlog",
+      },
+    };
+    expect(pickLaunchDocument(scan)).toEqual({
+      path: "/tmp/x/initiatives.json",
+      documentName: "Canonical Platform - Initiatives",
+    });
+  });
+
+  test("multiple without task-list or initiatives → falls through to backlog (retros lowest preference)", () => {
+    const scan: ScanResult = {
+      kind: "multiple",
+      paths: ["/tmp/x/product-retros.json", "/tmp/x/product-backlog.json"],
+      perPathName: {
+        "/tmp/x/product-retros.json": "Knowledge Hub Retros",
         "/tmp/x/product-backlog.json": "Product Backlog",
       },
     };

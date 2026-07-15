@@ -8,10 +8,11 @@
  * and the directory scan that resolves a sibling's on-disk path by name.
  *
  * The slug ↔ name pairs are fixed (SPEC §2):
- *   task-list ↔ "Knowledge Hub Task List"
- *   roadmap   ↔ "Knowledge Hub Roadmap"
- *   backlog   ↔ "Product Backlog"
- *   umbrellas ↔ "umbrellas"            (ID-90 U8 — fourth document kind)
+ *   task-list   ↔ "Knowledge Hub Task List"
+ *   initiatives ↔ "Canonical Platform - Initiatives"  (ID-148.10 — repurposed
+ *                 from the retired `roadmap` slug; `umbrellas` fully retired)
+ *   backlog     ↔ "Product Backlog"
+ *   retro       ↔ "Knowledge Hub Retros"
  * (Canonical names sourced from detect-schema.ts KNOWN_DOCUMENT_NAMES.)
  *
  * `resolveLedgerPathByName` reuses the exact `scanForLedgers(dirname)` +
@@ -24,22 +25,17 @@ import { dirname } from "node:path";
 import type { KnownDocumentName } from "./detect-schema";
 import { scanForLedgers } from "./path-resolution";
 
-/** The cross-ledger nav slugs (stable, server-controlled). ID-90 U8 adds
- * `umbrellas` (slug == its lowercase document_name literal); WS-C C2 adds
- * `retro` (the session-retro ledger, routed but not viewer-navigable). */
-export type LedgerSlug =
-  | "task-list"
-  | "roadmap"
-  | "backlog"
-  | "umbrellas"
-  | "retro";
+/** The cross-ledger nav slugs (stable, server-controlled). ID-148.10:
+ * `roadmap` is repurposed to `initiatives` (viewer-navigable, WITH editing —
+ * OQ2); `umbrellas` is fully retired (no slug). WS-C C2's `retro` (the
+ * session-retro ledger, routed but not viewer-navigable) is unchanged. */
+export type LedgerSlug = "task-list" | "initiatives" | "backlog" | "retro";
 
 /** Enumerated nav slugs — the membership set the URL parser validates against. */
 export const LEDGER_SLUGS: readonly LedgerSlug[] = [
   "task-list",
-  "roadmap",
+  "initiatives",
   "backlog",
-  "umbrellas",
   "retro",
 ] as const;
 
@@ -49,9 +45,8 @@ export const LEDGER_SLUGS: readonly LedgerSlug[] = [
  */
 const SLUG_TO_DOCUMENT_NAME: Record<LedgerSlug, KnownDocumentName> = {
   "task-list": "Knowledge Hub Task List",
-  roadmap: "Knowledge Hub Roadmap",
+  initiatives: "Canonical Platform - Initiatives",
   backlog: "Product Backlog",
-  umbrellas: "umbrellas",
   retro: "Knowledge Hub Retros",
 };
 

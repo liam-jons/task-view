@@ -1,27 +1,27 @@
 /**
- * detect-schema.ts — TECH §2.1 schema discriminator (four known kinds).
+ * detect-schema.ts — TECH §2.1 schema discriminator (five known kinds).
  *
- * Routes a parsed-JSON value to one of the four document kinds by matching
+ * Routes a parsed-JSON value to one of the five document kinds by matching
  * the canonical `document_name` value, then runs the matching Zod schema
  * `.parse(...)` to coerce + validate.
  *
- * | document_name literal           | Discriminator → kind         |
- * |----------------------------------|------------------------------|
- * | "Knowledge Hub Task List"       | TaskListSchema → 'task-list' |
- * | "Knowledge Hub Roadmap"         | RoadmapSchema  → 'roadmap'   |
- * | "Product Backlog"                | BacklogSchema  → 'backlog'   |
- * | "umbrellas"                      | UmbrellasSchema → 'umbrellas' (ID-90 U8, PRODUCT inv 49) |
- * | anything else                    | → 'unknown' + raw documentName (string or null) |
+ * | document_name literal                     | Discriminator → kind          |
+ * |--------------------------------------------|-------------------------------|
+ * | "Knowledge Hub Task List"                  | TaskListSchema → 'task-list'  |
+ * | "Canonical Platform - Initiatives"         | InitiativesSchema → 'initiatives' (ID-148.10, TECH §3.1(b), INV-12(a)) |
+ * | "Product Backlog"                           | BacklogSchema  → 'backlog'    |
+ * | "Knowledge Hub Retros"                      | RetrosSchema → 'retro'        |
+ * | anything else                               | → 'unknown' + raw documentName (string or null) |
  *
- * ID-90 U8: `umbrellas` is the FOURTH known document kind. Its canonical
- * `document_name` IS the lowercase literal "umbrellas" (the vendored
- * UmbrellasSchema declares `z.literal('umbrellas')`). Umbrellas documents
- * carry NO mirror obligation (PRODUCT invariant 53 — mirror-generator
- * returns the empty plan) and membership edits are field PATCHes on
- * `['umbrellas', id, 'task_ids']` (invariant 50).
+ * ID-148.10 (Option C): repurposes the roadmap arm — `"Knowledge Hub
+ * Roadmap"` is replaced by `"Canonical Platform - Initiatives"` routing to
+ * `InitiativesSchema`; the `umbrellas` kind is RETIRED entirely (INV-12(b) —
+ * the umbrella surface has no initiatives analog and is fully removed, both
+ * repos, tests included; `umbrellas.json` file deletion itself stays
+ * DEFERRED to the data-quality task, out of scope here).
  *
  * PRODUCT inv 4 asymmetry: `TaskListSchema.document_name` and
- * `RoadmapSchema.document_name` are `z.literal(...)`. `BacklogSchema.document_name`
+ * `InitiativesSchema.document_name` are `z.literal(...)`. `BacklogSchema.document_name`
  * is `z.string().min(1)` (cannot self-discriminate). The discrimination here
  * anchors on the known canonical VALUE for Backlog, not on a Zod literal.
  *
@@ -33,25 +33,25 @@
  */
 
 import { TaskListSchema, type TaskList } from "@task-view/schemas/task-list";
-import { RoadmapSchema, type Roadmap } from "@task-view/schemas/roadmap";
+import {
+  InitiativesSchema,
+  type InitiativesDocument,
+} from "@task-view/schemas/initiatives";
 import { BacklogSchema, type BacklogDocument } from "@task-view/schemas/backlog";
-import { UmbrellasSchema, type Umbrellas } from "@task-view/schemas/umbrellas";
 import { RetrosSchema, type RetrosDocument } from "@task-view/schemas/retro";
 
 export type DetectSchemaResult =
   | { kind: "task-list"; data: TaskList }
-  | { kind: "roadmap"; data: Roadmap }
+  | { kind: "initiatives"; data: InitiativesDocument }
   | { kind: "backlog"; data: BacklogDocument }
-  | { kind: "umbrellas"; data: Umbrellas }
   | { kind: "retro"; data: RetrosDocument }
   | { kind: "unknown"; documentName: string | null };
 
 /** Canonical literal values. Source of truth for both routing and CLI error messages. */
 export const KNOWN_DOCUMENT_NAMES = [
   "Knowledge Hub Task List",
-  "Knowledge Hub Roadmap",
+  "Canonical Platform - Initiatives",
   "Product Backlog",
-  "umbrellas",
   "Knowledge Hub Retros",
 ] as const;
 
@@ -64,7 +64,7 @@ export type KnownDocumentName = (typeof KNOWN_DOCUMENT_NAMES)[number];
  * @param parsed - The result of `JSON.parse(...)` on a candidate ledger file.
  * @returns A discriminated union with the matched kind + typed data, or
  *          `{ kind: 'unknown', documentName }` if the document_name is not
- *          one of the three known values.
+ *          one of the known values.
  */
 export function detectSchema(parsed: unknown): DetectSchemaResult {
   if (!parsed || typeof parsed !== "object") {
@@ -76,17 +76,13 @@ export function detectSchema(parsed: unknown): DetectSchemaResult {
   if (documentName === "Knowledge Hub Task List") {
     return { kind: "task-list", data: TaskListSchema.parse(parsed) };
   }
-  if (documentName === "Knowledge Hub Roadmap") {
-    return { kind: "roadmap", data: RoadmapSchema.parse(parsed) };
+  // ID-148.10: repurposed roadmap arm — routes to the nested initiatives shape.
+  if (documentName === "Canonical Platform - Initiatives") {
+    return { kind: "initiatives", data: InitiativesSchema.parse(parsed) };
   }
   if (documentName === "Product Backlog") {
     return { kind: "backlog", data: BacklogSchema.parse(parsed) };
   }
-  // ID-90 U8: fourth known kind — umbrellas (PRODUCT invariant 49).
-  if (documentName === "umbrellas") {
-    return { kind: "umbrellas", data: UmbrellasSchema.parse(parsed) };
-  }
-  // WS-C C2: fifth known kind — retros (session retro ledger, ID-48 §5).
   if (documentName === "Knowledge Hub Retros") {
     return { kind: "retro", data: RetrosSchema.parse(parsed) };
   }

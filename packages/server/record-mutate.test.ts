@@ -647,6 +647,185 @@ describe("insertSubtasks — bulk fold-left create (ID-90.9 U5)", () => {
   });
 });
 
+// ── ID-148.10 (INV-13): initiatives nested project insert/remove ─────────────
+
+function detectInitiatives(): KnownDetected {
+  const d = detectSchema({
+    document_name: "Canonical Platform - Initiatives",
+    document_purpose: "x",
+    date: "2026-07-15",
+    status: "active",
+    related_documents: [],
+    last_updated: "kh-main-S473",
+    initiatives: [
+      {
+        id: "1",
+        title: "Foundation",
+        description: "d",
+        status: "active",
+        projects: [
+          {
+            id: "existing-project",
+            title: "Existing",
+            summary: "s",
+            description: "d",
+            substrate_doc: "",
+            status: "idea",
+            blocked_by: [],
+            blocking: [],
+            linked_tasks: [],
+            linked_backlog: [],
+            originating_session: [],
+          },
+        ],
+        originating_session: [],
+        "sub-initiatives": [],
+      },
+      {
+        id: "4",
+        title: "SDLC",
+        description: "d",
+        status: "active",
+        projects: [],
+        originating_session: [],
+        "sub-initiatives": [
+          {
+            id: "2",
+            title: "Sub two",
+            description: "d",
+            status: "planned",
+            projects: [],
+            originating_session: [],
+            "sub-initiatives": [],
+          },
+        ],
+      },
+    ],
+  });
+  if (d.kind === "unknown") throw new Error("fixture invalid");
+  return d;
+}
+
+function newProject(id: string) {
+  return {
+    id,
+    title: "New project",
+    summary: "s",
+    description: "d",
+    substrate_doc: "",
+    status: "idea",
+    blocked_by: [],
+    blocking: [],
+    linked_tasks: [],
+    linked_backlog: [],
+    originating_session: [],
+  };
+}
+
+describe("insertRecord — initiatives nested project insert (INV-13)", () => {
+  test("inserts under a top-level initiative given its parentPath", () => {
+    const detected = detectInitiatives();
+    const result = insertRecord(detected, newProject("new-slug"), "1");
+    expect(result.ok).toBe(true);
+    if (result.ok && result.detected.kind === "initiatives") {
+      expect(
+        result.detected.data.initiatives[0].projects.map((p) => p.id),
+      ).toEqual(["existing-project", "new-slug"]);
+    }
+    // Input snapshot untouched:
+    if (detected.kind === "initiatives") {
+      expect(detected.data.initiatives[0].projects).toHaveLength(1);
+    }
+  });
+
+  test("inserts under a nested sub-initiative given a dotted parentPath", () => {
+    const result = insertRecord(
+      detectInitiatives(),
+      newProject("nested-slug"),
+      "4.2",
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok && result.detected.kind === "initiatives") {
+      const sub = result.detected.data.initiatives[1]["sub-initiatives"][0];
+      expect(sub.projects.map((p) => p.id)).toEqual(["nested-slug"]);
+    }
+  });
+
+  test("rejects with invalid-body when parentPath is absent", () => {
+    const result = insertRecord(detectInitiatives(), newProject("x"));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.kind).toBe("invalid-body");
+  });
+
+  test("rejects with invalid-body when parentPath does not resolve", () => {
+    const result = insertRecord(detectInitiatives(), newProject("x"), "999");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.kind).toBe("invalid-body");
+  });
+
+  test("rejects a duplicate slug even across DIFFERENT initiatives (global uniqueness)", () => {
+    const result = insertRecord(
+      detectInitiatives(),
+      newProject("existing-project"),
+      "4",
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.kind).toBe("duplicate-id");
+      if (result.kind === "duplicate-id") {
+        expect(result.recordId).toBe("existing-project");
+      }
+    }
+  });
+
+  test("surfaces a schema-error for a malformed project body", () => {
+    const result = insertRecord(
+      detectInitiatives(),
+      { ...newProject("bad"), blocked_by: "not-an-array" },
+      "1",
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.kind).toBe("schema-error");
+  });
+});
+
+describe("removeRecord — initiatives nested project removal by slug (INV-13)", () => {
+  test("removes a project directly under a top-level initiative", () => {
+    const detected = detectInitiatives();
+    const result = removeRecord(detected, "existing-project");
+    expect(result.ok).toBe(true);
+    if (result.ok && result.detected.kind === "initiatives") {
+      expect(result.detected.data.initiatives[0].projects).toEqual([]);
+    }
+    // Input snapshot untouched:
+    if (detected.kind === "initiatives") {
+      expect(detected.data.initiatives[0].projects).toHaveLength(1);
+    }
+  });
+
+  test("removes a project nested under a sub-initiative wherever it lives", () => {
+    const withNested = insertRecord(
+      detectInitiatives(),
+      newProject("to-remove"),
+      "4.2",
+    );
+    expect(withNested.ok).toBe(true);
+    if (!withNested.ok || withNested.detected.kind !== "initiatives") return;
+    const removed = removeRecord(withNested.detected, "to-remove");
+    expect(removed.ok).toBe(true);
+    if (removed.ok && removed.detected.kind === "initiatives") {
+      const sub = removed.detected.data.initiatives[1]["sub-initiatives"][0];
+      expect(sub.projects).toEqual([]);
+    }
+  });
+
+  test("returns record-not-found for an unknown slug", () => {
+    const result = removeRecord(detectInitiatives(), "does-not-exist");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.kind).toBe("record-not-found");
+  });
+});
+
 describe("removeSubtask — subtask DELETE (ID-90.9 U5)", () => {
   test("removes an existing subtask and re-parses", () => {
     const detected = detectTaskListWithSubtasks();

@@ -10,8 +10,9 @@
  *     (invariant 19 — the whole-file re-emit class is structurally impossible),
  *   - all non-ASCII is emitted as \uXXXX escapes with on-disk key order and a
  *     trailing newline (invariant 18),
- *   - the umbrellas walk (['umbrellas', id, field]) yields the same
- *     minimal-diff discipline (invariant 52).
+ *   - the initiatives nested tree-walk (['projects', slug, field] /
+ *     ['initiatives', path, field]) yields the same minimal-diff discipline
+ *     (ID-148.10, INV-13 — repurposed from the retired roadmap themes walk).
  *
  * The live-ledger suite reads from `KH_LEDGER_DIR` (an operator-local path to
  * the KH `docs/reference/` directory) and is skipped when unset — the KH
@@ -183,42 +184,74 @@ function taskListFixtureText(): string {
   return escapeSerialise(taskListFixtureDoc());
 }
 
-/** A minimal roadmap fixture (vendored RoadmapSchema shape). */
-function roadmapFixtureDoc() {
+/** A minimal initiatives fixture (vendored InitiativesSchema shape,
+ * ID-148.10) — one top-level initiative with a direct project, plus a
+ * second top-level initiative with a nested sub-initiative + its own
+ * project, so tree-walk depth is exercised. */
+function initiativesFixtureDoc() {
   return {
-    document_name: "Knowledge Hub Roadmap",
-    document_purpose: `Roadmap fixture ${EM_DASH} byte-stability.`,
-    date: "2026-06-07",
-    status: "Active",
-    forward_looking_only: true,
+    document_name: "Canonical Platform - Initiatives",
+    document_purpose: `Initiatives fixture ${EM_DASH} byte-stability.`,
+    date: "2026-07-15",
+    status: "active",
     related_documents: [],
     last_updated: "fixture",
-    themes: [
+    initiatives: [
       {
         id: "10",
-        title: `Theme ten ${EM_DASH} alpha`,
-        description: `Theme 10 description ${SECTION}1.`,
-        time_horizon: "now",
-        status: "in_progress",
-        linked_tasks: [],
-        linked_backlog: [],
-        session_refs: [],
-        commit_refs: [],
-        cross_doc_links: [],
-        notes: null,
+        title: `Initiative ten ${EM_DASH} alpha`,
+        description: `Initiative 10 description ${SECTION}1.`,
+        status: "active",
+        projects: [
+          {
+            id: "alpha-project",
+            title: `Alpha project ${EM_DASH} one`,
+            summary: `Alpha summary ${SECTION}1.`,
+            description: `Alpha description ${ARROW} forward.`,
+            substrate_doc: "",
+            status: "idea",
+            blocked_by: [],
+            blocking: [],
+            linked_tasks: [],
+            linked_backlog: [],
+            originating_session: [],
+          },
+        ],
+        originating_session: [],
+        "sub-initiatives": [],
       },
       {
         id: "11",
-        title: `Theme eleven ${EM_DASH} beta`,
-        description: `Theme 11 description ${ARROW} forward.`,
-        time_horizon: "next",
-        status: "pending",
-        linked_tasks: [],
-        linked_backlog: [],
-        session_refs: [],
-        commit_refs: [],
-        cross_doc_links: [],
-        notes: null,
+        title: `Initiative eleven ${EM_DASH} beta`,
+        description: `Initiative 11 description ${ARROW} forward.`,
+        status: "planned",
+        projects: [],
+        originating_session: [],
+        "sub-initiatives": [
+          {
+            id: "1",
+            title: `Sub eleven-one ${EM_DASH} nested`,
+            description: `Sub description ${SECTION}2.`,
+            status: "proposed",
+            projects: [
+              {
+                id: "beta-nested-project",
+                title: `Beta nested project ${EM_DASH} two`,
+                summary: `Beta summary ${ARROW} later.`,
+                description: `Beta description.`,
+                substrate_doc: "",
+                status: "backlog",
+                blocked_by: [],
+                blocking: [],
+                linked_tasks: [],
+                linked_backlog: [],
+                originating_session: [],
+              },
+            ],
+            originating_session: [],
+            "sub-initiatives": [],
+          },
+        ],
       },
     ],
   };
@@ -258,34 +291,6 @@ function backlogFixtureDoc() {
         commit_refs: [],
         cross_doc_links: [],
         notes: null,
-      },
-    ],
-  };
-}
-
-/** A two-umbrella fixture (vendored UmbrellasSchema shape — invariant 52). */
-function umbrellasFixtureDoc() {
-  return {
-    document_name: "umbrellas",
-    document_purpose: `Umbrellas fixture ${EM_DASH} scoped membership edits.`,
-    last_updated: "kh-main-S1 fixture seed",
-    related_documents: [],
-    umbrellas: [
-      {
-        id: "alpha-initiative",
-        title: `Alpha initiative ${EM_DASH} first`,
-        substrate_doc: "docs/specs/alpha/PRODUCT.md",
-        task_ids: ["900"],
-        status: "in_progress",
-        phase: "Phase 1",
-      },
-      {
-        id: "beta-initiative",
-        title: `Beta initiative ${EM_DASH} second ${ARROW} later`,
-        substrate_doc: "docs/specs/beta/PRODUCT.md",
-        task_ids: ["901"],
-        status: "proposed",
-        phase: "Phase 2",
       },
     ],
   };
@@ -353,15 +358,50 @@ describe("scopedSerialise — multi-record byte-stability", () => {
     expect(r.text).toContain("\\u00a7"); // section sign (Task 900 subtask details)
   });
 
-  test("roadmap theme field edit changes exactly one line", () => {
-    const original = escapeSerialise(roadmapFixtureDoc());
+  test("initiatives: a direct top-level project field edit changes exactly one line", () => {
+    const original = escapeSerialise(initiativesFixtureDoc());
     const r = scopedSerialise(original, {
-      fieldPath: ["themes", "11", "status"],
-      newValue: "in_progress",
+      fieldPath: ["projects", "alpha-project", "status"],
+      newValue: "in-progress",
     });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.kind).toBe("roadmap");
+    expect(r.kind).toBe("initiatives");
+    expect(changedLineIndices(original, r.text)).toHaveLength(1);
+  });
+
+  test("initiatives: a NESTED (sub-initiative) project field edit changes exactly one line", () => {
+    const original = escapeSerialise(initiativesFixtureDoc());
+    const r = scopedSerialise(original, {
+      fieldPath: ["projects", "beta-nested-project", "status"],
+      newValue: "ready",
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(changedLineIndices(original, r.text)).toHaveLength(1);
+    // The untouched sibling initiative's direct project stays byte-identical.
+    expect(r.text).toContain('"id": "alpha-project"');
+  });
+
+  test("initiatives: a top-level Initiative field edit by bare path changes exactly one line", () => {
+    const original = escapeSerialise(initiativesFixtureDoc());
+    const r = scopedSerialise(original, {
+      fieldPath: ["initiatives", "10", "status"],
+      newValue: "completed",
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(changedLineIndices(original, r.text)).toHaveLength(1);
+  });
+
+  test("initiatives: a sub-initiative field edit by dotted path changes exactly one line", () => {
+    const original = escapeSerialise(initiativesFixtureDoc());
+    const r = scopedSerialise(original, {
+      fieldPath: ["initiatives", "11.1", "status"],
+      newValue: "active",
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
     expect(changedLineIndices(original, r.text)).toHaveLength(1);
   });
 
@@ -378,29 +418,13 @@ describe("scopedSerialise — multi-record byte-stability", () => {
   });
 });
 
-// ── scopedSerialise — umbrellas walk (invariant 52) ───────────────────────────
+// ── scopedSerialise — initiatives nested tree-walk (ID-148.10, INV-13) ────────
 
-describe("scopedSerialise — umbrellas walk (['umbrellas', id, field])", () => {
-  test("status flip on one umbrella changes exactly one line", () => {
-    const original = escapeSerialise(umbrellasFixtureDoc());
+describe("scopedSerialise — initiatives nested tree-walk (['projects', slug, field] / ['initiatives', path, field])", () => {
+  test("linked_tasks membership edit on a project preserves escapes + trailing newline", () => {
+    const original = escapeSerialise(initiativesFixtureDoc());
     const r = scopedSerialise(original, {
-      fieldPath: ["umbrellas", "beta-initiative", "status"],
-      newValue: "in_progress",
-    });
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    expect(r.kind).toBe("umbrellas");
-    expect(changedLineIndices(original, r.text)).toHaveLength(1);
-    // The sibling umbrella stays byte-identical.
-    const alphaStart = original.indexOf('"id": "alpha-initiative"');
-    const alphaEnd = original.indexOf('"id": "beta-initiative"');
-    expect(r.text).toContain(original.slice(alphaStart, alphaEnd));
-  });
-
-  test("task_ids membership edit preserves escapes + trailing newline", () => {
-    const original = escapeSerialise(umbrellasFixtureDoc());
-    const r = scopedSerialise(original, {
-      fieldPath: ["umbrellas", "alpha-initiative", "task_ids"],
+      fieldPath: ["projects", "alpha-project", "linked_tasks"],
       newValue: ["900", "901"],
     });
     expect(r.ok).toBe(true);
@@ -409,27 +433,102 @@ describe("scopedSerialise — umbrellas walk (['umbrellas', id, field])", () => 
     expect(r.text.endsWith("}\n")).toBe(true);
     expect(r.text).toContain("\\u2014");
     const parsed = JSON.parse(r.text) as {
-      umbrellas: { id: string; task_ids: string[] }[];
+      initiatives: { projects: { id: string; linked_tasks: string[] }[] }[];
     };
-    expect(parsed.umbrellas[0].task_ids).toEqual(["900", "901"]);
+    expect(parsed.initiatives[0].projects[0].linked_tasks).toEqual([
+      "900",
+      "901",
+    ]);
   });
 
-  test("schema-violating umbrella status fails WITHOUT emitting text", () => {
-    const original = escapeSerialise(umbrellasFixtureDoc());
+  test("ATOMIC MOVE: a 2-patch fold re-parenting a task between two projects leaves every OTHER record byte-identical", () => {
+    // "Move" simulated as patch-server.ts's PATCH handler actually applies a
+    // multi-patch batch: fold scopedSerialise once per patch over the
+    // running text (§5.5 all-or-nothing — one Zod re-parse gates the WHOLE
+    // batch before any of it is written; the fold here mirrors the bytes
+    // that eventually land). No dedicated splice exists for "move" — it is
+    // exactly this 2-patch batch (INV-13, patch-apply.ts header). NOTE: a
+    // line-COUNT invariant ("exactly N lines changed") does not hold here —
+    // pretty-printed JSON renders a non-empty array across multiple lines,
+    // so appending/removing an array ELEMENT inherently shifts every
+    // subsequent line's index even though its CONTENT is unchanged. The
+    // real byte-stability property is per-RECORD, not per-line: untouched
+    // records survive as an exact substring (mirrors the existing
+    // "flip-subtask: untouched Task 901 record stays byte-identical" style
+    // above).
+    const withLink = scopedSerialise(escapeSerialise(initiativesFixtureDoc()), {
+      fieldPath: ["projects", "alpha-project", "linked_tasks"],
+      newValue: ["900"],
+    });
+    expect(withLink.ok).toBe(true);
+    if (!withLink.ok) return;
+
+    const step1 = scopedSerialise(withLink.text, {
+      fieldPath: ["projects", "alpha-project", "linked_tasks"],
+      newValue: [],
+    });
+    expect(step1.ok).toBe(true);
+    if (!step1.ok) return;
+    const step2 = scopedSerialise(step1.text, {
+      fieldPath: ["projects", "beta-nested-project", "linked_tasks"],
+      newValue: ["900"],
+    });
+    expect(step2.ok).toBe(true);
+    if (!step2.ok) return;
+
+    const parsed = JSON.parse(step2.text) as {
+      initiatives: {
+        projects: { id: string; linked_tasks: string[] }[];
+        "sub-initiatives": {
+          projects: { id: string; linked_tasks: string[] }[];
+        }[];
+      }[];
+    };
+    expect(parsed.initiatives[0].projects[0].linked_tasks).toEqual([]);
+    expect(
+      parsed.initiatives[1]["sub-initiatives"][0].projects[0].linked_tasks,
+    ).toEqual(["900"]);
+
+    // The untouched initiative "10" (containing alpha-project's SIBLING
+    // fields other than linked_tasks) keeps its title/description bytes.
+    expect(step2.text).toContain('"title": "Initiative ten \\u2014 alpha"');
+    expect(step2.text).toContain('"title": "Alpha project \\u2014 one"');
+    // The moved-INTO sub-initiative's own identity fields are untouched by
+    // the fold — only linked_tasks changed on its project.
+    expect(step2.text).toContain(
+      '"title": "Sub eleven-one \\u2014 nested"',
+    );
+  });
+
+  test("schema-violating project field is lenient at THIS layer (strict-write is a separate gate, INV-3)", () => {
+    // initiatives-schema.ts's status is z.string() (lenient read) — a
+    // dirty/out-of-enum value still passes THIS module's Zod re-parse.
+    // Strict-write enforcement lives at the server budget/write-gate layer,
+    // not scoped-serialise. Document the boundary explicitly.
+    const original = escapeSerialise(initiativesFixtureDoc());
     const r = scopedSerialise(original, {
-      fieldPath: ["umbrellas", "alpha-initiative", "status"],
+      fieldPath: ["projects", "alpha-project", "status"],
       newValue: "not-a-real-status",
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  test("walk-error for a non-existent project slug", () => {
+    const original = escapeSerialise(initiativesFixtureDoc());
+    const r = scopedSerialise(original, {
+      fieldPath: ["projects", "does-not-exist", "status"],
+      newValue: "idea",
     });
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.kind).toBe("schema-error");
+    expect(r.kind).toBe("walk-error");
   });
 
-  test("walk-error for a non-existent umbrella id", () => {
-    const original = escapeSerialise(umbrellasFixtureDoc());
+  test("walk-error for a non-existent initiative path", () => {
+    const original = escapeSerialise(initiativesFixtureDoc());
     const r = scopedSerialise(original, {
-      fieldPath: ["umbrellas", "does-not-exist", "status"],
-      newValue: "done",
+      fieldPath: ["initiatives", "999", "status"],
+      newValue: "active",
     });
     expect(r.ok).toBe(false);
     if (r.ok) return;
@@ -603,28 +702,80 @@ describe("scopedSpliceSerialise — insert/remove byte stability", () => {
     expect(removed.text).toBe(original);
   });
 
-  test("roadmap themes insert -> remove round-trips byte-identically", () => {
-    const original = escapeSerialise(roadmapFixtureDoc());
-    const doc = roadmapFixtureDoc();
-    const record = { ...doc.themes[0], id: "999900" };
+  test("initiatives: project insert under a TOP-LEVEL initiative -> remove round-trips byte-identically (INV-13)", () => {
+    const original = escapeSerialise(initiativesFixtureDoc());
+    const doc = initiativesFixtureDoc();
+    const record = { ...doc.initiatives[0].projects[0], id: "999900-project" };
 
     const inserted = scopedSpliceSerialise(original, {
       kind: "insert",
-      collection: "themes",
+      collection: "projects",
+      initiativePath: "10",
       record,
     });
     expect(inserted.ok).toBe(true);
     if (!inserted.ok) return;
-    expect(inserted.kind).toBe("roadmap");
+    expect(inserted.kind).toBe("initiatives");
+    expect(inserted.text).toContain('"id": "999900-project"');
 
     const removed = scopedSpliceSerialise(inserted.text, {
       kind: "remove",
-      collection: "themes",
-      recordId: "999900",
+      collection: "projects",
+      recordId: "999900-project",
     });
     expect(removed.ok).toBe(true);
     if (!removed.ok) return;
     expect(removed.text).toBe(original);
+  });
+
+  test("initiatives: project insert under a NESTED sub-initiative -> remove round-trips byte-identically (INV-13)", () => {
+    const original = escapeSerialise(initiativesFixtureDoc());
+    const doc = initiativesFixtureDoc();
+    const record = { ...doc.initiatives[0].projects[0], id: "999901-nested" };
+
+    const inserted = scopedSpliceSerialise(original, {
+      kind: "insert",
+      collection: "projects",
+      initiativePath: "11.1",
+      record,
+    });
+    expect(inserted.ok).toBe(true);
+    if (!inserted.ok) return;
+    expect(inserted.text).toContain('"id": "999901-nested"');
+
+    const removed = scopedSpliceSerialise(inserted.text, {
+      kind: "remove",
+      collection: "projects",
+      recordId: "999901-nested",
+    });
+    expect(removed.ok).toBe(true);
+    if (!removed.ok) return;
+    expect(removed.text).toBe(original);
+  });
+
+  test("initiatives: insert with a missing initiativePath is a walk-error", () => {
+    const original = escapeSerialise(initiativesFixtureDoc());
+    const r = scopedSpliceSerialise(original, {
+      kind: "insert",
+      collection: "projects",
+      record: { id: "x" },
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.kind).toBe("walk-error");
+  });
+
+  test("initiatives: insert with an unresolvable initiativePath is a walk-error", () => {
+    const original = escapeSerialise(initiativesFixtureDoc());
+    const r = scopedSpliceSerialise(original, {
+      kind: "insert",
+      collection: "projects",
+      initiativePath: "999",
+      record: { id: "x" },
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.kind).toBe("walk-error");
   });
 
   test("backlog items insert -> remove round-trips byte-identically", () => {
@@ -732,23 +883,25 @@ describe("scopedSpliceSerialise — insert/remove byte stability", () => {
 
 const KH_LEDGER_DIR = process.env.KH_LEDGER_DIR ?? "";
 
-// The three core ledgers were normalised by KH's OQ-LS-2 pass (S270) — the
-// no-op round-trip MUST be byte-identical (invariant 20).
+// The core ledgers were normalised by KH's OQ-LS-2 pass (S270) — the
+// no-op round-trip MUST be byte-identical (invariant 20). ID-148.10:
+// product-roadmap.json was manually repurposed into initiatives.json (TECH
+// §Revision note) — this replaces the former roadmap entry.
 const normalisedLedgers = [
   "task-list.json",
   "product-backlog.json",
-  "product-roadmap.json",
+  "initiatives.json",
 ];
 
-// Not yet byte-conforming on disk (verified 07/06/2026 — raw em-dashes):
-//   - umbrellas.json is normalised by the K6 commit (PRODUCT inv 51), which
-//     lands KH-side in Phase 1 — until then only a content-neutral round-trip
-//     can hold. The byte-level inv 52 property is proven on the synthetic
-//     umbrellas fixture above.
-//   - product-retros.json is outside the substrate document set (TECH: three
-//     ledgers + umbrellas.json) — included here as a content-neutral check
-//     only.
-const unnormalisedLedgers = ["product-retros.json", "umbrellas.json"];
+// Not yet byte-conforming on disk:
+//   - product-retros.json is outside the substrate document set — included
+//     here as a content-neutral check only.
+//   - umbrellas.json's file DELETION is deferred (Decision 4a / OQ4) but its
+//     document_name is no longer a recognised detectSchema kind (ID-148.10,
+//     INV-12(b) — full retirement); it is intentionally OMITTED from this
+//     list — detectSchema now routes it to 'unknown', so no scoped-write
+//     round-trip claim applies to it any more.
+const unnormalisedLedgers = ["product-retros.json"];
 
 describe("live KH ledgers (KH_LEDGER_DIR) — no-op round-trip (invariant 20)", () => {
   for (const name of normalisedLedgers) {
@@ -822,34 +975,28 @@ describe("live KH ledgers (KH_LEDGER_DIR) — no-op round-trip (invariant 20)", 
   );
 
   test.skipIf(!KH_LEDGER_DIR)(
-    "live umbrellas.json scoped status flip emits conforming bytes (invariant 52)",
+    "flipping one real project status touches exactly one line of the live initiatives ledger (INV-13)",
     () => {
-      // Pre-K6 the live file is not byte-conforming (PRODUCT inv 51 — the
-      // normalisation commit lands KH-side in Phase 1), so the exact-one-line
-      // property cannot hold against today's on-disk bytes; it is proven on
-      // the synthetic umbrellas fixture above. Here we prove the walk accepts
-      // the LIVE document and emits conforming output.
-      const path = join(KH_LEDGER_DIR, "umbrellas.json");
+      const path = join(KH_LEDGER_DIR, "initiatives.json");
       if (!existsSync(path)) return;
       const original = readFileSync(path, "utf8");
       const doc = JSON.parse(original) as {
-        umbrellas: { id: string; status: string }[];
+        initiatives: { projects: { id: string; status: string }[] }[];
       };
-      const target = doc.umbrellas[0];
-      const newStatus = target.status === "done" ? "in_progress" : "done";
+      const firstWithProject = doc.initiatives.find(
+        (i) => i.projects.length > 0,
+      );
+      if (!firstWithProject) return;
+      const target = firstWithProject.projects[0];
+      const newStatus = target.status === "idea" ? "proposal" : "idea";
       const r = scopedSerialise(original, {
-        fieldPath: ["umbrellas", target.id, "status"],
+        fieldPath: ["projects", target.id, "status"],
         newValue: newStatus,
       });
       expect(r.ok).toBe(true);
       if (!r.ok) return;
-      expect(r.kind).toBe("umbrellas");
-      expect(RAW_NON_ASCII.test(r.text)).toBe(false);
-      expect(r.text.endsWith("}\n")).toBe(true);
-      const mutated = JSON.parse(r.text) as {
-        umbrellas: { id: string; status: string }[];
-      };
-      expect(mutated.umbrellas[0].status).toBe(newStatus);
+      expect(r.kind).toBe("initiatives");
+      expect(changedLineIndices(original, r.text)).toHaveLength(1);
     },
   );
 });

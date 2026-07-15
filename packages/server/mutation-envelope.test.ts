@@ -252,8 +252,8 @@ describe("warningScopesForPatches", () => {
     const scopes = warningScopesForPatches([
       { fieldPath: ["tasks", "7", "status"], newValue: "done" },
       { fieldPath: ["tasks", "7", "priority"], newValue: "must" },
-      { fieldPath: ["themes", "3", "notes"], newValue: "n" },
-      { fieldPath: ["umbrellas", "u-1", "task_ids"], newValue: [] },
+      { fieldPath: ["projects", "some-project", "summary"], newValue: "n" },
+      { fieldPath: ["initiatives", "3", "status"], newValue: "active" },
     ]);
     expect(scopes).toEqual([{ taskId: "7" }]);
   });

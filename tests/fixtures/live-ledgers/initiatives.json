@@ -1,0 +1,71 @@
+{
+  "document_name": "Canonical Platform - Initiatives",
+  "document_purpose": "Structured record of active initiatives and their constituent projects (ID-148.10 test fixture — repurposed from the retired product-roadmap.json).",
+  "date": "2026-07-15",
+  "status": "active",
+  "related_documents": [
+    "task-list.json",
+    "product-backlog.json"
+  ],
+  "last_updated": "kh-main-S473 fixture seed",
+  "initiatives": [
+    {
+      "id": "1",
+      "title": "Knowledge base foundations",
+      "description": "The Knowledge Hub's core ingestion, search, and structured-data foundations.",
+      "status": "active",
+      "projects": [
+        {
+          "id": "kb-ingestion-pipeline",
+          "title": "Ingestion pipeline",
+          "summary": "Structured ingestion for procurement + sector intelligence.",
+          "description": "The CocoIndex-based ingestion pipeline that structures unstructured source documents.",
+          "substrate_doc": "",
+          "status": "in-progress",
+          "blocked_by": [],
+          "blocking": [],
+          "linked_tasks": [
+            "20"
+          ],
+          "linked_backlog": [],
+          "originating_session": []
+        }
+      ],
+      "originating_session": [],
+      "sub-initiatives": []
+    },
+    {
+      "id": "2",
+      "title": "Sales proposals",
+      "description": "Next domain application beyond procurement + sector intelligence.",
+      "status": "proposed",
+      "projects": [],
+      "originating_session": [],
+      "sub-initiatives": [
+        {
+          "id": "1",
+          "title": "Proposal generation",
+          "description": "Draft-generation surface for sales proposals.",
+          "status": "planned",
+          "projects": [
+            {
+              "id": "proposal-draft-generator",
+              "title": "Proposal draft generator",
+              "summary": "Generates a first-pass proposal draft from structured data.",
+              "description": "",
+              "substrate_doc": "",
+              "status": "idea",
+              "blocked_by": [],
+              "blocking": [],
+              "linked_tasks": [],
+              "linked_backlog": [],
+              "originating_session": []
+            }
+          ],
+          "originating_session": [],
+          "sub-initiatives": []
+        }
+      ]
+    }
+  ]
+}

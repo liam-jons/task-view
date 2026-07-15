@@ -5,16 +5,19 @@
  * the patch-server previously served only JSON; GET / 404'd. This module
  * renders the existing read-mode record-view components to static HTML so
  * the loopback server can serve a viewer surface against any of the three
- * ledger shapes (task-list / roadmap / backlog).
+ * ledger shapes (task-list / initiatives / backlog).
  *
  * Routing:
- *   - GET /?record=                         → index view for the ledger kind
- *   - GET /?record=ID-N                     → per-Task / per-Backlog-item page
- *   - GET /?record=<theme-id>               → per-Roadmap-theme page
+ *   - GET /?record=                                    → index view for the ledger kind
+ *   - GET /?record=ID-N                                → per-Task / per-Backlog-item page
+ *   - GET /?record=<initiative-path|project-slug>       → per-Initiative page (ID-148.10)
  *
- * Roadmap shape note (ID-20.19): the Phase-B themes[] roadmap replaced the
- * retired sections[]/items[] model. A roadmap record is a theme keyed by
- * its bare-digit id; the old `section-` prefix routing is gone.
+ * ID-148.10 (repurposed roadmap arm, TECH §3.1(c)): the nested initiatives
+ * tree (`initiatives[]` -> `projects[]` + recursive `sub-initiatives[]`) is
+ * rendered ONE top-level initiative per page (INV-9) — a record param
+ * resolves to a TOP-LEVEL initiative id; the full nested tree (its own
+ * sub-initiatives + all projects at any depth) renders inline within that
+ * one page, editable (OQ2).
  *
  * Backlog mode honours PRODUCT inv 23 — `?track=…&status=…&priority=…`
  * query-string filter state is decoded via the canonical
@@ -33,8 +36,8 @@ import { TaskListIndexView } from "@task-view/ui/record-view/task-list-index-vie
 import { TaskListView } from "@task-view/ui/record-view/task-list-view";
 import { BacklogIndexView } from "@task-view/ui/record-view/backlog-index-view";
 import { BacklogItemView } from "@task-view/ui/record-view/backlog-item-view";
-import { RoadmapIndexView } from "@task-view/ui/record-view/roadmap-index-view";
-import { RoadmapThemeView } from "@task-view/ui/record-view/roadmap-theme-view";
+import { InitiativesIndexView } from "@task-view/ui/record-view/initiatives-index-view";
+import { InitiativesTreeView } from "@task-view/ui/record-view/initiatives-tree-view";
 import {
   buildLedgerContext,
   type NavStripData,
@@ -42,7 +45,7 @@ import {
 import {
   decodeBacklogFilters,
   decodeLedgerParam,
-  decodeRoadmapFilters,
+  decodeInitiativesFilters,
   decodeSort,
   decodeTaskListFilters,
 } from "@task-view/ui/record-view/url-state";
@@ -54,22 +57,17 @@ import { ThemePicker } from "@task-view/ui/record-view/theme-picker";
 import { LedgerSwitcher } from "@task-view/ui/record-view/ledger-switcher";
 import type { LedgerSlug } from "@task-view/ui/record-view/anchors";
 import type { DetectSchemaResult } from "./detect-schema";
-import type { Roadmap } from "@task-view/schemas/roadmap";
+import type { InitiativesDocument } from "@task-view/schemas/initiatives";
 import type {
   Task,
-  RoadmapTheme,
+  Initiative,
   BacklogItem,
 } from "@task-view/ui/record-view/types";
 
-// ID-90 U8: the viewer renders the three MIRRORED kinds only — umbrellas
-// documents have no record-view surface (PRODUCT invariant 53); callers
-// guard the umbrellas kind before invoking renderViewer. WS-C C2: retros have
-// no viewer surface yet either — callers (patch-server) guard the retro kind
-// before invoking renderViewer, identically to umbrellas.
-export type KnownDetected = Exclude<
-  DetectSchemaResult,
-  { kind: "unknown" | "umbrellas" | "retro" }
->;
+// ID-148.10: `umbrellas` is retired entirely (no kind left to guard).
+// WS-C C2: retros have no viewer surface yet — callers (patch-server) guard
+// the retro kind before invoking renderViewer.
+export type KnownDetected = Exclude<DetectSchemaResult, { kind: "unknown" | "retro" }>;
 
 export interface RenderViewerInput {
   detected: KnownDetected;
@@ -100,11 +98,12 @@ export interface RenderViewerInput {
   /**
    * {20.29}: parsed SIBLING ledger records threaded in so outbound
    * cross-ledger links on the CURRENT page can compute `exists` against the
-   * sibling id sets (SPEC §4 approach A). For a roadmap theme page these
-   * carry the task-list + backlog siblings; for a Task page the roadmap
-   * sibling (so the capability_theme chip resolves a title). Omitted on the
-   * launched-ledger path → empty sibling sets → cross-ledger links render as
-   * broken-target until the sibling resolves.
+   * sibling id sets (SPEC §4 approach A). For an Initiative page these
+   * carry the task-list + backlog siblings; for a Task/Backlog page the
+   * initiatives sibling (ID-148.10, so the "Appears in projects" reverse
+   * backlinks resolve). Omitted on the launched-ledger path → empty
+   * sibling sets → cross-ledger links render as broken-target until the
+   * sibling resolves.
    */
   siblings?: SiblingLedgers;
   /**
@@ -125,7 +124,7 @@ export interface RenderViewerInput {
 /** Parsed sibling-ledger records for cross-ledger `exists` resolution. */
 export interface SiblingLedgers {
   tasks?: readonly Task[];
-  roadmap?: Roadmap;
+  initiatives?: InitiativesDocument;
   backlogItems?: readonly BacklogItem[];
 }
 
@@ -231,9 +230,12 @@ function renderBody({
     }
     const task = tasks.find((t) => t.id === recordParam);
     if (!task) return renderNotFound("task", recordParam);
-    // {20.29}: thread the sibling roadmap so the capability_theme chip
-    // resolves a title (SPEC §6).
-    const ledger = buildLedgerContext({ tasks, roadmap: siblings?.roadmap });
+    // {20.30}: thread the sibling initiatives document (ID-148.10) so the
+    // Task's reverse "Appears in projects" backlinks resolve.
+    const ledger = buildLedgerContext({
+      tasks,
+      initiatives: siblings?.initiatives,
+    });
     const nav = computeTaskNav(tasks, task, activeSlug);
     return {
       status: 200,
@@ -265,13 +267,14 @@ function renderBody({
     }
     const item = items.find((i) => i.id === recordParam);
     if (!item) return renderNotFound("backlog-item", recordParam);
-    // {20.30}: thread the sibling roadmap so the backlog item's reverse
-    // "Appears in themes" backlinks resolve (the inverse index is built from
-    // the roadmap's linked_backlog forward edges). Backlog carries no roadmap
-    // pointer field, so without this sibling the page has no path to roadmap.
+    // {20.30}: thread the sibling initiatives document so the backlog
+    // item's reverse "Appears in projects" backlinks resolve (the inverse
+    // index is built from every project's linked_backlog forward edges,
+    // tree-wide, ID-148.10 INV-13). Backlog carries no initiatives pointer
+    // field, so without this sibling the page has no path to initiatives.
     const ledger = buildLedgerContext({
       backlogItems: items,
-      roadmap: siblings?.roadmap,
+      initiatives: siblings?.initiatives,
     });
     const nav = computeBacklogNav(items, item, activeSlug);
     return {
@@ -287,15 +290,15 @@ function renderBody({
     };
   }
 
-  // roadmap
+  // initiatives (ID-148.10, repurposed roadmap arm)
   if (recordParam === null) {
-    const filters = decodeRoadmapFilters(search);
+    const filters = decodeInitiativesFilters(search);
     const sort = decodeSort(search);
     return {
       status: 200,
       markup: renderRecordMarkup(
-        <RoadmapIndexView
-          roadmap={detected.data}
+        <InitiativesIndexView
+          initiatives={detected.data}
           filters={filters}
           sort={sort}
           activeSlug={activeSlug}
@@ -303,23 +306,27 @@ function renderBody({
       ),
     };
   }
-  // {20.29}: thread the sibling task-list + backlog id sets so the theme's
-  // outbound linked_tasks / linked_backlog cross-ledger links compute
-  // `exists` correctly (SPEC §4 approach A) instead of always (missing).
+  // {20.29}-equivalent: thread the sibling task-list + backlog id sets so
+  // every project's outbound linked_tasks / linked_backlog cross-ledger
+  // links compute `exists` correctly (SPEC §4 approach A) instead of
+  // always (missing).
   const ledger = buildLedgerContext({
-    roadmap: detected.data,
+    initiatives: detected.data,
     tasks: siblings?.tasks,
     backlogItems: siblings?.backlogItems,
   });
-  const themes = detected.data.themes;
+  const initiatives = detected.data.initiatives;
 
-  const theme = themes.find((t) => t.id === recordParam);
-  if (!theme) return renderNotFound("roadmap-theme", recordParam);
-  const nav = computeThemeNav(themes, theme, activeSlug);
+  // INV-9: a record param always resolves to a TOP-LEVEL initiative — the
+  // full nested tree (sub-initiatives + every project at any depth) renders
+  // inline within that one page (see InitiativesTreeView).
+  const initiative = initiatives.find((i) => i.id === recordParam);
+  if (!initiative) return renderNotFound("initiative", recordParam);
+  const nav = computeInitiativeNav(initiatives, initiative, activeSlug);
   return {
     status: 200,
     markup: renderRecordMarkup(
-      <RoadmapThemeView theme={theme} ledger={ledger} nav={nav} />,
+      <InitiativesTreeView initiative={initiative} ledger={ledger} nav={nav} />,
     ),
   };
 }
@@ -407,14 +414,19 @@ function computeBacklogNav(
   };
 }
 
-function computeThemeNav(
-  themes: readonly RoadmapTheme[],
-  current: RoadmapTheme,
+/**
+ * ID-148.10: prev/next among TOP-LEVEL initiatives only (INV-9 — each page
+ * is one top-level initiative's full nested tree; sub-initiatives are not
+ * separately paginated).
+ */
+function computeInitiativeNav(
+  initiatives: readonly Initiative[],
+  current: Initiative,
   activeSlug?: LedgerSlug | null,
 ): NavStripData {
-  const idx = themes.findIndex((t) => t.id === current.id);
-  const prev = idx > 0 ? themes[idx - 1] : null;
-  const next = idx >= 0 && idx < themes.length - 1 ? themes[idx + 1] : null;
+  const idx = initiatives.findIndex((i) => i.id === current.id);
+  const prev = idx > 0 ? initiatives[idx - 1] : null;
+  const next = idx >= 0 && idx < initiatives.length - 1 ? initiatives[idx + 1] : null;
   return {
     prevHref: prev ? activeRecordHref(prev.id, activeSlug) : null,
     prevLabel: prev ? `${prev.id}: ${prev.title}` : null,
@@ -424,7 +436,7 @@ function computeThemeNav(
       current.id,
       activeSlug ? `ledger=${activeSlug}` : undefined,
     ),
-    indexLabel: "Back to roadmap index",
+    indexLabel: "Back to initiatives index",
   };
 }
 

@@ -38,7 +38,7 @@ export function formatTopLevelHelp(): string {
     "  task-view --version, -v",
     "",
     "Without a path argument, task-view scans the current working directory",
-    "for `document_name`-bearing JSON files (task-list.json, product-roadmap.json,",
+    "for `document_name`-bearing JSON files (task-list.json, initiatives.json,",
     "product-backlog.json).",
     "",
     "Note: full CLI flag handling lands in ID-20.11.",

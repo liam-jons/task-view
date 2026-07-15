@@ -1,13 +1,17 @@
 /**
  * Vendored-schema parse smoke test.
  *
- * Acceptance gate for ID-20.6 (PRODUCT inv 1 + 3): the four schema files
- * vendored from KH `lib/validation/` parse a representative KH-shape
- * task-list / roadmap / backlog JSON without any `@/lib/validation/`
- * imports. Once 20.13 ships, this test pairs with the KH-side
- * task-view-vendor-drift CI workflow (TECH §3.5) — a deeper end-to-end
- * snapshot test of all three ledgers against the live KH JSON lives in
- * ID-20.13.
+ * Acceptance gate for ID-20.6 (PRODUCT inv 1 + 3): the schema files vendored
+ * from KH `lib/validation/` parse a representative KH-shape task-list /
+ * initiatives / backlog JSON without any `@/lib/validation/` imports. Once
+ * 20.13 ships, this test pairs with the KH-side task-view-vendor-drift CI
+ * workflow (TECH §3.5) — a deeper end-to-end snapshot test of all ledgers
+ * against the live KH JSON lives in ID-20.13.
+ *
+ * ID-148.10: the roadmap-schema tests formerly here were replaced by a
+ * minimal InitiativesSchema smoke test (deep initiatives coverage — nested
+ * sub-initiatives, project statuses, INITIATIVES_BUDGETS warnings — lives in
+ * the dedicated `initiatives-schema.test.ts`).
  */
 import { describe, expect, test } from "bun:test";
 import {
@@ -15,7 +19,7 @@ import {
   parseTaskListWithWarnings,
   FIELD_BUDGETS,
 } from "./task-list-schema";
-import { RoadmapSchema, parseRoadmapWithWarnings } from "./roadmap-schema";
+import { InitiativesSchema } from "./initiatives-schema";
 import { BacklogSchema, parseBacklogWithWarnings } from "./backlog-schema";
 import { LEDGER_BUDGETS } from "./ledger-budgets";
 import { WorkStatus, TaskListStatus, BacklogStatus, RoadmapStatus, Priority } from "./work-status";
@@ -59,27 +63,36 @@ const minimalTaskList = {
   ],
 };
 
-const minimalRoadmap = {
-  document_name: "Knowledge Hub Roadmap",
-  document_purpose: "Forward-looking roadmap of Knowledge Hub phases and themes.",
-  date: "2026-05-21",
-  status: "Active",
-  forward_looking_only: true,
+const minimalInitiatives = {
+  document_name: "Canonical Platform - Initiatives",
+  document_purpose: "Structured record of active initiatives and their constituent projects.",
+  date: "2026-07-15",
+  status: "active",
   related_documents: ["docs/reference/product-backlog.json"],
-  last_updated: "kh-prod-readiness-S62 W2 representative fixture",
-  themes: [
+  last_updated: "kh-main-S473 representative fixture",
+  initiatives: [
     {
       id: "1",
       title: "Foundation",
       description: "Build the foundations.",
-      time_horizon: "now",
-      status: "in_progress",
-      linked_tasks: ["20"],
-      linked_backlog: [],
-      session_refs: [],
-      commit_refs: [],
-      cross_doc_links: [],
-      notes: null,
+      status: "active",
+      projects: [
+        {
+          id: "foundation-project",
+          title: "Foundation project",
+          summary: "One-sentence summary.",
+          description: "Fuller description.",
+          substrate_doc: "",
+          status: "in-progress",
+          blocked_by: [],
+          blocking: [],
+          linked_tasks: ["20"],
+          linked_backlog: [],
+          originating_session: [],
+        },
+      ],
+      originating_session: [],
+      "sub-initiatives": [],
     },
   ],
 };
@@ -126,26 +139,15 @@ describe("Vendored schemas: parse acceptance", () => {
     expect(envelope.warnings).toHaveLength(0);
   });
 
-  test("RoadmapSchema parses representative themes[] roadmap JSON", () => {
-    const result = RoadmapSchema.safeParse(minimalRoadmap);
+  test("InitiativesSchema parses representative nested initiatives JSON", () => {
+    const result = InitiativesSchema.safeParse(minimalInitiatives);
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.document_name).toBe("Knowledge Hub Roadmap");
-      expect(result.data.themes[0].id).toBe("1");
-      expect(result.data.themes[0].time_horizon).toBe("now");
-      expect(result.data.themes[0].linked_tasks).toEqual(["20"]);
+      expect(result.data.document_name).toBe("Canonical Platform - Initiatives");
+      expect(result.data.initiatives[0].id).toBe("1");
+      expect(result.data.initiatives[0].projects[0].id).toBe("foundation-project");
+      expect(result.data.initiatives[0].projects[0].linked_tasks).toEqual(["20"]);
     }
-  });
-
-  test("RoadmapSchema rejects the retired sections[] shape", () => {
-    const legacy = {
-      ...minimalRoadmap,
-      themes: undefined,
-      sections: [],
-    };
-    delete (legacy as { themes?: unknown }).themes;
-    const result = RoadmapSchema.safeParse(legacy);
-    expect(result.success).toBe(false);
   });
 
   test("TaskSchema accepts capability_theme back-link", () => {
@@ -314,56 +316,6 @@ describe("parseTaskListWithWarnings budget soft-warnings (ID-90 U0 / invariant 4
   test("subtask details is NOT budgeted — long details emit no warning", () => {
     const doc = mkTaskList({}, { details: "j".repeat(10000) });
     const { warnings } = parseTaskListWithWarnings(doc);
-    expect(warnings).toHaveLength(0);
-  });
-});
-
-describe("parseRoadmapWithWarnings theme budget soft-warnings ({35.13} parity)", () => {
-  test("over-budget theme description still parses and emits a themeId-scoped warning", () => {
-    const doc = {
-      ...minimalRoadmap,
-      themes: [
-        {
-          ...minimalRoadmap.themes[0],
-          description: "d".repeat(LEDGER_BUDGETS.theme.description + 1),
-        },
-      ],
-    };
-    const { value, warnings } = parseRoadmapWithWarnings(doc);
-    expect(value.themes).toHaveLength(1);
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0].themeId).toBe("1");
-    expect(warnings[0].message).toContain(`budget ${LEDGER_BUDGETS.theme.description}`);
-  });
-
-  test("over-budget theme notes emits a soft warning (null notes guarded)", () => {
-    const doc = {
-      ...minimalRoadmap,
-      themes: [
-        {
-          ...minimalRoadmap.themes[0],
-          notes: "n".repeat(LEDGER_BUDGETS.theme.notes + 1),
-        },
-      ],
-    };
-    const { warnings } = parseRoadmapWithWarnings(doc);
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0].message).toContain("notes");
-  });
-
-  test("12-theme soft ceiling still surfaces with themeCount", () => {
-    const themes = Array.from({ length: 13 }, (_, i) => ({
-      ...minimalRoadmap.themes[0],
-      id: String(i + 1),
-    }));
-    const { warnings } = parseRoadmapWithWarnings({ ...minimalRoadmap, themes });
-    const ceiling = warnings.find((w) => w.themeCount !== undefined);
-    expect(ceiling).toBeDefined();
-    expect(ceiling?.themeCount).toBe(13);
-  });
-
-  test("within-budget roadmap emits zero warnings", () => {
-    const { warnings } = parseRoadmapWithWarnings(minimalRoadmap);
     expect(warnings).toHaveLength(0);
   });
 });

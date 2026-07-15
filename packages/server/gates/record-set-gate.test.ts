@@ -67,15 +67,68 @@ function backlogDoc(itemIds: string[]) {
   };
 }
 
-function roadmapDoc(themeIds: string[]) {
+/**
+ * A nested initiatives fixture (ID-148.10, INV-13): each top-level
+ * initiative id in `topLevel` gets ONE direct project (`${id}-direct`);
+ * `nested` (if given) additionally nests a sub-initiative with its own
+ * project (`${parentId}-nested`) under the FIRST top-level initiative — so
+ * `allProjectSlugs` is exercised across BOTH a flat set and a tree.
+ */
+function initiativesDoc(topLevel: string[], nested: string[] = []) {
   return {
-    document_name: "Knowledge Hub Roadmap",
+    document_name: "Canonical Platform - Initiatives",
     document_purpose: "Synthetic.",
-    themes: themeIds.map((id) => ({
+    date: "2026-07-15",
+    status: "active",
+    related_documents: [],
+    last_updated: "kh-main-S473 synthetic fixture",
+    initiatives: topLevel.map((id, i) => ({
       id,
-      title: `Theme ${id}`,
-      status: "now",
+      title: `Initiative ${id}`,
       description: "d",
+      status: "active",
+      projects: [
+        {
+          id: `${id}-direct`,
+          title: `Direct project ${id}`,
+          summary: "s",
+          description: "d",
+          substrate_doc: "",
+          status: "idea",
+          blocked_by: [],
+          blocking: [],
+          linked_tasks: [],
+          linked_backlog: [],
+          originating_session: [],
+        },
+      ],
+      originating_session: [],
+      "sub-initiatives":
+        i === 0
+          ? nested.map((subId) => ({
+              id: subId,
+              title: `Sub ${subId}`,
+              description: "d",
+              status: "planned",
+              projects: [
+                {
+                  id: `${id}-${subId}-nested`,
+                  title: `Nested project ${subId}`,
+                  summary: "s",
+                  description: "d",
+                  substrate_doc: "",
+                  status: "backlog",
+                  blocked_by: [],
+                  blocking: [],
+                  linked_tasks: [],
+                  linked_backlog: [],
+                  originating_session: [],
+                },
+              ],
+              originating_session: [],
+              "sub-initiatives": [],
+            }))
+          : [],
     })),
   };
 }
@@ -105,6 +158,30 @@ describe("collectionIds", () => {
       collectionIds(taskListDoc(["9"]), { collection: "subtasks", taskId: "404" }),
     ).toBeNull();
   });
+
+  // ID-148.10 (INV-13): "projects" is a TREE-FLATTENED set, not a literal
+  // top-level array key.
+  test("extracts the tree-flattened project-slug set (flat top-level only)", () => {
+    const ids = collectionIds(initiativesDoc(["1", "2"]), {
+      collection: "projects",
+    });
+    expect(ids).toEqual(new Set(["1-direct", "2-direct"]));
+  });
+
+  test("extracts the tree-flattened project-slug set ACROSS a nested sub-initiative", () => {
+    const ids = collectionIds(initiativesDoc(["1", "2"], ["a", "b"]), {
+      collection: "projects",
+    });
+    expect(ids).toEqual(
+      new Set(["1-direct", "2-direct", "1-a-nested", "1-b-nested"]),
+    );
+  });
+
+  test("returns null for 'projects' when the initiatives array is absent (malformed)", () => {
+    expect(
+      collectionIds({ document_name: "x" }, { collection: "projects" }),
+    ).toBeNull();
+  });
 });
 
 // ── beforeCollectionIds (typed pre-write capture) ────────────────────────────
@@ -118,12 +195,12 @@ describe("beforeCollectionIds", () => {
     expect(beforeCollectionIds(tl, { collection: "tasks" })).toEqual(
       new Set(["7", "8"]),
     );
-    const rm = {
-      kind: "roadmap",
-      data: roadmapDoc(["1", "2"]),
+    const init = {
+      kind: "initiatives",
+      data: initiativesDoc(["1", "2"]),
     } as unknown as KnownDetected;
-    expect(beforeCollectionIds(rm, { collection: "themes" })).toEqual(
-      new Set(["1", "2"]),
+    expect(beforeCollectionIds(init, { collection: "projects" })).toEqual(
+      new Set(["1-direct", "2-direct"]),
     );
     const bl = {
       kind: "backlog",
@@ -357,76 +434,94 @@ describe("checkRecordSet", () => {
   });
 });
 
-// ── ID-90.11: umbrellas descriptor (the fourth-kind gap U8 left open) ───────
+// ── ID-148.10: initiatives "projects" descriptor (INV-13, repurposed from
+// the retired roadmap "themes" descriptor) ───────────────────────────────
 
-describe("umbrellas collection descriptor (ID-90.11 — PRODUCT inv 49-50)", () => {
-  function umbrellasDoc(ids: string[]) {
-    return {
-      document_name: "umbrellas",
-      document_purpose: "Synthetic.",
-      last_updated: "kh-main-S1 synthetic fixture",
-      related_documents: [],
-      umbrellas: ids.map((id) => ({
-        id,
-        title: `Umbrella ${id}`,
-        substrate_doc: `docs/${id}.md`,
-        task_ids: ["20"],
-        status: "in_progress",
-        phase: "Phase 1",
-      })),
-    };
-  }
-
-  test("topLevelCollectionFor('umbrellas') guards the umbrellas key, not items", () => {
-    expect(topLevelCollectionFor("umbrellas")).toEqual({
-      collection: "umbrellas",
+describe("initiatives 'projects' collection descriptor (ID-148.10, INV-13)", () => {
+  test("topLevelCollectionFor('initiatives') guards the tree-flattened projects set", () => {
+    expect(topLevelCollectionFor("initiatives")).toEqual({
+      collection: "projects",
     });
   });
 
-  test("collectionIds + beforeCollectionIds extract the umbrella id-set", () => {
-    const doc = umbrellasDoc(["alpha-grouping", "beta-grouping"]);
-    expect(collectionIds(doc, { collection: "umbrellas" })).toEqual(
-      new Set(["alpha-grouping", "beta-grouping"]),
-    );
-    const detected = {
-      kind: "umbrellas",
-      data: doc,
-    } as unknown as KnownDetected;
+  test("a field PATCH (delta none) on a project passes; a serialise-side dropped project is a violation", () => {
+    const before = new Set<string | number>(["1-direct", "2-direct"]);
+    const good = JSON.stringify(initiativesDoc(["1", "2"]), null, 2);
     expect(
-      beforeCollectionIds(detected, { collection: "umbrellas" }),
-    ).toEqual(new Set(["alpha-grouping", "beta-grouping"]));
+      checkRecordSet(
+        "initiatives",
+        good,
+        before,
+        { collection: "projects" },
+        { kind: "none" },
+      ),
+    ).toEqual({ ok: true });
+
+    const bad = JSON.stringify(initiativesDoc(["1"]), null, 2); // 2-direct dropped
+    const check = checkRecordSet(
+      "initiatives",
+      bad,
+      before,
+      { collection: "projects" },
+      { kind: "none" },
+    );
+    expect(check.ok).toBe(false);
+    if (!check.ok) expect(check.detail).toBe("initiatives: missing [2-direct]");
   });
 
-  test("a membership PATCH (delta none) passes; a dropped umbrella is a violation", () => {
+  test("ATOMIC MOVE (INV-13): the 2-patch batch that re-parents a task keeps the project SET at delta none", () => {
+    // A move re-parents a task/backlog id between two projects' LINK
+    // arrays — the project id-set itself is unchanged (no project added or
+    // removed), so the gate's expectedDelta stays 'none' exactly like an
+    // ordinary field PATCH. Nothing project-set-specific is needed for a
+    // move — this test documents that fact against the nested fixture.
     const before = new Set<string | number>([
-      "alpha-grouping",
-      "beta-grouping",
+      "1-direct",
+      "2-direct",
+      "1-a-nested",
     ]);
+    const afterMove = JSON.stringify(
+      initiativesDoc(["1", "2"], ["a"]),
+      null,
+      2,
+    ); // same project SET; only field CONTENTS would differ in a real move
+    expect(
+      checkRecordSet(
+        "initiatives",
+        afterMove,
+        before,
+        { collection: "projects" },
+        { kind: "none" },
+      ),
+    ).toEqual({ ok: true });
+  });
+
+  test("create (add delta): a new project slug landing correctly passes; a dropped survivor rejects", () => {
+    const before = new Set<string | number>(["1-direct"]);
     const good = JSON.stringify(
-      umbrellasDoc(["alpha-grouping", "beta-grouping"]),
+      {
+        ...initiativesDoc(["1"]),
+        initiatives: [
+          {
+            ...initiativesDoc(["1"]).initiatives[0],
+            projects: [
+              ...initiativesDoc(["1"]).initiatives[0].projects,
+              { id: "1-new", title: "New" },
+            ],
+          },
+        ],
+      },
       null,
       2,
     );
     expect(
       checkRecordSet(
-        "umbrellas",
+        "initiatives",
         good,
         before,
-        { collection: "umbrellas" },
-        { kind: "none" },
+        { collection: "projects" },
+        { kind: "add", id: "1-new" },
       ),
     ).toEqual({ ok: true });
-
-    const bad = JSON.stringify(umbrellasDoc(["alpha-grouping"]), null, 2);
-    const check = checkRecordSet(
-      "umbrellas",
-      bad,
-      before,
-      { collection: "umbrellas" },
-      { kind: "none" },
-    );
-    expect(check.ok).toBe(false);
-    if (!check.ok)
-      expect(check.detail).toBe("umbrellas: missing [beta-grouping]");
   });
 });

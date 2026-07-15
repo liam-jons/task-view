@@ -2,7 +2,7 @@
  * record-view/types.ts — shared rendering types for the per-record viewer
  * (ID-20.9 read mode).
  *
- * The read-mode renderer consumes typed records (Task / RoadmapTheme /
+ * The read-mode renderer consumes typed records (Task / Project /
  * BacklogItem) from the parsed canonical ledger — NOT re-parsed Markdown
  * frontmatter. Per the End-to-end flow diagram in TECH §End-to-end, the
  * SPA fetches `/api/ledger/record/:id` and receives `{ record, mirror,
@@ -13,15 +13,21 @@
  * cross-record linking. It is intentionally minimal — just the lookup
  * tables the renderer needs.
  *
- * Roadmap shape note (ID-20.19): the Phase-B themes[] roadmap replaced the
- * retired sections[]/items[] model. A Roadmap is now a flat list of
- * `RoadmapTheme` records; there is no separate item layer.
+ * ID-148.10 (repurposed roadmap arm): Initiatives replaced Roadmap. Unlike
+ * the flat `RoadmapTheme[]` list, `initiatives[]` is a TREE
+ * (`initiatives[]` -> `projects[]` + recursive `sub-initiatives[]`). The
+ * reverse cross-ledger index below is keyed by PROJECT (the only node kind
+ * that carries `linked_tasks`/`linked_backlog` in steady state — INV-6
+ * "links are project-only") and is built by walking the whole tree, not a
+ * single flat array.
  */
 import type { Task } from "@task-view/schemas/task-list";
 import type {
-  Roadmap,
-  RoadmapTheme,
-} from "@task-view/schemas/roadmap";
+  InitiativesDocument,
+  Initiative,
+  SubInitiative,
+  Project,
+} from "@task-view/schemas/initiatives";
 import type { BacklogItem } from "@task-view/schemas/backlog";
 
 /**
@@ -38,40 +44,44 @@ export type ExistingPathsSet = ReadonlySet<string> | null;
 /**
  * Ledger-wide context every per-record page can interrogate.
  *
- * - `taskIds` / `roadmapThemeIds` / `backlogItemIds` are presence sets
- *   used by the broken-target marker to decide whether a Task / Roadmap /
- *   Backlog dependency link is live or missing.
- * - `roadmapThemesById` enables Roadmap theme lookups (e.g. resolving a
- *   linked-task back-reference's parent theme).
- * - `themesByLinkedTask` / `themesByLinkedBacklog` are the {20.30} REVERSE
- *   cross-ledger index — a record id → the ids of the roadmap themes that
- *   reference it via `linked_tasks` / `linked_backlog`. Computed at
- *   render-load from the roadmap's forward edges (OQ-P1 option (a): a
- *   fork-only, server-computed inverse index — NO ledger-contract change).
- *   Empty when no roadmap is threaded in.
+ * - `taskIds` / `projectIds` / `backlogItemIds` are presence sets used by
+ *   the broken-target marker to decide whether a Task / Project / Backlog
+ *   dependency link is live or missing. `projectIds` is the
+ *   GLOBALLY-UNIQUE slug set flattened tree-wide (INV-13 — a project may
+ *   live at any depth under `initiatives[]`/`sub-initiatives[]`).
+ * - `projectsBySlug` enables Project lookups (e.g. resolving a linked-task
+ *   back-reference's parent project) by its globally-unique slug,
+ *   regardless of nesting depth.
+ * - `projectsByLinkedTask` / `projectsByLinkedBacklog` are the {20.30}
+ *   REVERSE cross-ledger index — a record id → the SLUGS of the projects
+ *   that reference it via `linked_tasks` / `linked_backlog`. Computed at
+ *   render-load from every project's forward edges, tree-wide (INV-6:
+ *   links are project-only — initiatives/sub-initiatives never carry
+ *   these fields in steady state, so the walk only needs to visit
+ *   projects). Empty when no initiatives document is threaded in.
  * - `existingPaths` enables cross-doc-link existence checks (inv 11). May
  *   be `null` for environments where filesystem existence cannot be
  *   verified (e.g. the SPA running offline against a remote mirror).
  */
 export interface LedgerContext {
   taskIds: ReadonlySet<string>;
-  roadmapThemeIds: ReadonlySet<string>;
+  projectIds: ReadonlySet<string>;
   backlogItemIds: ReadonlySet<string>;
-  /** Roadmap theme lookup table by theme id. */
-  roadmapThemesById: ReadonlyMap<string, RoadmapTheme>;
+  /** Project lookup table by globally-unique slug (tree-wide). */
+  projectsBySlug: ReadonlyMap<string, Project>;
   /**
-   * {20.30}: task id → ids of roadmap themes whose `linked_tasks` include it
-   * (the reverse of the forward Roadmap → Task edge). Theme ids preserve
-   * roadmap declaration order and are deduped per task.
+   * {20.30}: task id → slugs of projects whose `linked_tasks` include it
+   * (the reverse of the forward Project → Task edge). Project slugs
+   * preserve tree declaration order (depth-first) and are deduped per task.
    */
-  themesByLinkedTask: ReadonlyMap<string, readonly string[]>;
+  projectsByLinkedTask: ReadonlyMap<string, readonly string[]>;
   /**
-   * {20.30}: backlog id → ids of roadmap themes whose `linked_backlog`
-   * include it (the reverse of the forward Roadmap → Backlog edge). This is
-   * the ONLY backlog → roadmap nav path — backlog records carry no roadmap
-   * pointer field.
+   * {20.30}: backlog id → slugs of projects whose `linked_backlog` include
+   * it (the reverse of the forward Project → Backlog edge). This is the
+   * ONLY backlog → initiatives nav path — backlog records carry no
+   * initiatives pointer field.
    */
-  themesByLinkedBacklog: ReadonlyMap<string, readonly string[]>;
+  projectsByLinkedBacklog: ReadonlyMap<string, readonly string[]>;
   /** Verified-existing repo-relative paths for cross-doc-link checks. */
   existingPaths: ExistingPathsSet;
 }
@@ -79,7 +89,7 @@ export interface LedgerContext {
 /**
  * Build a `LedgerContext` from the parsed ledgers known at render time.
  *
- * Either of `tasks`, `roadmap`, `backlogItems` may be omitted depending
+ * Either of `tasks`, `initiatives`, `backlogItems` may be omitted depending
  * on which ledger the viewer is rendering — only the active mode's set is
  * meaningful for in-mode dependency checks. Out-of-mode sets default to
  * empty (any cross-mode dep would be flagged as missing, but the schemas
@@ -87,25 +97,29 @@ export interface LedgerContext {
  */
 export function buildLedgerContext(input: {
   tasks?: readonly Task[];
-  roadmap?: Roadmap;
+  initiatives?: InitiativesDocument;
   backlogItems?: readonly BacklogItem[];
   existingPaths?: ExistingPathsSet;
 }): LedgerContext {
   const taskIds = new Set<string>(input.tasks?.map((t) => t.id) ?? []);
-  const roadmapThemeIds = new Set<string>();
-  const roadmapThemesById = new Map<string, RoadmapTheme>();
-  // {20.30}: reverse cross-ledger index, built at render-load from the
-  // roadmap's forward edges. A theme is appended to a record's list at most
-  // once (dedupe guards a record id repeated inside one theme's array); the
-  // outer theme loop preserves roadmap declaration order across themes.
-  const themesByLinkedTask = new Map<string, string[]>();
-  const themesByLinkedBacklog = new Map<string, string[]>();
-  if (input.roadmap) {
-    for (const theme of input.roadmap.themes) {
-      roadmapThemeIds.add(theme.id);
-      roadmapThemesById.set(theme.id, theme);
-      addReverseEdges(themesByLinkedTask, theme.id, theme.linked_tasks);
-      addReverseEdges(themesByLinkedBacklog, theme.id, theme.linked_backlog);
+  const projectIds = new Set<string>();
+  const projectsBySlug = new Map<string, Project>();
+  // {20.30}: reverse cross-ledger index, built at render-load from every
+  // project's forward edges (tree-wide walk — INV-13). A project is
+  // appended to a record's list at most once (dedupe guards a record id
+  // repeated inside one project's array); the depth-first walk preserves
+  // tree declaration order across projects.
+  const projectsByLinkedTask = new Map<string, string[]>();
+  const projectsByLinkedBacklog = new Map<string, string[]>();
+  if (input.initiatives) {
+    for (const initiative of input.initiatives.initiatives) {
+      walkNodeForContext(
+        initiative,
+        projectIds,
+        projectsBySlug,
+        projectsByLinkedTask,
+        projectsByLinkedBacklog,
+      );
     }
   }
   const backlogItemIds = new Set<string>(
@@ -113,31 +127,64 @@ export function buildLedgerContext(input: {
   );
   return {
     taskIds,
-    roadmapThemeIds,
+    projectIds,
     backlogItemIds,
-    roadmapThemesById,
-    themesByLinkedTask,
-    themesByLinkedBacklog,
+    projectsBySlug,
+    projectsByLinkedTask,
+    projectsByLinkedBacklog,
     existingPaths: input.existingPaths ?? null,
   };
 }
 
 /**
- * Append `themeId` to every referenced record's reverse-edge list ({20.30}),
- * skipping ids already present for this theme so a record repeated inside one
- * theme's link array yields a single backlink.
+ * Depth-first walk of one initiative/sub-initiative node's `projects[]` +
+ * recursive `sub-initiatives[]`, populating the flattened lookup tables
+ * `buildLedgerContext` returns (INV-13 — projects live at any depth).
+ */
+function walkNodeForContext(
+  node: Initiative | SubInitiative,
+  projectIds: Set<string>,
+  projectsBySlug: Map<string, Project>,
+  projectsByLinkedTask: Map<string, string[]>,
+  projectsByLinkedBacklog: Map<string, string[]>,
+): void {
+  for (const project of node.projects) {
+    projectIds.add(project.id);
+    projectsBySlug.set(project.id, project);
+    addReverseEdges(projectsByLinkedTask, project.id, project.linked_tasks);
+    addReverseEdges(
+      projectsByLinkedBacklog,
+      project.id,
+      project.linked_backlog,
+    );
+  }
+  for (const sub of node["sub-initiatives"]) {
+    walkNodeForContext(
+      sub,
+      projectIds,
+      projectsBySlug,
+      projectsByLinkedTask,
+      projectsByLinkedBacklog,
+    );
+  }
+}
+
+/**
+ * Append `projectSlug` to every referenced record's reverse-edge list
+ * ({20.30}), skipping slugs already present for this project so a record
+ * repeated inside one project's link array yields a single backlink.
  */
 function addReverseEdges(
   index: Map<string, string[]>,
-  themeId: string,
+  projectSlug: string,
   referencedIds: readonly string[],
 ): void {
   for (const recordId of referencedIds) {
-    const themes = index.get(recordId);
-    if (themes === undefined) {
-      index.set(recordId, [themeId]);
-    } else if (!themes.includes(themeId)) {
-      themes.push(themeId);
+    const projects = index.get(recordId);
+    if (projects === undefined) {
+      index.set(recordId, [projectSlug]);
+    } else if (!projects.includes(projectSlug)) {
+      projects.push(projectSlug);
     }
   }
 }
@@ -156,4 +203,4 @@ export interface NavStripData {
   indexLabel: string;
 }
 
-export type { Task, RoadmapTheme, BacklogItem };
+export type { Task, Initiative, SubInitiative, Project, BacklogItem };

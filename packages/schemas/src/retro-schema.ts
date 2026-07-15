@@ -30,7 +30,7 @@
  */
 
 import { z } from 'zod';
-import { DocLinkSchema } from './roadmap-schema';
+import { DocLinkSchema } from './doc-link';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // ID + date regex constants — session ids are `S<n>` (e.g. "S264"), not bare-digit.

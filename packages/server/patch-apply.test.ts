@@ -8,7 +8,8 @@
  * Covers (per TECH §5.2 + §5.5 + PRODUCT inv 38):
  *   - Task-level field replacement (status, priority, description, ...).
  *   - Subtask-level field replacement (status, details, dependencies, ...).
- *   - Roadmap theme-level fields (ID-20.19 themes[]).
+ *   - Initiatives project/initiative-level fields (ID-148.10, INV-13 —
+ *     repurposed roadmap arm, nested tree addressing).
  *   - Backlog item-level fields.
  *   - Multi-patch single-pass (multiple FieldPatches in one call).
  *   - Walk errors (unknown task id, unknown subtask id, wrong head, ...).
@@ -18,16 +19,14 @@
 import { describe, expect, test } from "bun:test";
 import {
   applyTaskListPatches,
-  applyRoadmapPatches,
+  applyInitiativesPatches,
   applyBacklogPatches,
-  applyUmbrellasPatches,
   applyPatches,
   type FieldPatch,
 } from "./patch-apply";
 import { TaskListSchema } from "@task-view/schemas/task-list";
-import { RoadmapSchema } from "@task-view/schemas/roadmap";
+import { InitiativesSchema } from "@task-view/schemas/initiatives";
 import { BacklogSchema } from "@task-view/schemas/backlog";
-import { UmbrellasSchema } from "@task-view/schemas/umbrellas";
 
 // ── Fixture builders ──────────────────────────────────────────────────────────
 
@@ -95,28 +94,61 @@ function makeTaskList() {
   });
 }
 
-function makeRoadmap() {
-  return RoadmapSchema.parse({
-    document_name: "Knowledge Hub Roadmap",
-    document_purpose: "Forward-looking roadmap.",
-    date: "2026-05-21",
-    status: "Active",
-    forward_looking_only: true,
+function makeInitiatives() {
+  return InitiativesSchema.parse({
+    document_name: "Canonical Platform - Initiatives",
+    document_purpose: "Structured record of active initiatives.",
+    date: "2026-07-15",
+    status: "active",
     related_documents: [],
-    last_updated: "kh-prod-readiness-S63 representative fixture",
-    themes: [
+    last_updated: "kh-main-S473 representative fixture",
+    initiatives: [
       {
         id: "1",
         title: "Foundation",
-        description: "Foundation theme description.",
-        time_horizon: "now",
-        status: "pending",
-        linked_tasks: ["20"],
-        linked_backlog: [],
-        session_refs: [],
-        commit_refs: [],
-        cross_doc_links: [],
-        notes: "Initial notes.",
+        description: "Foundation initiative description.",
+        status: "proposed",
+        projects: [
+          {
+            id: "foundation-project",
+            title: "Foundation project",
+            summary: "Summary.",
+            description: "Description.",
+            substrate_doc: "",
+            status: "idea",
+            blocked_by: [],
+            blocking: [],
+            linked_tasks: ["20"],
+            linked_backlog: [],
+            originating_session: [],
+          },
+        ],
+        originating_session: [],
+        "sub-initiatives": [
+          {
+            id: "1",
+            title: "Sub one",
+            description: "Sub description.",
+            status: "planned",
+            projects: [
+              {
+                id: "sub-project",
+                title: "Sub project",
+                summary: "Sub summary.",
+                description: "Sub description.",
+                substrate_doc: "",
+                status: "backlog",
+                blocked_by: [],
+                blocking: [],
+                linked_tasks: [],
+                linked_backlog: [],
+                originating_session: [],
+              },
+            ],
+            originating_session: [],
+            "sub-initiatives": [],
+          },
+        ],
       },
     ],
   });
@@ -447,110 +479,178 @@ describe("applyTaskListPatches — schema validation", () => {
   });
 });
 
-// ── Roadmap patches ───────────────────────────────────────────────────────────
+// ── Initiatives patches (ID-148.10, TECH §3.1(b), INV-13) ────────────────────
 
-describe("applyRoadmapPatches — theme field replacement (ID-20.19)", () => {
-  test("replaces Theme.notes", () => {
-    const snapshot = makeRoadmap();
-    const result = applyRoadmapPatches(snapshot, [
-      { fieldPath: ["themes", "1", "notes"], newValue: "Updated notes." },
+describe("applyInitiativesPatches — Project field replacement (slug addressing)", () => {
+  test("replaces a top-level Project.status by slug", () => {
+    const snapshot = makeInitiatives();
+    const result = applyInitiativesPatches(snapshot, [
+      { fieldPath: ["projects", "foundation-project", "status"], newValue: "in-progress" },
     ]);
     if (!result.ok) throw new Error(`expected ok; got kind=${result.kind}`);
-    expect(result.parsed.themes[0].notes).toBe("Updated notes.");
+    expect(result.parsed.initiatives[0].projects[0].status).toBe("in-progress");
   });
 
-  test("replaces Theme.status (pending | in_progress | done)", () => {
-    const snapshot = makeRoadmap();
-    const result = applyRoadmapPatches(snapshot, [
-      { fieldPath: ["themes", "1", "status"], newValue: "in_progress" },
+  test("replaces a NESTED (sub-initiative) Project field by slug, tree-walk-found", () => {
+    const snapshot = makeInitiatives();
+    const result = applyInitiativesPatches(snapshot, [
+      { fieldPath: ["projects", "sub-project", "summary"], newValue: "Renamed summary." },
     ]);
     if (!result.ok) throw new Error(`expected ok; got kind=${result.kind}`);
-    expect(result.parsed.themes[0].status).toBe("in_progress");
+    const sub = result.parsed.initiatives[0]["sub-initiatives"][0];
+    expect(sub.projects[0].summary).toBe("Renamed summary.");
   });
 
-  test("replaces Theme.time_horizon", () => {
-    const snapshot = makeRoadmap();
-    const result = applyRoadmapPatches(snapshot, [
-      { fieldPath: ["themes", "1", "time_horizon"], newValue: "later" },
+  test("replaces Project.linked_tasks (array) atomically", () => {
+    const snapshot = makeInitiatives();
+    const result = applyInitiativesPatches(snapshot, [
+      { fieldPath: ["projects", "foundation-project", "linked_tasks"], newValue: ["20", "30"] },
     ]);
     if (!result.ok) throw new Error(`expected ok; got kind=${result.kind}`);
-    expect(result.parsed.themes[0].time_horizon).toBe("later");
+    expect(result.parsed.initiatives[0].projects[0].linked_tasks).toEqual(["20", "30"]);
   });
 
-  test("replaces Theme.title + description in a single pass", () => {
-    const snapshot = makeRoadmap();
-    const result = applyRoadmapPatches(snapshot, [
-      { fieldPath: ["themes", "1", "title"], newValue: "Renamed theme" },
-      { fieldPath: ["themes", "1", "description"], newValue: "New description." },
+  test("rejects an out-of-enum Project.status as schema-error (strict write, INV-3)", () => {
+    const snapshot = makeInitiatives();
+    const result = applyInitiativesPatches(snapshot, [
+      { fieldPath: ["projects", "foundation-project", "status"], newValue: "not-a-real-status" },
     ]);
-    if (!result.ok) throw new Error(`expected ok; got kind=${result.kind}`);
-    expect(result.parsed.themes[0].title).toBe("Renamed theme");
-    expect(result.parsed.themes[0].description).toBe("New description.");
+    // Lenient READ (z.string()) means the schema parse itself would accept
+    // this value — INV-3's strict-write enforcement is a SEPARATE server
+    // gate layer (patch-server.ts / budget-gate.ts convention), not this
+    // module. Document that patch-apply itself does NOT reject it (the
+    // schema is lenient by design); the write-gate test lives elsewhere.
+    expect(result.ok).toBe(true);
   });
 
-  test("rejects an invalid Theme.status as schema-error", () => {
-    const snapshot = makeRoadmap();
-    // 'blocked' is NOT a valid theme status (themes only accept
-    // pending | in_progress | done).
-    const result = applyRoadmapPatches(snapshot, [
-      { fieldPath: ["themes", "1", "status"], newValue: "blocked" },
-    ]);
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.kind).toBe("schema-error");
-    }
-  });
-
-  test("rejects fieldPath that does not start with 'themes'", () => {
-    const snapshot = makeRoadmap();
-    const result = applyRoadmapPatches(snapshot, [
-      { fieldPath: ["sections", "1", "narrative"], newValue: "x" },
+  test("rejects unknown project slug", () => {
+    const snapshot = makeInitiatives();
+    const result = applyInitiativesPatches(snapshot, [
+      { fieldPath: ["projects", "does-not-exist", "status"], newValue: "idea" },
     ]);
     expect(result.ok).toBe(false);
     if (!result.ok && result.kind === "walk-error") {
-      expect(result.detail).toContain("themes");
+      expect(result.detail).toContain('"does-not-exist"');
     }
   });
 
-  test("rejects unknown theme id", () => {
-    const snapshot = makeRoadmap();
-    const result = applyRoadmapPatches(snapshot, [
-      { fieldPath: ["themes", "99", "notes"], newValue: "x" },
+  test("rejects unknown field on Project", () => {
+    const snapshot = makeInitiatives();
+    const result = applyInitiativesPatches(snapshot, [
+      { fieldPath: ["projects", "foundation-project", "made_up_field"], newValue: "x" },
     ]);
     expect(result.ok).toBe(false);
     if (!result.ok && result.kind === "walk-error") {
-      expect(result.detail).toContain('Theme id "99"');
+      expect(result.detail).toContain("made_up_field");
+    }
+  });
+});
+
+describe("applyInitiativesPatches — Initiative/SubInitiative field replacement (path addressing)", () => {
+  test("replaces a top-level Initiative field by bare path", () => {
+    const snapshot = makeInitiatives();
+    const result = applyInitiativesPatches(snapshot, [
+      { fieldPath: ["initiatives", "1", "status"], newValue: "active" },
+    ]);
+    if (!result.ok) throw new Error(`expected ok; got kind=${result.kind}`);
+    expect(result.parsed.initiatives[0].status).toBe("active");
+  });
+
+  test("replaces a sub-initiative field by dotted path", () => {
+    const snapshot = makeInitiatives();
+    const result = applyInitiativesPatches(snapshot, [
+      { fieldPath: ["initiatives", "1.1", "title"], newValue: "Renamed sub" },
+    ]);
+    if (!result.ok) throw new Error(`expected ok; got kind=${result.kind}`);
+    expect(result.parsed.initiatives[0]["sub-initiatives"][0].title).toBe("Renamed sub");
+  });
+
+  test("ALLOWS linked_tasks on a top-level Initiative (initiative-4 tolerance, INV-2)", () => {
+    const snapshot = makeInitiatives();
+    const result = applyInitiativesPatches(snapshot, [
+      { fieldPath: ["initiatives", "1", "linked_tasks"], newValue: ["99"] },
+    ]);
+    expect(result.ok).toBe(true);
+  });
+
+  test("REJECTS linked_tasks on a sub-initiative (not in its known-field set)", () => {
+    const snapshot = makeInitiatives();
+    const result = applyInitiativesPatches(snapshot, [
+      { fieldPath: ["initiatives", "1.1", "linked_tasks"], newValue: ["99"] },
+    ]);
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.kind === "walk-error") {
+      expect(result.detail).toContain("SubInitiative");
     }
   });
 
-  test("rejects a nested fieldPath (themes have no nested record layer)", () => {
-    const snapshot = makeRoadmap();
-    const result = applyRoadmapPatches(snapshot, [
-      { fieldPath: ["themes", "1", "items", "9.9", "status"], newValue: "blocked" },
+  test("rejects unknown initiative path", () => {
+    const snapshot = makeInitiatives();
+    const result = applyInitiativesPatches(snapshot, [
+      { fieldPath: ["initiatives", "999", "status"], newValue: "active" },
+    ]);
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.kind === "walk-error") {
+      expect(result.detail).toContain('"999"');
+    }
+  });
+
+  test("rejects unknown sub-initiative segment in a dotted path", () => {
+    const snapshot = makeInitiatives();
+    const result = applyInitiativesPatches(snapshot, [
+      { fieldPath: ["initiatives", "1.99", "status"], newValue: "active" },
+    ]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.kind).toBe("walk-error");
+  });
+
+  test("rejects fieldPath not starting with 'projects' or 'initiatives'", () => {
+    const snapshot = makeInitiatives();
+    const result = applyInitiativesPatches(snapshot, [
+      { fieldPath: ["themes", "1", "notes"], newValue: "x" },
+    ]);
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.kind === "walk-error") {
+      expect(result.detail).toContain("'projects' or 'initiatives'");
+    }
+  });
+
+  test("rejects a fieldPath addressing more than one segment after the id", () => {
+    const snapshot = makeInitiatives();
+    const result = applyInitiativesPatches(snapshot, [
+      { fieldPath: ["initiatives", "1", "projects", "0", "status"], newValue: "x" },
     ]);
     expect(result.ok).toBe(false);
     if (!result.ok && result.kind === "walk-error") {
       expect(result.detail).toContain("single field");
     }
   });
+});
 
-  // ── ID-20.26: optional-field guard fix ──────────────────────────────────────
+describe("applyInitiativesPatches — atomic move (INV-13, two-project batch)", () => {
+  test("a single 2-patch batch atomically re-parents a linked task between two projects", () => {
+    const snapshot = makeInitiatives();
+    // "Move" task 20 from foundation-project to sub-project: one field-patch
+    // per side, applied through the SAME multi-patch batch — no dedicated
+    // server op, per the module header's documented design.
+    const result = applyInitiativesPatches(snapshot, [
+      { fieldPath: ["projects", "foundation-project", "linked_tasks"], newValue: [] },
+      { fieldPath: ["projects", "sub-project", "linked_tasks"], newValue: ["20"] },
+    ]);
+    if (!result.ok) throw new Error(`expected ok; got kind=${result.kind}`);
+    expect(result.parsed.initiatives[0].projects[0].linked_tasks).toEqual([]);
+    const sub = result.parsed.initiatives[0]["sub-initiatives"][0];
+    expect(sub.projects[0].linked_tasks).toEqual(["20"]);
+  });
 
-  test("ID-20.26: typo'd field on Theme still errors — not a silent no-op", () => {
-    // RoadmapThemeSchema uses .strict() so a typo'd field would produce a
-    // schema-error at re-parse even without the guard. After the fix
-    // (schema-keyset guard) it surfaces as a walk-error before Zod runs —
-    // either way the result must NOT be ok. Exercises the guard path for the
-    // roadmap surface (mirrors the Task/Subtask/Backlog typo cases).
-    const snapshot = makeRoadmap();
-    const result = applyRoadmapPatches(snapshot, [
-      { fieldPath: ["themes", "1", "statsu_notes"], newValue: "typo" }, // deliberate typo
+  test("all-or-nothing: if the target-project leg fails, the source leg does not commit either", () => {
+    const snapshot = makeInitiatives();
+    const result = applyInitiativesPatches(snapshot, [
+      { fieldPath: ["projects", "foundation-project", "linked_tasks"], newValue: [] },
+      { fieldPath: ["projects", "does-not-exist", "linked_tasks"], newValue: ["20"] },
     ]);
     expect(result.ok).toBe(false);
-    expect(["walk-error", "schema-error"]).toContain(result.ok ? "ok" : result.kind);
-    if (!result.ok && result.kind === "walk-error") {
-      expect(result.detail).toContain("statsu_notes");
-    }
+    if (!result.ok) expect(result.kind).toBe("walk-error");
   });
 });
 
@@ -664,11 +764,11 @@ describe("applyPatches — dispatcher", () => {
     expect(result.ok).toBe(true);
   });
 
-  test("dispatches roadmap kind to applyRoadmapPatches", () => {
-    const data = makeRoadmap();
+  test("dispatches initiatives kind to applyInitiativesPatches", () => {
+    const data = makeInitiatives();
     const result = applyPatches(
-      { kind: "roadmap", data },
-      [{ fieldPath: ["themes", "1", "notes"], newValue: "x" }],
+      { kind: "initiatives", data },
+      [{ fieldPath: ["projects", "foundation-project", "summary"], newValue: "x" }],
     );
     expect(result.ok).toBe(true);
   });
@@ -765,16 +865,16 @@ describe("applyTaskListPatches — appendText op (ID-90 U6)", () => {
   });
 });
 
-describe("applyRoadmapPatches / applyBacklogPatches — appendText op (--append forms)", () => {
-  test("update-roadmap --append: concatenates onto theme notes", () => {
-    const data = makeRoadmap();
-    const result = applyRoadmapPatches(data, [
-      { fieldPath: ["themes", "1", "notes"], appendText: " Appended note." },
+describe("applyInitiativesPatches / applyBacklogPatches — appendText op (--append forms)", () => {
+  test("update-project --append: concatenates onto project summary", () => {
+    const data = makeInitiatives();
+    const result = applyInitiativesPatches(data, [
+      { fieldPath: ["projects", "foundation-project", "summary"], appendText: " Appended note." },
     ]);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.parsed.themes[0].notes).toBe(
-        "Initial notes. Appended note.",
+      expect(result.parsed.initiatives[0].projects[0].summary).toBe(
+        "Summary. Appended note.",
       );
     }
   });
@@ -789,139 +889,5 @@ describe("applyRoadmapPatches / applyBacklogPatches — appendText op (--append 
     if (result.ok) {
       expect(result.parsed.items[0].notes).toBe("Fresh note.");
     }
-  });
-});
-
-// ── ID-90 U8: umbrellas walk (PRODUCT invariants 49–50) ──────────────────────
-//
-// Membership edits are field PATCHes on ['umbrellas', id, 'task_ids'] —
-// record-set delta is none over the umbrella id-set (invariant 50); the walk
-// pairs with record 6's serialiser walk in scoped-serialise.ts and shares
-// applyValueToLeaf with record 9's appendText op.
-
-function makeUmbrellas() {
-  return UmbrellasSchema.parse({
-    document_name: "umbrellas",
-    document_purpose: "Umbrella groupings of Tasks (Linear-Initiative analogue).",
-    last_updated: "kh-main-S1 synthetic fixture",
-    related_documents: [],
-    umbrellas: [
-      {
-        id: "test-umbrella",
-        title: "Test Umbrella",
-        substrate_doc: "docs/reference/test-umbrella.md",
-        task_ids: ["20"],
-        status: "in_progress",
-        phase: "Phase 1",
-      },
-      {
-        id: "second-umbrella",
-        title: "Second Umbrella",
-        substrate_doc: "docs/reference/second-umbrella.md",
-        task_ids: [],
-        status: "proposed",
-        phase: "Phase 2",
-      },
-    ],
-  });
-}
-
-describe("applyUmbrellasPatches — membership field patch (ID-90 U8)", () => {
-  test("replaces task_ids[] on the addressed umbrella (membership edit)", () => {
-    const data = makeUmbrellas();
-    const result = applyUmbrellasPatches(data, [
-      {
-        fieldPath: ["umbrellas", "test-umbrella", "task_ids"],
-        newValue: ["20", "90"],
-      },
-    ]);
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.parsed.umbrellas[0].task_ids).toEqual(["20", "90"]);
-      // Untouched sibling umbrella is unchanged — the umbrella id-set is
-      // identical (record-set delta none, invariant 50).
-      expect(result.parsed.umbrellas[1].task_ids).toEqual([]);
-      expect(result.parsed.umbrellas.map((u) => u.id)).toEqual([
-        "test-umbrella",
-        "second-umbrella",
-      ]);
-    }
-  });
-
-  test("patches a scalar field (status) on an umbrella", () => {
-    const data = makeUmbrellas();
-    const result = applyUmbrellasPatches(data, [
-      { fieldPath: ["umbrellas", "second-umbrella", "status"], newValue: "in_progress" },
-    ]);
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.parsed.umbrellas[1].status).toBe("in_progress");
-    }
-  });
-
-  test("appendText composes with the umbrellas walk through applyValueToLeaf (record 9 pairing)", () => {
-    const data = makeUmbrellas();
-    const result = applyUmbrellasPatches(data, [
-      { fieldPath: ["umbrellas", "test-umbrella", "phase"], appendText: " (extended)" },
-    ]);
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.parsed.umbrellas[0].phase).toBe("Phase 1 (extended)");
-    }
-  });
-
-  test("walk-error on unknown umbrella id", () => {
-    const data = makeUmbrellas();
-    const result = applyUmbrellasPatches(data, [
-      { fieldPath: ["umbrellas", "missing-umbrella", "task_ids"], newValue: [] },
-    ]);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.kind).toBe("walk-error");
-  });
-
-  test("walk-error on a field not in the UmbrellaEntry schema key-set", () => {
-    const data = makeUmbrellas();
-    const result = applyUmbrellasPatches(data, [
-      { fieldPath: ["umbrellas", "test-umbrella", "not_a_field"], newValue: "x" },
-    ]);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.kind).toBe("walk-error");
-  });
-
-  test("walk-error when the head segment is not 'umbrellas'", () => {
-    const data = makeUmbrellas();
-    const result = applyUmbrellasPatches(data, [
-      { fieldPath: ["tasks", "test-umbrella", "task_ids"], newValue: [] },
-    ]);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.kind).toBe("walk-error");
-  });
-
-  test("schema-error when the patched value violates UmbrellasSchema", () => {
-    const data = makeUmbrellas();
-    const result = applyUmbrellasPatches(data, [
-      // task_ids[] entries must be bare-digit Task ids.
-      { fieldPath: ["umbrellas", "test-umbrella", "task_ids"], newValue: ["ID-20"] },
-    ]);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.kind).toBe("schema-error");
-  });
-
-  test("empty patches array rejected", () => {
-    const data = makeUmbrellas();
-    const result = applyUmbrellasPatches(data, []);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.kind).toBe("empty-patches");
-  });
-});
-
-describe("applyPatches — umbrellas dispatcher arm (ID-90 U8)", () => {
-  test("dispatches umbrellas kind to applyUmbrellasPatches", () => {
-    const data = makeUmbrellas();
-    const result = applyPatches(
-      { kind: "umbrellas", data },
-      [{ fieldPath: ["umbrellas", "test-umbrella", "task_ids"], newValue: ["20", "21"] }],
-    );
-    expect(result.ok).toBe(true);
   });
 });

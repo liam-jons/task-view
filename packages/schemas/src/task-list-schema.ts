@@ -30,7 +30,7 @@
 
 import { z } from 'zod';
 import { TaskListStatus, Priority } from './work-status';
-import { DocLinkSchema } from './roadmap-schema';
+import { DocLinkSchema } from './doc-link';
 import { FIELD_BUDGETS, DISCIPLINE_DOC } from './ledger-budgets';
 
 // Inlined from upstream KH `lib/validation/schemas.ts`. The full

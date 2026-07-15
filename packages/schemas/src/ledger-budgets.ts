@@ -1,6 +1,6 @@
 /**
- * ledger-budgets.ts — unified char-budget registry for all THREE workflow
- * ledgers (task-list, roadmap, backlog). Ledger-CLI v2 {35.13}.
+ * ledger-budgets.ts — unified char-budget registry for the workflow ledgers
+ * (task-list, initiatives, backlog). Ledger-CLI v2 {35.13}.
  *
  * RELOCATED into task-view from Knowledge Hub `lib/validation/ledger-budgets.ts`
  * (ID-90 U0) — a relocation twin, not a move: the KH source copy STAYS in KH
@@ -10,9 +10,13 @@
  * the re-vendoring procedure.
  *
  * Single source of truth mapping `(recordKind → field → char budget)`, where
- * `recordKind` is one of `task | subtask | theme | item`. Consumed by:
- *   - the three `parse*WithWarnings` helpers (task-list / roadmap / backlog),
- *     which emit a SOFT warning for an over-budget field;
+ * `recordKind` is one of `task | subtask | project | initiative | item`.
+ * Consumed by:
+ *   - the `parse*WithWarnings` helpers (task-list / backlog), which emit a
+ *     SOFT warning for an over-budget field. (The `initiatives-schema.ts`
+ *     module carries its own LOCAL `INITIATIVES_BUDGETS` registry for its
+ *     `parseInitiativesWithWarnings` soft-warning path — see that file's
+ *     header for why it is not folded in here.)
  *   - the ledger-CLI v2 write-time budget pre-check (RESEARCH §2.3), which
  *     REJECTS an over-budget write at source unless `--force`;
  *   - the `schema` / `--help` discoverability surface.
@@ -40,9 +44,15 @@
  *     `FIELD_BUDGETS` (taskDescription 1500, taskStatusNote 300,
  *     subtaskDescription 250, subtaskTestStrategy 300) so the existing
  *     task-list discipline is unchanged.
- *   - `theme` — `description` shares the task-description class (a markdown
- *     scope statement) → 1500; `notes` shares the status_note prose class
- *     → 300.
+ *   - `project` / `initiative` — ID-148.10 (repurposed from the retired
+ *     `theme` entry). Numbers match `initiatives-schema.ts`'s
+ *     `INITIATIVES_BUDGETS`: `project.summary` 500 (one-sentence summary,
+ *     same class as `item.description`), `project.description` 1500 and
+ *     `initiative.description` 1500 (markdown scope statement, same class as
+ *     `task.description`). This registry is the server WRITE-GATE budget
+ *     (`gates/budget-gate.ts`); the schema-module-local `INITIATIVES_BUDGETS`
+ *     is the parse-time soft-warning budget — same split the retired `theme`
+ *     entry had (`roadmap-schema.ts`'s own registry usage vs this one).
  *   - `item.description` — the one-sentence summary under the `title`
  *     heading. Live data: median 125 / mean 182 / max 971; 500 is a soft
  *     budget generous enough never to flag the median/mean but to surface the
@@ -62,10 +72,14 @@ export const LEDGER_BUDGETS = {
     description: 250,
     testStrategy: 300,
   },
-  /** product-roadmap.json — Theme record. */
-  theme: {
+  /** initiatives.json — Project record (ID-148.10, repurposed from `theme`). */
+  project: {
+    summary: 500,
     description: 1500,
-    notes: 300,
+  },
+  /** initiatives.json — Initiative / sub-initiative record. */
+  initiative: {
+    description: 1500,
   },
   /** product-backlog.json — Item record. */
   item: {

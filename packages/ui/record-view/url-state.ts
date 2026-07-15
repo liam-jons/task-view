@@ -16,11 +16,12 @@ import type { LedgerSlug } from "./anchors";
 /**
  * Valid cross-ledger nav slugs ({20.29}, SPEC §2). Mirrors the server-side
  * `LEDGER_SLUGS` (packages/server/cross-ledger.ts); kept in the UI layer
- * because `packages/ui` must not depend on `packages/server`.
+ * because `packages/ui` must not depend on `packages/server`. ID-148.10:
+ * `roadmap` repurposed to `initiatives`.
  */
 const LEDGER_SLUG_SET = new Set<LedgerSlug>([
   "task-list",
-  "roadmap",
+  "initiatives",
   "backlog",
 ]);
 
@@ -285,27 +286,27 @@ export function nextSortForField(currentSearch: string, field: string): string {
   return params.toString();
 }
 
-/** Roadmap index filter state. `q` searches a theme's id + title. */
-export interface RoadmapFilterState {
+/** Initiatives index filter state (ID-148.10, repurposed from Roadmap).
+ * `q` searches a top-level initiative's id + title. */
+export interface InitiativesFilterState {
   q: string | null;
 }
 
-export function decodeRoadmapFilters(
+export function decodeInitiativesFilters(
   qs: URLSearchParams | string,
-): RoadmapFilterState {
+): InitiativesFilterState {
   const params = typeof qs === "string" ? new URLSearchParams(qs) : qs;
   return { q: decodeQ(params) };
 }
 
-export function encodeRoadmapFilters(state: RoadmapFilterState): string {
+export function encodeInitiativesFilters(state: InitiativesFilterState): string {
   const params = new URLSearchParams();
   if (state.q != null && state.q !== "") params.set("q", state.q);
   return params.toString();
 }
 
-export function applyRoadmapFilters<T extends { id: string; title: string }>(
-  themes: readonly T[],
-  filters: RoadmapFilterState,
-): T[] {
-  return themes.filter((t) => matchesQuery(filters.q, [t.id, t.title]));
+export function applyInitiativesFilters<
+  T extends { id: string; title: string },
+>(initiatives: readonly T[], filters: InitiativesFilterState): T[] {
+  return initiatives.filter((i) => matchesQuery(filters.q, [i.id, i.title]));
 }

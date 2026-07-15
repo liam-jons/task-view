@@ -7,20 +7,22 @@
  * Orphan mirrors (records no longer in canonical) are deleted on each
  * regen.
  *
- * Layout (TECH §3.1):
- *   <dir>/task-list.json       → <dir>/tasks/ID-{id}.md
- *   <dir>/product-roadmap.json → <dir>/roadmap/{id}.md (themes)
+ * Layout (TECH §3.1; ID-148.10 repurposes the roadmap arm + adds retros):
+ *   <dir>/task-list.json  → <dir>/tasks/ID-{id}.md
+ *   <dir>/initiatives.json → <dir>/initiatives/{topLevelInitiativeId}.md
+ *     ONE mirror per TOP-LEVEL initiative (INV-9) — the nested
+ *     sub-initiative -> project -> linked-tasks/linked-backlog tree renders
+ *     INLINE as a bullet list within that single file (arbitrary recursion
+ *     depth via indentation, not per-node files).
  *   <dir>/product-backlog.json → <dir>/backlog/{id}.md
- *
- * Roadmap shape note (ID-20.19): the Phase-B themes[] roadmap replaced the
- * retired sections[]/items[] model. One mirror is generated per theme,
- * keyed by the bare-digit theme id; there is no section/item nesting and
- * no `section-` prefix.
+ *   <dir>/product-retros.json → <dir>/retros/{id}.md (ID-148.10, INV-9 — the
+ *     retros arm was previously EXCLUDED from mirrors; this adds it)
  *
  * Filename rule (TECH §3.2 — Liam-ratified OQ-C):
  *   - Raw id with filesystem-unsafe characters substituted to '-'.
  *   - Task-list: 'ID-' prefix (because Task ids are bare integers).
- *   - Roadmap themes / Backlog items: raw id (already carry structural identity).
+ *   - Initiatives / Backlog / Retro records: raw id (already carry
+ *     structural identity).
  *
  * Mirror shape (TECH §3.3):
  *   - YAML frontmatter (--- delimited) for structured fields.
@@ -51,12 +53,23 @@ import { dirname, join } from "node:path";
 
 import type { DetectSchemaResult } from "./detect-schema";
 import type { Task, Subtask } from "@task-view/schemas/task-list";
+import type { DocLink } from "@task-view/schemas/doc-link";
 import type {
-  Roadmap,
-  RoadmapTheme,
-  DocLink,
-} from "@task-view/schemas/roadmap";
+  InitiativesDocument,
+  Initiative,
+  SubInitiative,
+  Project,
+} from "@task-view/schemas/initiatives";
 import type { BacklogItem } from "@task-view/schemas/backlog";
+import type { RetrosDocument } from "@task-view/schemas/retro";
+import {
+  resolveInitiativeNode,
+  findProjectBySlug,
+  type TreeDoc,
+} from "./initiatives-tree";
+
+type RetroRecord = RetrosDocument["retros"][number];
+type RetroFinding = RetroRecord["bugs_discovered"][number];
 
 // ── §3.2 Filename helpers ─────────────────────────────────────────────────────
 
@@ -81,28 +94,20 @@ export function sanitiseFilenameStem(id: string): string {
 export type LedgerKind = DetectSchemaResult["kind"];
 
 /**
- * The kinds that carry a mirror obligation. ID-90 U8: `umbrellas` is
- * EXCLUDED at the type level — umbrellas documents have no mirrors, ever
- * (PRODUCT invariant 53). `generateMirrors` / `generateRecordMirror`
- * return the empty plan for kind 'umbrellas' without creating a directory.
+ * The kinds that carry a mirror obligation. ID-148.10 (INV-9): `retro` is
+ * NO LONGER excluded — the retros arm was previously excluded from mirrors;
+ * this adds it (one mirror per retro record). `umbrellas` no longer exists
+ * as a kind at all (fully retired, INV-12(b)), so there is nothing left to
+ * exclude beyond `unknown`.
  */
-// WS-C C2: `retro` is excluded alongside `umbrellas` — the retro surface has
-// NO per-record .md mirror yet (skip/early-return in generateMirrors), so it is
-// not a mirrored kind.
-export type MirroredLedgerKind = Exclude<
-  LedgerKind,
-  "unknown" | "umbrellas" | "retro"
->;
+export type MirroredLedgerKind = Exclude<LedgerKind, "unknown">;
 
 /**
  * Compute the record's mirror filename per the §3.2 prefix rules.
  *
- * @param kind - ledger kind (task-list | roadmap | backlog)
- * @param record - `{ id }`
- *
- * Roadmap shape note (ID-20.19): roadmap themes use the raw bare-digit id
- * (`{id}.md`). The old `section-` prefix (which disambiguated sections from
- * items) is gone — themes are the only roadmap record kind.
+ * @param kind - ledger kind (task-list | initiatives | backlog | retro)
+ * @param record - `{ id }` — for `initiatives`, the TOP-LEVEL initiative id
+ *   (INV-9 — one mirror per top-level initiative, not per project).
  */
 export function computeRecordFilename(
   kind: MirroredLedgerKind,
@@ -110,18 +115,21 @@ export function computeRecordFilename(
 ): string {
   const stem = sanitiseFilenameStem(record.id);
   if (kind === "task-list") return `ID-${stem}.md`;
-  // roadmap (themes) + backlog both use the raw id.
+  // initiatives / backlog / retro all use the raw id.
   return `${stem}.md`;
 }
 
 /**
  * Compute the mirror directory name (sibling dir basename) per §3.1.
  */
-export function computeMirrorDirName(
-  kind: MirroredLedgerKind,
-): string {
+export function computeMirrorDirName(kind: MirroredLedgerKind): string {
   if (kind === "task-list") return "tasks";
-  if (kind === "roadmap") return "roadmap";
+  // ID-148.10: repurposed roadmap arm — the literal dir name changes from
+  // "roadmap" to "initiatives" (the mirror dir name and the JSON collection
+  // key have always been independently chosen strings — see the roadmap-era
+  // precedent of "roadmap" dir vs "themes" key).
+  if (kind === "initiatives") return "initiatives";
+  if (kind === "retro") return "retros";
   return "backlog";
 }
 
@@ -258,34 +266,111 @@ function renderSubtaskBlock(taskId: string, subtask: Subtask): string {
   return lines.join("\n");
 }
 
-// ── §3.3 Roadmap mirror shape (ID-20.19 — themes[]) ───────────────────────────
+// ── §3.3 Initiatives mirror shape (ID-148.10 — repurposed roadmap arm) ───────
+//
+// One mirror per TOP-LEVEL initiative (INV-9). The body renders the nested
+// sub-initiative -> project -> linked-tasks/linked-backlog tree as an
+// indented bullet list (arbitrary recursion depth via indentation, not
+// markdown heading levels — headings cap at h6; bullets do not). Ported
+// from the KH-native `scripts/generate-initiatives-mirror.ts` (ID-148.9,
+// SUPERSEDED by this server-side arm per TECH §8) and adapted to this
+// file's YAML-emission helpers for frontmatter consistency with the other
+// mirror kinds.
 
-function renderRoadmapThemeMirror(theme: RoadmapTheme): string {
+function renderIdList(ids: readonly string[]): string {
+  return ids.length > 0 ? ids.join(", ") : "_none_";
+}
+
+function renderProjectBullet(project: Project, indent: string): string[] {
+  const lines: string[] = [];
+  lines.push(`${indent}- **${project.id}** — ${project.title} [${project.status}]`);
+  if (project.summary) lines.push(`${indent}  - Summary: ${project.summary}`);
+  lines.push(`${indent}  - Linked tasks: ${renderIdList(project.linked_tasks)}`);
+  lines.push(`${indent}  - Linked backlog: ${renderIdList(project.linked_backlog)}`);
+  if (project.blocked_by.length > 0) {
+    lines.push(`${indent}  - Blocked by: ${renderIdList(project.blocked_by)}`);
+  }
+  if (project.blocking.length > 0) {
+    lines.push(`${indent}  - Blocking: ${renderIdList(project.blocking)}`);
+  }
+  if (project.substrate_doc) {
+    lines.push(`${indent}  - Substrate doc: ${project.substrate_doc}`);
+  }
+  return lines;
+}
+
+function renderSubInitiativeBullet(node: SubInitiative, indent: string): string[] {
+  const lines: string[] = [];
+  lines.push(`${indent}- **${node.id}: ${node.title}** [${node.status}]`);
+  if (node.description) lines.push(`${indent}  ${node.description}`);
+  if (node.substrate_doc) {
+    lines.push(`${indent}  - Substrate doc: ${node.substrate_doc}`);
+  }
+  const projects = node.projects;
+  lines.push(`${indent}  - Projects:${projects.length === 0 ? " _none_" : ""}`);
+  for (const project of projects) {
+    lines.push(...renderProjectBullet(project, `${indent}    `));
+  }
+  const subs = node["sub-initiatives"];
+  lines.push(`${indent}  - Sub-initiatives:${subs.length === 0 ? " _none_" : ""}`);
+  for (const sub of subs) {
+    lines.push(...renderSubInitiativeBullet(sub, `${indent}    `));
+  }
+  return lines;
+}
+
+function renderInitiativeMirror(initiative: Initiative): string {
   const frontmatter = [
-    `type: roadmap-theme`,
-    `id: ${formatIdScalar(theme.id)}`,
-    `title: ${formatScalar(theme.title)}`,
-    `time_horizon: ${formatScalar(theme.time_horizon)}`,
-    `status: ${formatScalar(theme.status)}`,
-    `linked_tasks: ${formatStringArray(theme.linked_tasks)}`,
-    `linked_backlog: ${formatStringArray(theme.linked_backlog)}`,
-    `session_refs: ${formatStringArray(theme.session_refs)}`,
-    `commit_refs: ${formatStringArray(theme.commit_refs)}`,
-    `cross_doc_links: ${formatDocLinkArrayBody(theme.cross_doc_links)}`,
-    `notes: ${formatScalar(theme.notes)}`,
+    `type: initiative`,
+    `id: ${formatIdScalar(initiative.id)}`,
+    `title: ${formatScalar(initiative.title)}`,
+    `status: ${formatScalar(initiative.status)}`,
+    `originating_session: ${formatStringArray(initiative.originating_session)}`,
+    `substrate_doc: ${formatScalar(initiative.substrate_doc ?? null)}`,
   ].join("\n");
 
   const body: string[] = [];
-  body.push(`# ${theme.id}: ${theme.title}`);
+  body.push(`# ${initiative.id}: ${initiative.title}`);
   body.push("");
-  body.push(theme.description);
-  body.push("");
-  if (theme.notes !== null) {
-    body.push("## Notes");
-    body.push("");
-    body.push(theme.notes);
+  if (initiative.description) {
+    body.push(initiative.description);
     body.push("");
   }
+
+  // Transitional initiative-level off-project links (audit A3 tolerance).
+  if (
+    (initiative.linked_tasks && initiative.linked_tasks.length > 0) ||
+    (initiative.linked_backlog && initiative.linked_backlog.length > 0)
+  ) {
+    body.push("## Linked tasks / backlog (initiative-level)");
+    body.push("");
+    body.push(`- Linked tasks: ${renderIdList(initiative.linked_tasks ?? [])}`);
+    body.push(`- Linked backlog: ${renderIdList(initiative.linked_backlog ?? [])}`);
+    body.push("");
+  }
+
+  body.push("## Projects");
+  body.push("");
+  if (initiative.projects.length === 0) {
+    body.push("_none_");
+  } else {
+    for (const project of initiative.projects) {
+      body.push(...renderProjectBullet(project, ""));
+    }
+  }
+  body.push("");
+
+  body.push("## Sub-initiatives");
+  body.push("");
+  const subs = initiative["sub-initiatives"];
+  if (subs.length === 0) {
+    body.push("_none_");
+  } else {
+    for (const sub of subs) {
+      body.push(...renderSubInitiativeBullet(sub, ""));
+    }
+  }
+  body.push("");
 
   return `---\n${frontmatter}\n---\n\n${body.join("\n").trimEnd()}\n`;
 }
@@ -341,6 +426,71 @@ function renderBacklogItemMirror(item: BacklogItem): string {
   return `---\n${frontmatter.join("\n")}\n---\n\n${body.join("\n").trimEnd()}\n`;
 }
 
+// ── §3.3 Retro mirror shape (ID-148.10, INV-9 — newly added mirror arm) ──────
+//
+// Ported from the KH-native `scripts/generate-retros-mirror.ts` (ID-148.9,
+// SUPERSEDED by this server-side arm per TECH §8) and adapted to this
+// file's YAML-emission helpers.
+
+const RETRO_CATEGORIES: { key: keyof RetroRecord & string; heading: string }[] = [
+  { key: "bugs_discovered", heading: "Bugs discovered" },
+  { key: "failed_assumptions", heading: "Failed assumptions" },
+  { key: "architecture_decisions", heading: "Architecture decisions" },
+  { key: "rejected_approaches", heading: "Rejected approaches" },
+  { key: "workflow_improvements", heading: "Workflow improvements" },
+  { key: "unresolved_questions", heading: "Unresolved questions" },
+];
+
+function renderFinding(finding: RetroFinding): string {
+  const link =
+    finding.cross_doc_links.length > 0
+      ? ` (${finding.cross_doc_links.map((l) => l.raw).join("; ")})`
+      : "";
+  return `- ${finding.text}${link}`;
+}
+
+function renderRetroMirror(retro: RetroRecord): string {
+  const frontmatter = [
+    `type: retro`,
+    `id: ${formatIdScalar(retro.id)}`,
+    `session_id: ${formatScalar(retro.session_id)}`,
+    `date: ${formatScalar(retro.date)}`,
+    `track: ${formatScalar(retro.track)}`,
+    `session_refs: ${formatStringArray(retro.session_refs)}`,
+    `commit_refs: ${formatStringArray(retro.commit_refs)}`,
+    `cross_doc_links: ${formatDocLinkArrayBody(retro.cross_doc_links)}`,
+    `deprecated: ${formatScalar(retro.deprecated)}`,
+    `deprecation_reason: ${formatScalar(retro.deprecation_reason)}`,
+    `superseding_record_id: ${formatScalar(retro.superseding_record_id)}`,
+    `last_conflict_check: ${formatScalar(retro.last_conflict_check)}`,
+  ].join("\n");
+
+  const body: string[] = [];
+  body.push(`# ${retro.id}: ${retro.session_id} (${retro.track}) — ${retro.date}`);
+  body.push("");
+  if (retro.deprecated) {
+    const supersededBy = retro.superseding_record_id
+      ? ` — superseded by ${retro.superseding_record_id}`
+      : "";
+    const reason = retro.deprecation_reason ? `: ${retro.deprecation_reason}` : "";
+    body.push(`> **Deprecated**${supersededBy}${reason}`);
+    body.push("");
+  }
+  for (const category of RETRO_CATEGORIES) {
+    const findings = retro[category.key] as unknown as RetroFinding[];
+    body.push(`## ${category.heading}`);
+    body.push("");
+    if (findings.length === 0) {
+      body.push("_none_");
+    } else {
+      for (const finding of findings) body.push(renderFinding(finding));
+    }
+    body.push("");
+  }
+
+  return `---\n${frontmatter}\n---\n\n${body.join("\n").trimEnd()}\n`;
+}
+
 // ── §3.4 Atomic write-to-temp + rename ────────────────────────────────────────
 
 /**
@@ -378,10 +528,11 @@ function planTaskListMirrors(tasks: readonly Task[]): PlannedMirror[] {
   }));
 }
 
-function planRoadmapMirrors(roadmap: Roadmap): PlannedMirror[] {
-  return roadmap.themes.map((theme) => ({
-    filename: computeRecordFilename("roadmap", { id: theme.id }),
-    content: renderRoadmapThemeMirror(theme),
+/** ID-148.10: one planned mirror per TOP-LEVEL initiative (INV-9). */
+function planInitiativesMirrors(doc: InitiativesDocument): PlannedMirror[] {
+  return doc.initiatives.map((initiative) => ({
+    filename: computeRecordFilename("initiatives", { id: initiative.id }),
+    content: renderInitiativeMirror(initiative),
   }));
 }
 
@@ -392,17 +543,45 @@ function planBacklogMirrors(items: readonly BacklogItem[]): PlannedMirror[] {
   }));
 }
 
+/** ID-148.10: one planned mirror per retro record (INV-9 — newly added). */
+function planRetroMirrors(retros: readonly RetroRecord[]): PlannedMirror[] {
+  return retros.map((retro) => ({
+    filename: computeRecordFilename("retro", { id: retro.id }),
+    content: renderRetroMirror(retro),
+  }));
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
  * Resolve the mirror directory for a canonical ledger path.
- * `<dir>/{task-list,product-roadmap,product-backlog}.json` → `<dir>/{tasks,roadmap,backlog}/`
+ * `<dir>/{task-list,initiatives,product-backlog,product-retros}.json` →
+ * `<dir>/{tasks,initiatives,backlog,retros}/`
  */
 export function resolveMirrorDir(
   kind: MirroredLedgerKind,
   canonicalPath: string,
 ): string {
   return join(dirname(canonicalPath), computeMirrorDirName(kind));
+}
+
+/**
+ * Given a bare `recordId` as it arrives at the scoped single-record regen
+ * path, resolve which TOP-LEVEL initiative's mirror needs regenerating
+ * (ID-148.10, INV-9 — mirrors are per-top-level-initiative, not per-project
+ * or per-sub-initiative). Tries the initiative-PATH interpretation first
+ * (bare-digit-dotted, e.g. `"4"`/`"4.2"`), then falls back to a project-SLUG
+ * tree-search — the same disambiguation order `initiatives-tree.ts`'s
+ * `resolveRecordId` uses. Returns `null` when neither resolves.
+ */
+function resolveTopLevelInitiativeId(
+  doc: TreeDoc,
+  recordId: string,
+): string | null {
+  const asPath = recordId.split(".")[0];
+  if (resolveInitiativeNode(doc, asPath)) return asPath;
+  const located = findProjectBySlug(doc, recordId);
+  return located ? located.topLevelInitiativeId : null;
 }
 
 /**
@@ -425,12 +604,30 @@ function renderRecordMirror(
       content: renderTaskListMirror(task),
     };
   }
-  if (detected.kind === "roadmap") {
-    const theme = detected.data.themes.find((t) => t.id === recordId);
-    if (!theme) return null;
+  // ID-148.10: repurposed roadmap arm — scoped regen resolves the TOP-LEVEL
+  // initiative that owns the addressed project/initiative/sub-initiative.
+  if (detected.kind === "initiatives") {
+    const topLevelId = resolveTopLevelInitiativeId(
+      detected.data as unknown as TreeDoc,
+      recordId,
+    );
+    if (!topLevelId) return null;
+    const initiative = detected.data.initiatives.find(
+      (i) => i.id === topLevelId,
+    );
+    if (!initiative) return null;
     return {
-      filename: computeRecordFilename("roadmap", { id: theme.id }),
-      content: renderRoadmapThemeMirror(theme),
+      filename: computeRecordFilename("initiatives", { id: initiative.id }),
+      content: renderInitiativeMirror(initiative),
+    };
+  }
+  // ID-148.10: retros arm — flat by id (INV-9 addition).
+  if (detected.kind === "retro") {
+    const retro = detected.data.retros.find((r) => r.id === recordId);
+    if (!retro) return null;
+    return {
+      filename: computeRecordFilename("retro", { id: retro.id }),
+      content: renderRetroMirror(retro),
     };
   }
   const item = detected.data.items.find((it) => it.id === recordId);
@@ -451,6 +648,9 @@ function renderRecordMirror(
  * at scale. A field PATCH can only mutate fields WITHIN an existing record;
  * it can never add or remove records, so there is no orphan-deletion
  * concern — scoping to the touched record's mirror is safe + correct.
+ * ID-148.10: for `initiatives`, "the touched record's mirror" means the
+ * OWNING top-level initiative's single mirror file, even when the patch
+ * addressed a nested project or sub-initiative (INV-9).
  *
  * Writes the single mirror via the same atomic write-to-temp + rename used
  * by the full generator, so unaffected mirrors keep a stable mtime.
@@ -468,12 +668,6 @@ export async function generateRecordMirror(
     throw new Error(
       `Cannot generate mirror for unknown ledger kind (document_name: ${detected.documentName ?? "null"}).`,
     );
-  }
-  // ID-90 U8: umbrellas carry NO mirror obligation (PRODUCT invariant 53) —
-  // the EMPTY plan, no mirror directory created, ever. WS-C C2: retros get NO
-  // .md mirror yet — same EMPTY-plan early return.
-  if (detected.kind === "umbrellas" || detected.kind === "retro") {
-    return { mirrorDir: "", written: [], deleted: [] };
   }
   const mirrorDir = resolveMirrorDir(detected.kind, canonicalPath);
   const planned = renderRecordMirror(detected, recordId);
@@ -502,12 +696,6 @@ export async function generateMirrors(
       `Cannot generate mirrors for unknown ledger kind (document_name: ${detected.documentName ?? "null"}).`,
     );
   }
-  // ID-90 U8: umbrellas carry NO mirror obligation (PRODUCT invariant 53) —
-  // the EMPTY plan, no mirror directory created, ever. WS-C C2: retros get NO
-  // .md mirror yet — same EMPTY-plan early return.
-  if (detected.kind === "umbrellas" || detected.kind === "retro") {
-    return { mirrorDir: "", written: [], deleted: [] };
-  }
 
   const kind = detected.kind;
   const mirrorDir = resolveMirrorDir(kind, canonicalPath);
@@ -517,8 +705,12 @@ export async function generateMirrors(
   let planned: PlannedMirror[];
   if (kind === "task-list") {
     planned = planTaskListMirrors(detected.data.tasks);
-  } else if (kind === "roadmap") {
-    planned = planRoadmapMirrors(detected.data);
+  } else if (kind === "initiatives") {
+    // ID-148.10: repurposed roadmap arm — one mirror per top-level initiative.
+    planned = planInitiativesMirrors(detected.data);
+  } else if (kind === "retro") {
+    // ID-148.10 (INV-9): the retros arm, newly added.
+    planned = planRetroMirrors(detected.data.retros);
   } else {
     planned = planBacklogMirrors(detected.data.items);
   }

@@ -2,31 +2,55 @@
  * record-view/backlog-references.ts — pure dangling-reference scan for
  * backlog deletion (backlog-ui-delete).
  *
- * The ledger schemas (backlog-schema.ts / roadmap-schema.ts) carry NO
+ * The ledger schemas (backlog-schema.ts / initiatives-schema.ts) carry NO
  * referential-integrity constraint: `BacklogItem.dependencies[]` and
- * `RoadmapTheme.linked_backlog[]` are plain `z.array(z.string())`. So
- * deleting a backlog item can leave other items + roadmap themes
- * pointing at a now-missing id. This scan finds those references so the
+ * `Project.linked_backlog[]` are plain `z.array(z.string())`. So deleting a
+ * backlog item can leave other items + initiatives projects pointing at a
+ * now-missing id. This scan finds those references so the
  * delete-confirmation UX can warn the user before the orphaning happens.
+ *
+ * ID-148.10 (repurposed roadmap arm, INV-6 "links are project-only"): the
+ * reference scan now walks the WHOLE initiatives tree (a project may live
+ * at any depth under `initiatives[]`/`sub-initiatives[]`) rather than a
+ * single flat `themes[]` array.
  *
  * No React. No DOM. No I/O. Referentially transparent.
  */
 import type { BacklogItem } from "@task-view/schemas/backlog";
-import type { Roadmap, RoadmapTheme } from "@task-view/schemas/roadmap";
+import type {
+  InitiativesDocument,
+  Initiative,
+  SubInitiative,
+  Project,
+} from "@task-view/schemas/initiatives";
 
 export interface BacklogReferences {
   /** Other backlog items whose `dependencies[]` include the target id. */
   dependents: BacklogItem[];
-  /** Roadmap themes whose `linked_backlog[]` include the target id. */
-  themes: RoadmapTheme[];
-  /** True when any dependent or theme references the id. */
+  /** Initiatives projects (any depth) whose `linked_backlog[]` include the
+   * target id. */
+  projects: Project[];
+  /** True when any dependent or project references the id. */
   hasReferences: boolean;
 }
 
 export interface BacklogReferenceSources {
   items: readonly BacklogItem[];
-  /** The sibling roadmap, when one is threaded in. Optional / nullable. */
-  roadmap?: Roadmap | null;
+  /** The sibling initiatives document, when one is threaded in. Optional /
+   * nullable. */
+  initiatives?: InitiativesDocument | null;
+}
+
+/** Flatten every project in the tree (depth-first) — INV-13. */
+function allProjects(
+  nodes: readonly (Initiative | SubInitiative)[],
+): Project[] {
+  const out: Project[] = [];
+  for (const node of nodes) {
+    out.push(...node.projects);
+    out.push(...allProjects(node["sub-initiatives"]));
+  }
+  return out;
 }
 
 /**
@@ -34,7 +58,8 @@ export interface BacklogReferenceSources {
  *
  * The target id is never reported as its own dependent (a self-edge in
  * `dependencies[]` is dropped — deleting the record removes that edge too).
- * Declaration order is preserved for both lists.
+ * Declaration order is preserved for both lists (projects: depth-first tree
+ * order).
  */
 export function findBacklogReferences(
   id: string,
@@ -44,14 +69,14 @@ export function findBacklogReferences(
     (entry) => entry.id !== id && entry.dependencies.includes(id),
   );
 
-  const themes = (sources.roadmap?.themes ?? []).filter((theme) =>
-    theme.linked_backlog.includes(id),
+  const projects = allProjects(sources.initiatives?.initiatives ?? []).filter(
+    (project) => project.linked_backlog.includes(id),
   );
 
   return {
     dependents,
-    themes,
-    hasReferences: dependents.length > 0 || themes.length > 0,
+    projects,
+    hasReferences: dependents.length > 0 || projects.length > 0,
   };
 }
 
@@ -63,9 +88,9 @@ export function findBacklogReferences(
  *
  * The result is a plain string (no HTML markup) safe to assign to
  * `textContent`. When `refs.hasReferences` is true it names the orphaned
- * dependent item ids and/or roadmap theme ids so the user sees exactly what
- * the deletion would break (the schema does NOT enforce referential
- * integrity — deletion silently orphans these edges).
+ * dependent item ids and/or project slugs so the user sees exactly what the
+ * deletion would break (the schema does NOT enforce referential integrity —
+ * deletion silently orphans these edges).
  */
 export function buildDeleteConfirmMessage(
   id: string,
@@ -83,11 +108,11 @@ export function buildDeleteConfirmMessage(
       } on it (${ids})`,
     );
   }
-  if (refs.themes.length > 0) {
-    const ids = refs.themes.map((t) => t.id).join(", ");
+  if (refs.projects.length > 0) {
+    const ids = refs.projects.map((p) => p.id).join(", ");
     warnings.push(
-      `${refs.themes.length} roadmap ${
-        refs.themes.length === 1 ? "theme links" : "themes link"
+      `${refs.projects.length} ${
+        refs.projects.length === 1 ? "project links" : "projects link"
       } to it (${ids})`,
     );
   }

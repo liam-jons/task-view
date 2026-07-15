@@ -23,6 +23,15 @@
  *
  * `subtask.details` is intentionally absent from the registry → exempt on
  * every path (invariant 27 — the append-only journal home).
+ *
+ * ID-148.10 (Option C — repurposed roadmap arm, INV-13): the `initiatives`
+ * kind carries TWO addressable node shapes instead of the retired roadmap
+ * arm's one (`theme`) — `project` (addressed by globally-unique slug,
+ * `LEDGER_BUDGETS.project`) and `initiative` (addressed by dotted path,
+ * `LEDGER_BUDGETS.initiative`). `resolvePatchTarget`'s initiatives branch
+ * below tree-walks via `initiatives-tree.ts` to resolve either shape from a
+ * FieldPath — the SAME tree-walk primitive the mutate/patch/serialise arms
+ * use, so this gate can never drift on where a project/initiative lives.
  */
 
 import {
@@ -30,11 +39,15 @@ import {
   type LedgerRecordKind,
 } from "@task-view/schemas/ledger-budgets";
 import type { TaskList } from "@task-view/schemas/task-list";
-import type { Roadmap } from "@task-view/schemas/roadmap";
+import type { InitiativesDocument } from "@task-view/schemas/initiatives";
 import type { BacklogDocument } from "@task-view/schemas/backlog";
-import type { Umbrellas } from "@task-view/schemas/umbrellas";
 import type { RetrosDocument } from "@task-view/schemas/retro";
 import type { FieldPatch } from "../patch-apply";
+import {
+  findProjectBySlug,
+  resolveInitiativeNode,
+  type TreeDoc,
+} from "../initiatives-tree";
 
 // ── Grapheme counting (invariant 24 / ID-35.31) ──────────────────────────────
 
@@ -98,8 +111,12 @@ function budgetSubject(gate: Pick<BudgetGate, "recordKind" | "recordId" | "paren
         : `subtask ${gate.recordId}`;
     case "task":
       return `task ${gate.recordId}`;
-    case "theme":
-      return `theme ${gate.recordId}`;
+    // ID-148.10: repurposed from the retired "theme" case — the two
+    // initiatives node shapes.
+    case "project":
+      return `project ${gate.recordId}`;
+    case "initiative":
+      return `initiative ${gate.recordId}`;
     case "item":
       return `item ${gate.recordId}`;
     case "retro":
@@ -219,10 +236,9 @@ function applyForce(
   };
 }
 
-// ID-90 U8: includes the fourth document kind. Umbrellas carry NO budget
-// entries (PRODUCT invariant 50 — none exist in the registry and none are
-// fabricated): a patch on an umbrellas document resolves to no budget target.
-type KnownKind = "task-list" | "roadmap" | "backlog" | "umbrellas" | "retro";
+/** ID-148.10: repurposed roadmap arm — `initiatives` replaces `roadmap`;
+ * `umbrellas` is fully retired (no fifth kind). */
+type KnownKind = "task-list" | "initiatives" | "backlog" | "retro";
 
 /** A patch resolved to the record it mutates + the leaf field it touches. */
 interface ResolvedPatchTarget {
@@ -241,13 +257,10 @@ interface ResolvedPatchTarget {
  */
 function resolvePatchTarget(
   kind: KnownKind,
-  data: TaskList | Roadmap | BacklogDocument | Umbrellas | RetrosDocument,
+  data: TaskList | InitiativesDocument | BacklogDocument | RetrosDocument,
   patch: FieldPatch,
 ): ResolvedPatchTarget | null {
   const p = patch.fieldPath;
-  // ID-90 U8: no umbrella budget entries exist and none are fabricated
-  // (PRODUCT invariant 50) — umbrellas patches are never budgeted.
-  if (kind === "umbrellas") return null;
   // WS-C C2: the retro registry entry is empty (append-only narrative) — no
   // retro field is budgeted, so a retro patch resolves to no gate target.
   if (kind === "retro") return null;
@@ -284,16 +297,34 @@ function resolvePatchTarget(
     }
     return null;
   }
-  if (kind === "roadmap") {
-    if (p[0] !== "themes" || p.length !== 3) return null;
-    const theme = (data as Roadmap).themes.find((t) => t.id === p[1]);
-    if (!theme) return null;
+  // ID-148.10: repurposed roadmap arm — TWO addressable shapes, tree-walked
+  // via initiatives-tree.ts (INV-13).
+  if (kind === "initiatives") {
+    if ((p[0] !== "projects" && p[0] !== "initiatives") || p.length !== 3) {
+      return null;
+    }
+    const doc = data as unknown as TreeDoc;
+    if (p[0] === "projects") {
+      const located = findProjectBySlug(doc, p[1]);
+      if (!located) return null;
+      return {
+        key: `project:${located.project.id}`,
+        gate: {
+          recordKind: "project",
+          recordId: located.project.id as string,
+          record: located.project,
+        },
+        mutatedField: p[2],
+      };
+    }
+    const node = resolveInitiativeNode(doc, p[1]);
+    if (!node) return null;
     return {
-      key: `theme:${theme.id}`,
+      key: `initiative:${p[1]}`,
       gate: {
-        recordKind: "theme",
-        recordId: theme.id,
-        record: theme as unknown as Record<string, unknown>,
+        recordKind: "initiative",
+        recordId: p[1],
+        record: node as unknown as Record<string, unknown>,
       },
       mutatedField: p[2],
     };
@@ -324,11 +355,13 @@ function resolvePatchTarget(
  *
  * The snapshot passed in MUST be the post-mutation parsed document (the
  * applyPatches oracle output) so measured values are the values about to be
- * serialised.
+ * serialised. ID-148.10: this is also how the initiatives "atomic move"
+ * 2-patch batch is budgeted — it groups by record key, so the source and
+ * target project of a move are swept independently within the same call.
  */
 export function checkBudgetForPatches(
   kind: KnownKind,
-  data: TaskList | Roadmap | BacklogDocument | Umbrellas | RetrosDocument,
+  data: TaskList | InitiativesDocument | BacklogDocument | RetrosDocument,
   patches: readonly FieldPatch[],
   options: BudgetGateOptions = {},
 ): BudgetGateOutcome {
@@ -394,14 +427,12 @@ export function checkBudgetForCreate(
 }
 
 /** Map a detected document kind to the registry record-kind a whole-record
- * CREATE on that ledger budgets against. */
-export function createRecordKindFor(
-  // ID-90 U8: umbrellas excluded — record creates do not apply to the
-  // umbrellas kind (the HTTP surface rejects them before reaching here).
-  kind: Exclude<KnownKind, "umbrellas">,
-): LedgerRecordKind {
+ * CREATE on that ledger budgets against. ID-148.10: `initiatives` always
+ * creates a `project` (INV-13 — only projects are whole-record-created via
+ * this generic path; initiatives/sub-initiatives are not). */
+export function createRecordKindFor(kind: KnownKind): LedgerRecordKind {
   if (kind === "task-list") return "task";
-  if (kind === "roadmap") return "theme";
+  if (kind === "initiatives") return "project";
   // WS-C C2: retro creates budget against the empty `retro` registry entry
   // (no field is measured — the sweep always passes).
   if (kind === "retro") return "retro";

@@ -1,8 +1,7 @@
 /**
  * scoped-serialise.ts — minimal-diff ("scoped") write mode for the workflow
  * ledgers (ID-90 U1). PORTED from Knowledge Hub `lib/ledger/scoped-serialise.ts`
- * (KH-authored, ID-35.11) and extended with the umbrellas walk
- * (`['umbrellas', id, field]` — PRODUCT invariant 52).
+ * (KH-authored, ID-35.11).
  *
  * ── The problem ────────────────────────────────────────────────────────────────
  * A whole-file `JSON.stringify(detected.data, null, 2)` write (the retired
@@ -38,25 +37,32 @@
  * whole-file (`escapeSerialise(detected.data)`) paths are byte-compatible for
  * ongoing writes (PRODUCT invariant 20).
  *
- * ── Umbrellas (U1 extension) ────────────────────────────────────────────────────
- * `umbrellas.json` (document_name: "umbrellas") is discriminated by
- * `detectSchema` directly — U8 (ID-90 record 10) registered `'umbrellas'` as
- * the fourth `KNOWN_DOCUMENT_NAMES` literal in detect-schema.ts, retiring the
- * local `UmbrellasSchema` pre-check this module carried between records 6 and
- * 10. Umbrella membership edits are field patches on `['umbrellas', id,
- * field]` (invariant 50: splices do not apply — the umbrella id-set is
- * mutated via membership fields, not record insert/remove).
+ * ── Initiatives (ID-148.10 — repurposed roadmap arm, TECH §3.1(b), INV-13) ──────
+ * The `initiatives` kind is NOT a flat top-level collection like `tasks[]` /
+ * `items[]` / `retros[]` — it is a TREE (`initiatives[]` -> `projects[]` +
+ * recursive `sub-initiatives[]`). `walkInitiatives` below delegates the actual
+ * tree-walk to `initiatives-tree.ts` (the SAME structurally-typed helpers
+ * `patch-apply.ts`/`record-mutate.ts` use against the Zod-typed document) —
+ * this module just supplies the plain `JSON.parse`d object, which satisfies
+ * the same duck-typed `TreeDoc`/`TreeNode` shape at runtime. One walk
+ * implementation, three callers — the mutate/patch/serialise arms can never
+ * drift on tree-walk semantics.
  */
 
 import { detectSchema, type DetectSchemaResult } from "./detect-schema";
 import { applyValueToLeaf, type FieldPatch } from "./patch-apply";
+import {
+  findProjectBySlug,
+  resolveInitiativeNode,
+  type TreeDoc,
+  type TreeNode,
+} from "./initiatives-tree";
 
 // ── document-kind discrimination ─────────────────────────────────────────────────
 
 /**
  * The document kinds the scoped serialiser can walk — every known
- * detect-schema kind (U8 registered `'umbrellas'` as the fourth, so the
- * record-6 local extension union is retired in favour of the registry).
+ * detect-schema kind.
  */
 export type ScopedDocumentKind = Exclude<DetectSchemaResult["kind"], "unknown">;
 
@@ -66,8 +72,7 @@ type ScopedDetectResult =
 
 /**
  * Discriminate + validate a parsed-JSON value for scoped serialisation.
- * Delegates to `detectSchema` for all four known kinds (the record-6 local
- * umbrellas pre-check is retired — the U8 registration supersedes it).
+ * Delegates to `detectSchema` for all known kinds.
  * Throws `ZodError` when the document matches a kind but fails its schema —
  * identical contract to `detectSchema`.
  */
@@ -87,12 +92,12 @@ function detectScopedKind(parsed: unknown): ScopedDetectResult {
 // (astral chars are already surrogate pairs in the JS string, so each unit is
 // escaped to its own `\uXXXX`).
 //
-// ID-90 F5/Bug2: the lower bound is `` (DEL), NOT ``. Python's
-// `json.dumps(..., ensure_ascii=True)` escapes DEL (U+007F) to ``, but
+// ID-90 F5/Bug2: the lower bound is `` (DEL), NOT ``. Python's
+// `json.dumps(..., ensure_ascii=True)` escapes DEL (U+007F) to ``, but
 // `JSON.stringify` leaves it as a raw byte. A ledger value containing DEL
 // therefore diverged the JS write from the on-disk (Python) convention,
 // breaking byte-faithfulness on the scoped vs whole-file vs Python-regen
-// paths. Escaping from  closes that gap. (Other C0 control chars below
+// paths. Escaping from  closes that gap. (Other C0 control chars below
 // 0x7f are already escaped by `JSON.stringify` itself — \b\t\n\f\r as the
 // short forms, the rest as \u00xx — so they need no widening here.)
 const NON_ASCII = new RegExp("[\\u007f-\\uffff]", "g");
@@ -198,7 +203,7 @@ function walkTaskList(
 
 function walkRecordCollection(
   doc: Record<string, unknown>,
-  collectionKey: "themes" | "items" | "umbrellas" | "retros",
+  collectionKey: "items" | "retros",
   path: string[],
 ): WalkResult {
   const [head, recordId, ...rest] = path;
@@ -222,16 +227,61 @@ function walkRecordCollection(
   return { ok: true, target: { container: record, key: rest[0] } };
 }
 
+/**
+ * Walk a fieldPath into an Initiatives parsed-original and resolve the leaf
+ * (ID-148.10, INV-13). Two addressable shapes — see the module header and
+ * `patch-apply.ts`'s `applyInitiativesPatch` (identical fieldPath contract):
+ *   - `['projects', slug, field]` — tree-walk-found by globally-unique slug.
+ *   - `['initiatives', dottedPath, field]` — an Initiative/SubInitiative node.
+ */
+function walkInitiatives(
+  doc: Record<string, unknown>,
+  path: string[],
+): WalkResult {
+  const [head, id, ...rest] = path;
+  if (head !== "projects" && head !== "initiatives") {
+    return {
+      ok: false,
+      detail: `Initiatives patches must start with 'projects' or 'initiatives'.`,
+    };
+  }
+  if (id == null || id === "") {
+    return { ok: false, detail: "Missing record id at fieldPath[1]." };
+  }
+  if (rest.length !== 1) {
+    return {
+      ok: false,
+      detail: `fieldPath must address one field after the id.`,
+    };
+  }
+  const field = rest[0];
+
+  if (head === "projects") {
+    const located = findProjectBySlug(doc as TreeDoc, id);
+    if (!located) {
+      return { ok: false, detail: `Project slug "${id}" not found.` };
+    }
+    return { ok: true, target: { container: located.project, key: field } };
+  }
+
+  const node = resolveInitiativeNode(doc as TreeDoc, id);
+  if (!node) {
+    return { ok: false, detail: `Initiative path "${id}" not found.` };
+  }
+  return {
+    ok: true,
+    target: { container: node as unknown as Record<string, unknown>, key: field },
+  };
+}
+
 function resolveLeaf(
   kind: ScopedDocumentKind,
   doc: Record<string, unknown>,
   path: string[],
 ): WalkResult {
   if (kind === "task-list") return walkTaskList(doc, path);
-  if (kind === "roadmap") return walkRecordCollection(doc, "themes", path);
-  if (kind === "umbrellas") {
-    return walkRecordCollection(doc, "umbrellas", path);
-  }
+  // ID-148.10: repurposed roadmap arm — nested tree walk.
+  if (kind === "initiatives") return walkInitiatives(doc, path);
   // WS-C C2: retros — `['retros', id, field]` record walk.
   if (kind === "retro") {
     return walkRecordCollection(doc, "retros", path);
@@ -320,27 +370,33 @@ export function scopedSerialise(
 // + bytes. This is the foundation primitive for scoped creates/promotes — the
 // whole-file oracle (record-mutate.ts) stays the schema-validation oracle.
 
-/** Top-level record collections, keyed per ledger kind. WS-C C2 adds
- * `retros` (the session-retro top-level collection). */
-type SpliceCollection = "tasks" | "themes" | "items" | "retros" | "subtasks";
+/** Top-level record collections, keyed per ledger kind. `projects` (ID-148.10)
+ * is NOT actually top-level — see `resolveSpliceCollection`'s tree-walk
+ * branch — but is kept in this union so `SpliceOp.collection` stays a single
+ * discriminant across all kinds. */
+type SpliceCollection = "tasks" | "items" | "retros" | "subtasks" | "projects";
 
 /**
  * A record-level splice operation against a parsed-original ledger.
  *
  *   - `insert` pushes `record` onto the resolved collection array. For
  *     `collection: 'subtasks'`, `taskId` addresses the parent Task whose
- *     `subtasks[]` receives the record.
+ *     `subtasks[]` receives the record. For `collection: 'projects'`
+ *     (ID-148.10, INV-13), `initiativePath` addresses the initiative/
+ *     sub-initiative whose `projects[]` receives the record (REQUIRED on
+ *     insert — there is no "top-level projects[]" to fall back to).
  *   - `remove` drops the record whose id matches `recordId` from the resolved
- *     collection. All record ids are bare-digit STRINGS — top-level
- *     (`tasks`/`themes`/`items`) and subtasks alike. The `string | number`
- *     union is retained for back-compat with any pre-flip caller, but
- *     KH's subtask-delete intent now carries `recordId` as a digit-string.
+ *     collection. For `collection: 'projects'`, `recordId` is the project's
+ *     globally-unique slug — tree-walk-found wherever it currently lives (no
+ *     `initiativePath` needed to remove). All other record ids are bare-digit
+ *     STRINGS — top-level (`tasks`/`items`/`retros`) and subtasks alike.
  */
 export type SpliceOp =
   | {
       kind: "insert";
       collection: SpliceCollection;
       taskId?: string;
+      initiativePath?: string;
       record: unknown;
     }
   | {
@@ -362,10 +418,13 @@ export type ScopedSpliceResult =
 
 /**
  * Resolve the mutable record-array a splice op addresses on the parsed-original.
- * For `subtasks`, walks into the addressed Task's `subtasks[]`; for the three
- * top-level collections, returns the document-level array. Returns a
- * `walk-error` detail when the addressed Task is missing or the collection is
- * absent / not an array.
+ * For `subtasks`, walks into the addressed Task's `subtasks[]`; for
+ * `projects` (ID-148.10, INV-13), tree-walks the initiatives document — on
+ * INSERT via `op.initiativePath` (the parent node to insert under), on
+ * REMOVE via a slug tree-search (no path needed — the project is found
+ * wherever it lives); for the flat top-level collections, returns the
+ * document-level array. Returns a `walk-error` detail when the addressed
+ * Task/initiative is missing or the collection is absent / not an array.
  */
 function resolveSpliceCollection(
   doc: Record<string, unknown>,
@@ -392,6 +451,37 @@ function resolveSpliceCollection(
       };
     }
     return { ok: true, collection: subtasks };
+  }
+
+  if (op.collection === "projects") {
+    if (op.kind === "insert") {
+      if (op.initiativePath == null || op.initiativePath === "") {
+        return {
+          ok: false,
+          detail: `Missing initiativePath for a 'projects' insert splice.`,
+        };
+      }
+      const node = resolveInitiativeNode(doc as TreeDoc, op.initiativePath);
+      if (!node) {
+        return {
+          ok: false,
+          detail: `Initiative path "${op.initiativePath}" not found.`,
+        };
+      }
+      if (!Array.isArray(node.projects)) {
+        (node as TreeNode).projects = [];
+      }
+      return {
+        ok: true,
+        collection: node.projects as Record<string, unknown>[],
+      };
+    }
+    const slug = String(op.recordId);
+    const located = findProjectBySlug(doc as TreeDoc, slug);
+    if (!located) {
+      return { ok: false, detail: `Project slug "${slug}" not found.` };
+    }
+    return { ok: true, collection: located.ownerProjects };
   }
 
   const collection = asArray(doc[op.collection]);
@@ -452,9 +542,9 @@ export function scopedSpliceSerialise(
     // Mutate the parsed-ORIGINAL array in place; untouched records keep bytes.
     collection.push(op.record as Record<string, unknown>);
   } else {
-    // Filter in place. All record ids — subtask and top-level — are now
-    // digit-strings, so the strict `===` below is a string-vs-string compare
-    // (subtask-delete carries `recordId` as the digit-string subId from KH).
+    // Filter in place. All record ids — subtask, project-slug and top-level —
+    // are compared with a strict `===` below (project slugs and subtask ids
+    // are strings; top-level ids are digit-strings).
     const kept = collection.filter((rec) => rec.id !== op.recordId);
     collection.length = 0;
     for (const rec of kept) collection.push(rec);

@@ -25,12 +25,12 @@ describe("recordDeletePath", () => {
   });
 
   test("a slug routes the delete to the named sibling ledger", () => {
-    expect(recordDeletePath("45", "roadmap")).toBe(
-      "/api/ledger/roadmap/record/45",
+    expect(recordDeletePath("45", "initiatives")).toBe(
+      "/api/ledger/initiatives/record/45",
     );
     // DELETE + PATCH share the slug-scoped per-record route on the server.
-    expect(recordDeletePath("45", "roadmap")).toBe(
-      recordPatchPath("45", "roadmap"),
+    expect(recordDeletePath("45", "initiatives")).toBe(
+      recordPatchPath("45", "initiatives"),
     );
   });
 });

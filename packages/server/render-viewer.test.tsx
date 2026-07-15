@@ -176,14 +176,16 @@ const TASK_LIST_DETECTED: KnownDetected = {
   },
 } as unknown as KnownDetected;
 
-const ROADMAP_DETECTED: KnownDetected = {
-  kind: "roadmap",
+const INITIATIVES_DETECTED: KnownDetected = {
+  kind: "initiatives",
   data: {
-    document_name: "Product Roadmap",
+    document_name: "Canonical Platform - Initiatives",
     document_purpose: "fixture",
+    date: "2026-07-15",
+    status: "active",
     related_documents: [],
-    forward_looking_only: true,
-    themes: [],
+    last_updated: "fixture",
+    initiatives: [],
   },
 } as unknown as KnownDetected;
 
@@ -250,11 +252,11 @@ describe("renderViewer — inline <style> presence + placement (SV-50)", () => {
     // record-view-css.test.ts / SV-54.)
     const roots = [
       ".record-view-task-list-index",
-      ".record-view-roadmap-index",
+      ".record-view-initiatives-index",
       ".record-view-backlog-index",
       ".record-view-task-page",
       ".record-view-backlog-item",
-      ".record-view-roadmap-theme",
+      ".record-view-initiative",
       ".record-view-not-found",
     ];
     const css = roots.map((r) => `${r}{display:block}`).join("\n");
@@ -272,7 +274,7 @@ describe("renderViewer — <html> theme class (SV-51)", () => {
     for (const detected of [
       BACKLOG_DETECTED,
       TASK_LIST_DETECTED,
-      ROADMAP_DETECTED,
+      INITIATIVES_DETECTED,
     ]) {
       const { html } = renderViewer({
         detected,
@@ -305,29 +307,38 @@ describe("renderViewer — <html> theme class (SV-51)", () => {
 
 // ── {20.29} cross-ledger read-only render (SPEC §5 slice 6) ─────────────────
 
-const ROADMAP_WITH_THEME: KnownDetected = {
-  kind: "roadmap",
+const INITIATIVES_WITH_PROJECT: KnownDetected = {
+  kind: "initiatives",
   data: {
-    document_name: "Knowledge Hub Roadmap",
+    document_name: "Canonical Platform - Initiatives",
     document_purpose: "fixture",
-    date: "2026-05-21",
-    status: "Active",
-    forward_looking_only: true,
+    date: "2026-07-15",
+    status: "active",
     related_documents: [],
     last_updated: "fixture",
-    themes: [
+    initiatives: [
       {
         id: "10",
         title: "Procurement intelligence",
-        description: "Theme 10 description.",
-        time_horizon: "now",
-        status: "in_progress",
-        linked_tasks: ["6"],
-        linked_backlog: ["45"],
-        session_refs: [],
-        commit_refs: [],
-        cross_doc_links: [],
-        notes: null,
+        description: "Initiative 10 description.",
+        status: "active",
+        projects: [
+          {
+            id: "procurement-project",
+            title: "Procurement project",
+            summary: "Summary.",
+            description: "Description.",
+            substrate_doc: "",
+            status: "in-progress",
+            blocked_by: [],
+            blocking: [],
+            linked_tasks: ["6"],
+            linked_backlog: ["45"],
+            originating_session: [],
+          },
+        ],
+        originating_session: [],
+        "sub-initiatives": [],
       },
     ],
   },
@@ -356,7 +367,6 @@ const TASK_LIST_WITH_TASK: KnownDetected = {
         cross_doc_links: [],
         session_refs: [],
         commit_refs: [],
-        capability_theme: "10",
       },
     ],
   },
@@ -377,11 +387,11 @@ describe("renderViewer — sibling render is editable (editable-ledger-switch §
     expect(html).toContain("data-edit-field");
   });
 
-  test("a sibling roadmap theme resolves linked_tasks against sibling ids", () => {
+  test("a sibling initiative's project resolves linked_tasks against sibling ids", () => {
     // Sibling task-list (id 6) + backlog (id 45) threaded → live cross-ledger
     // links, NOT (missing).
     const { status, html } = renderViewer({
-      detected: ROADMAP_WITH_THEME,
+      detected: INITIATIVES_WITH_PROJECT,
       search: new URLSearchParams("record=10"),
       siblings: {
         tasks: (TASK_LIST_WITH_TASK as { data: { tasks: unknown[] } }).data
@@ -390,7 +400,7 @@ describe("renderViewer — sibling render is editable (editable-ledger-switch §
       },
     });
     expect(status).toBe(200);
-    expect(html).toContain('data-record-kind="roadmap-theme"');
+    expect(html).toContain('data-record-kind="initiative"');
     expect(html).toContain('href="/?ledger=task-list&amp;record=6"');
     expect(html).toContain('data-cross-ledger="task-list"');
     expect(html).toContain('href="/?ledger=backlog&amp;record=45"');
@@ -399,7 +409,7 @@ describe("renderViewer — sibling render is editable (editable-ledger-switch §
 
   test("missing record id in a sibling → 404 not-found body", () => {
     const { status, html } = renderViewer({
-      detected: ROADMAP_WITH_THEME,
+      detected: INITIATIVES_WITH_PROJECT,
       search: new URLSearchParams("record=999"),
     });
     expect(status).toBe(404);
@@ -426,7 +436,7 @@ const BACKLOG_WITH_ITEM: KnownDetected = {
     items: [
       {
         id: "45",
-        description: "A backlog item linked from theme 10.",
+        description: "A backlog item linked from initiative 10's project.",
         type: "feature",
         status: "ready",
         effort_estimate: null,
@@ -442,45 +452,52 @@ const BACKLOG_WITH_ITEM: KnownDetected = {
   },
 } as unknown as KnownDetected;
 
-describe("renderViewer — reverse appears-in-themes backlinks ({20.30})", () => {
-  test("a backlog item resolves its appears-in-themes backlink from the roadmap sibling", () => {
-    // Roadmap theme 10 links backlog 45 (forward). The backlog page has no
-    // pointer field of its own — the reverse index threaded via the roadmap
-    // sibling is what produces the backlink.
+describe("renderViewer — reverse appears-in-projects backlinks ({20.30}, ID-148.10)", () => {
+  test("a backlog item resolves its appears-in-projects backlink from the initiatives sibling", () => {
+    // Project "procurement-project" links backlog 45 (forward). The backlog
+    // page has no pointer field of its own — the reverse index threaded via
+    // the initiatives sibling is what produces the backlink.
     const { status, html } = renderViewer({
       detected: BACKLOG_WITH_ITEM,
       search: new URLSearchParams("record=45"),
       siblings: {
-        roadmap: (ROADMAP_WITH_THEME as { data: unknown }).data as never,
+        initiatives: (INITIATIVES_WITH_PROJECT as { data: unknown })
+          .data as never,
       },
     });
     expect(status).toBe(200);
     expect(html).toContain('data-record-kind="backlog-item"');
-    expect(html).toContain('data-frontmatter-row="appears_in_themes"');
-    expect(html).toContain('href="/?ledger=roadmap&amp;record=10"');
-    expect(html).toContain('data-cross-ledger="roadmap"');
-    expect(html).toContain("theme 10: Procurement intelligence");
+    expect(html).toContain('data-frontmatter-row="appears_in_projects"');
+    expect(html).toContain(
+      'href="/?ledger=initiatives&amp;record=procurement-project"',
+    );
+    expect(html).toContain('data-cross-ledger="initiatives"');
+    expect(html).toContain("project procurement-project: Procurement project");
   });
 
-  test("a backlog page WITHOUT a roadmap sibling shows no backlink row", () => {
+  test("a backlog page WITHOUT an initiatives sibling shows no backlink row", () => {
     const { html } = renderViewer({
       detected: BACKLOG_WITH_ITEM,
       search: new URLSearchParams("record=45"),
     });
-    expect(html).not.toContain('data-frontmatter-row="appears_in_themes"');
+    expect(html).not.toContain('data-frontmatter-row="appears_in_projects"');
   });
 
-  test("a task resolves its appears-in-themes backlink from the roadmap sibling", () => {
-    // Theme 10's linked_tasks include task 6 → reverse backlink on task 6.
+  test("a task resolves its appears-in-projects backlink from the initiatives sibling", () => {
+    // Project "procurement-project"'s linked_tasks include task 6 → reverse
+    // backlink on task 6.
     const { html } = renderViewer({
       detected: TASK_LIST_WITH_TASK,
       search: new URLSearchParams("record=6"),
       siblings: {
-        roadmap: (ROADMAP_WITH_THEME as { data: unknown }).data as never,
+        initiatives: (INITIATIVES_WITH_PROJECT as { data: unknown })
+          .data as never,
       },
     });
-    expect(html).toContain('data-frontmatter-row="appears_in_themes"');
-    expect(html).toContain('href="/?ledger=roadmap&amp;record=10"');
+    expect(html).toContain('data-frontmatter-row="appears_in_projects"');
+    expect(html).toContain(
+      'href="/?ledger=initiatives&amp;record=procurement-project"',
+    );
   });
 });
 
@@ -514,14 +531,14 @@ describe("renderViewer — ledger switcher (editable-ledger-switch SPEC §5 slic
     const { html } = renderViewer({
       detected: BACKLOG_DETECTED,
       search: new URLSearchParams(),
-      availableLedgers: ["task-list", "roadmap", "backlog"],
+      availableLedgers: ["task-list", "initiatives", "backlog"],
       activeSlug: "backlog",
     });
     expect(html).toContain("data-ledger-switcher");
     expect(html).toContain('data-active-ledger="backlog"');
     // Editable switch targets for the siblings.
     expect(html).toContain('href="/?ledger=task-list"');
-    expect(html).toContain('href="/?ledger=roadmap"');
+    expect(html).toContain('href="/?ledger=initiatives"');
   });
 
   test("no switcher when availableLedgers is absent (pure-SSR unit path)", () => {

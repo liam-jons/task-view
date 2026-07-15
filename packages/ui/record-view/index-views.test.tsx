@@ -1,16 +1,18 @@
 /**
- * index-views.test.tsx — verifies the Task-list and Roadmap index page
- * renderers (TECH §4.3, PRODUCT inv 14, 47).
+ * index-views.test.tsx — verifies the Task-list and Initiatives index page
+ * renderers (TECH §4.3, PRODUCT inv 14, 47; ID-148.10 repurposes the
+ * roadmap arm).
  */
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { Task } from "@task-view/schemas/task-list";
 import type {
-  Roadmap,
-  RoadmapTheme,
-} from "@task-view/schemas/roadmap";
+  InitiativesDocument,
+  Initiative,
+  Project,
+} from "@task-view/schemas/initiatives";
 import { TaskListIndexView } from "./task-list-index-view";
-import { RoadmapIndexView } from "./roadmap-index-view";
+import { InitiativesIndexView } from "./initiatives-index-view";
 
 const mkTask = (overrides: Partial<Task> = {}): Task => ({
   id: "20",
@@ -31,30 +33,42 @@ const mkTask = (overrides: Partial<Task> = {}): Task => ({
   ...overrides,
 });
 
-const mkTheme = (overrides: Partial<RoadmapTheme> = {}): RoadmapTheme => ({
-  id: "1",
-  title: "Theme 1",
-  description: "Theme 1 description.",
-  time_horizon: "now",
-  status: "in_progress",
+const mkProject = (overrides: Partial<Project> = {}): Project => ({
+  id: "sample-project",
+  title: "Sample project",
+  summary: "s",
+  description: "d",
+  substrate_doc: "",
+  status: "idea",
+  blocked_by: [],
+  blocking: [],
   linked_tasks: [],
   linked_backlog: [],
-  session_refs: [],
-  commit_refs: [],
-  cross_doc_links: [],
-  notes: null,
+  originating_session: [],
   ...overrides,
 });
 
-const mkRoadmap = (themes: RoadmapTheme[]): Roadmap => ({
-  document_name: "Knowledge Hub Roadmap",
+const mkInitiative = (overrides: Partial<Initiative> = {}): Initiative => ({
+  id: "1",
+  title: "Initiative 1",
+  description: "Initiative 1 description.",
+  status: "active",
+  projects: [],
+  originating_session: [],
+  "sub-initiatives": [],
+  ...overrides,
+});
+
+const mkInitiativesDoc = (
+  initiatives: Initiative[],
+): InitiativesDocument => ({
+  document_name: "Canonical Platform - Initiatives",
   document_purpose: "test",
-  date: "2026-05-21",
-  status: "Active",
-  forward_looking_only: true,
+  date: "2026-07-15",
+  status: "active",
   related_documents: [],
   last_updated: "test",
-  themes,
+  initiatives,
 });
 
 // ── Task-list index ──────────────────────────────────────────────────────────
@@ -179,86 +193,107 @@ describe("TaskListIndexView (TECH §4.3)", () => {
   });
 });
 
-// ── Roadmap index ─────────────────────────────────────────────────────────────
+// ── Initiatives index (ID-148.10, repurposed roadmap arm) ────────────────────
 
-describe("RoadmapIndexView (themes[] — ID-20.19)", () => {
-  test("renders ID / Title / Time horizon / Status / Linked tasks columns", () => {
-    const roadmap = mkRoadmap([
-      mkTheme({ id: "1", title: "T1", time_horizon: "now", status: "in_progress" }),
-      mkTheme({
+describe("InitiativesIndexView (top-level initiatives only — INV-9)", () => {
+  test("renders ID / Title / Status / Projects columns", () => {
+    const doc = mkInitiativesDoc([
+      mkInitiative({ id: "1", title: "I1", status: "active" }),
+      mkInitiative({
         id: "42",
-        title: "T42",
-        time_horizon: "later",
-        status: "pending",
+        title: "I42",
+        status: "proposed",
       }),
     ]);
     const html = renderToStaticMarkup(
-      <RoadmapIndexView roadmap={roadmap} />,
+      <InitiativesIndexView initiatives={doc} />,
     );
     expect(html).toContain('data-sort-trigger="id"');
     expect(html).toContain('data-sort-trigger="title"');
-    expect(html).toContain('data-sort-trigger="time_horizon"');
     expect(html).toContain('data-sort-trigger="status"');
-    expect(html).toContain('data-sort-trigger="linked_tasks"');
-    expect(html).toContain('data-theme-row="1"');
-    expect(html).toContain('data-theme-row="42"');
+    expect(html).toContain('data-sort-trigger="project_count"');
+    expect(html).toContain('data-initiative-row="1"');
+    expect(html).toContain('data-initiative-row="42"');
     expect(html).toContain('href="/?record=1"');
     expect(html).toContain('href="/?record=42"');
-    expect(html).toContain(">now<");
-    expect(html).toContain(">later<");
-    // theme count reported
-    expect(html).toContain('data-theme-count="2"');
-    expect(html).toContain("2 themes");
+    // initiative count reported
+    expect(html).toContain('data-initiative-count="2"');
+    expect(html).toContain("2 initiatives");
   });
 
-  test("each theme row carries id=\"record-{id}\" for back-to-page-point", () => {
-    const roadmap = mkRoadmap([mkTheme({ id: "1" }), mkTheme({ id: "42" })]);
-    const html = renderToStaticMarkup(<RoadmapIndexView roadmap={roadmap} />);
+  test("each initiative row carries id=\"record-{id}\" for back-to-page-point", () => {
+    const doc = mkInitiativesDoc([
+      mkInitiative({ id: "1" }),
+      mkInitiative({ id: "42" }),
+    ]);
+    const html = renderToStaticMarkup(
+      <InitiativesIndexView initiatives={doc} />,
+    );
     expect(html).toContain('id="record-1"');
     expect(html).toContain('id="record-42"');
   });
 
-  test("renders linked-task count per theme", () => {
-    const roadmap = mkRoadmap([
-      mkTheme({ id: "1", linked_tasks: ["20", "21", "22"] }),
+  test("renders RECURSIVE project count per top-level initiative (INV-13)", () => {
+    const doc = mkInitiativesDoc([
+      mkInitiative({
+        id: "1",
+        projects: [mkProject({ id: "direct" })],
+        "sub-initiatives": [
+          {
+            id: "1",
+            title: "Sub",
+            description: "d",
+            status: "planned",
+            projects: [mkProject({ id: "nested" })],
+            originating_session: [],
+            "sub-initiatives": [],
+          },
+        ],
+      }),
     ]);
     const html = renderToStaticMarkup(
-      <RoadmapIndexView roadmap={roadmap} />,
+      <InitiativesIndexView initiatives={doc} />,
     );
-    expect(html).toMatch(/data-theme-row="1"[\s\S]*?<td>3<\/td>\s*<\/tr>/);
+    // 1 direct + 1 nested = 2
+    expect(html).toMatch(/data-initiative-row="1"[\s\S]*?<td>2<\/td>\s*<\/tr>/);
   });
 
-  test("renders empty-state when themes list is empty (PRODUCT inv 47)", () => {
-    const roadmap = mkRoadmap([]);
+  test("renders empty-state when initiatives list is empty (PRODUCT inv 47)", () => {
+    const doc = mkInitiativesDoc([]);
     const html = renderToStaticMarkup(
-      <RoadmapIndexView roadmap={roadmap} />,
+      <InitiativesIndexView initiatives={doc} />,
     );
-    expect(html).toContain('data-empty-ledger="roadmap"');
+    expect(html).toContain('data-empty-ledger="initiatives"');
   });
 
-  test("renders a keyword search box and filters themes by q (title/id)", () => {
-    const roadmap = mkRoadmap([
-      mkTheme({ id: "1", title: "Platform" }),
-      mkTheme({ id: "2", title: "Growth" }),
+  test("renders a keyword search box and filters initiatives by q (title/id)", () => {
+    const doc = mkInitiativesDoc([
+      mkInitiative({ id: "1", title: "Platform" }),
+      mkInitiative({ id: "2", title: "Growth" }),
     ]);
     const filtered = renderToStaticMarkup(
-      <RoadmapIndexView roadmap={roadmap} filters={{ q: "growth" }} />,
+      <InitiativesIndexView initiatives={doc} filters={{ q: "growth" }} />,
     );
     expect(filtered).toContain("data-search-control");
-    expect(filtered).toContain('data-theme-row="2"');
-    expect(filtered).not.toContain('data-theme-row="1"');
+    expect(filtered).toContain('data-initiative-row="2"');
+    expect(filtered).not.toContain('data-initiative-row="1"');
   });
 
-  test("sorts themes by the active column (id asc) and exposes aria-sort", () => {
-    const roadmap = mkRoadmap([
-      mkTheme({ id: "2" }),
-      mkTheme({ id: "10" }),
-      mkTheme({ id: "1" }),
+  test("sorts initiatives by the active column (id asc) and exposes aria-sort", () => {
+    const doc = mkInitiativesDoc([
+      mkInitiative({ id: "2" }),
+      mkInitiative({ id: "10" }),
+      mkInitiative({ id: "1" }),
     ]);
     const html = renderToStaticMarkup(
-      <RoadmapIndexView roadmap={roadmap} sort={{ field: "id", dir: "asc" }} />,
+      <InitiativesIndexView
+        initiatives={doc}
+        sort={{ field: "id", dir: "asc" }}
+      />,
     );
-    const order = [...html.matchAll(/data-theme-row="(\d+)"/g)].map((m) => m[1]);
+    const order = [...html.matchAll(/data-initiative-row="(\d+)"/g)].map(
+      (m) => m[1],
+    );
     expect(order).toEqual(["1", "2", "10"]);
     expect(html).toContain('aria-sort="ascending"');
   });

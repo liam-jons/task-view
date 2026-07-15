@@ -29,24 +29,28 @@ const FIXTURE_DIR = join(
 );
 
 describe("slug ↔ document_name map (SPEC §2)", () => {
-  test("LEDGER_SLUGS enumerates the nav slugs (ID-90 U8 adds 'umbrellas'; WS-C C2 adds 'retro')", () => {
+  test("LEDGER_SLUGS enumerates the nav slugs (ID-148.10: 'roadmap' repurposed to 'initiatives', 'umbrellas' retired)", () => {
     expect([...LEDGER_SLUGS].sort()).toEqual([
       "backlog",
+      "initiatives",
       "retro",
-      "roadmap",
       "task-list",
-      "umbrellas",
     ]);
   });
 
   test("slugForDocumentName maps each canonical document_name to its slug", () => {
     expect(slugForDocumentName("Knowledge Hub Task List")).toBe("task-list");
-    expect(slugForDocumentName("Knowledge Hub Roadmap")).toBe("roadmap");
+    expect(slugForDocumentName("Canonical Platform - Initiatives")).toBe(
+      "initiatives",
+    );
     expect(slugForDocumentName("Product Backlog")).toBe("backlog");
-    // ID-90 U8: the umbrellas document_name IS the lowercase literal.
-    expect(slugForDocumentName("umbrellas")).toBe("umbrellas");
     // WS-C C2: the retro ledger document_name → 'retro' slug.
     expect(slugForDocumentName("Knowledge Hub Retros")).toBe("retro");
+  });
+
+  test("slugForDocumentName returns null for a retired document_name (roadmap / umbrellas)", () => {
+    expect(slugForDocumentName("Knowledge Hub Roadmap")).toBeNull();
+    expect(slugForDocumentName("umbrellas")).toBeNull();
   });
 
   test("slugForDocumentName returns null for an unknown document_name", () => {
@@ -55,13 +59,16 @@ describe("slug ↔ document_name map (SPEC §2)", () => {
 
   test("documentNameForSlug maps each slug back to its canonical name", () => {
     expect(documentNameForSlug("task-list")).toBe("Knowledge Hub Task List");
-    expect(documentNameForSlug("roadmap")).toBe("Knowledge Hub Roadmap");
+    expect(documentNameForSlug("initiatives")).toBe(
+      "Canonical Platform - Initiatives",
+    );
     expect(documentNameForSlug("backlog")).toBe("Product Backlog");
-    expect(documentNameForSlug("umbrellas")).toBe("umbrellas");
     expect(documentNameForSlug("retro")).toBe("Knowledge Hub Retros");
   });
 
-  test("documentNameForSlug returns null for an unknown slug", () => {
+  test("documentNameForSlug returns null for a retired slug (roadmap / umbrellas) or an unknown slug", () => {
+    expect(documentNameForSlug("roadmap")).toBeNull();
+    expect(documentNameForSlug("umbrellas")).toBeNull();
     expect(documentNameForSlug("not-a-slug")).toBeNull();
   });
 
@@ -76,8 +83,8 @@ describe("slug ↔ document_name map (SPEC §2)", () => {
 
 describe("resolveLedgerPathByName (SPEC §1, reuses scanForLedgers shape)", () => {
   test("resolves a real sibling against the live-ledgers fixture dir", async () => {
-    // Launched ledger is the roadmap; resolve its task-list + backlog siblings.
-    const launched = join(FIXTURE_DIR, "product-roadmap.json");
+    // Launched ledger is initiatives; resolve its task-list + backlog siblings.
+    const launched = join(FIXTURE_DIR, "initiatives.json");
 
     const taskListPath = await resolveLedgerPathByName(
       launched,
@@ -93,22 +100,25 @@ describe("resolveLedgerPathByName (SPEC §1, reuses scanForLedgers shape)", () =
   });
 
   test("resolves the launched ledger's OWN document_name to its own path", async () => {
-    const launched = join(FIXTURE_DIR, "product-roadmap.json");
-    const self = await resolveLedgerPathByName(launched, "Knowledge Hub Roadmap");
+    const launched = join(FIXTURE_DIR, "initiatives.json");
+    const self = await resolveLedgerPathByName(
+      launched,
+      "Canonical Platform - Initiatives",
+    );
     expect(self).toBe(launched);
   });
 
   test("returns null when the named sibling is absent from the directory", async () => {
-    // A directory holding only the roadmap — no task-list / backlog siblings.
-    const roadmapText = await Bun.file(
-      join(FIXTURE_DIR, "product-roadmap.json"),
+    // A directory holding only the initiatives ledger — no task-list / backlog siblings.
+    const initiativesText = await Bun.file(
+      join(FIXTURE_DIR, "initiatives.json"),
     ).text();
     const dir = await mkdtemp(join(tmpdir(), "cross-ledger-test-"));
-    const lonelyRoadmap = join(dir, "product-roadmap.json");
-    await writeFile(lonelyRoadmap, roadmapText, "utf8");
+    const lonelyInitiatives = join(dir, "initiatives.json");
+    await writeFile(lonelyInitiatives, initiativesText, "utf8");
     try {
       const taskListPath = await resolveLedgerPathByName(
-        lonelyRoadmap,
+        lonelyInitiatives,
         "Knowledge Hub Task List",
       );
       expect(taskListPath).toBeNull();

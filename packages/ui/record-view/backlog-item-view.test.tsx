@@ -258,77 +258,87 @@ describe("PRODUCT inv 25 (Backlog blocked banner)", () => {
   });
 });
 
-// ── {20.30} reverse cross-ledger backlinks ───────────────────────────────────
+// ── {20.30} reverse cross-ledger backlinks (repurposed to projects) ─────────
 
-describe("{20.30} appears-in-themes backlinks (reverse of theme.linked_backlog)", () => {
-  const mkRoadmapWith = (
-    themes: { id: string; title: string; linked_backlog: string[] }[],
+describe("{20.30} appears-in-projects backlinks (reverse of project.linked_backlog, ID-148.10)", () => {
+  const mkInitiativesWith = (
+    projects: { id: string; title: string; linked_backlog: string[] }[],
   ) =>
     ({
-      document_name: "Knowledge Hub Roadmap",
+      document_name: "Canonical Platform - Initiatives",
       document_purpose: "p",
-      date: "2026-05-27",
-      status: "Active",
-      forward_looking_only: true,
+      date: "2026-07-15",
+      status: "active",
       related_documents: [],
       last_updated: "fixture",
-      themes: themes.map((t) => ({
-        id: t.id,
-        title: t.title,
-        description: "d",
-        time_horizon: "now" as const,
-        status: "in_progress" as const,
-        linked_tasks: [],
-        linked_backlog: t.linked_backlog,
-        session_refs: [],
-        commit_refs: [],
-        cross_doc_links: [],
-        notes: null,
-      })),
+      initiatives: [
+        {
+          id: "1",
+          title: "Initiative 1",
+          description: "d",
+          status: "active",
+          projects: projects.map((p) => ({
+            id: p.id,
+            title: p.title,
+            summary: "s",
+            description: "d",
+            substrate_doc: "",
+            status: "idea" as const,
+            blocked_by: [],
+            blocking: [],
+            linked_tasks: [],
+            linked_backlog: p.linked_backlog,
+            originating_session: [],
+          })),
+          originating_session: [],
+          "sub-initiatives": [],
+        },
+      ],
     }) as never;
 
-  test("renders an Appears-in-themes row — the ONLY backlog → roadmap path", () => {
-    // Backlog 87 appears in theme 2 AND theme 4. Backlog carries no roadmap
-    // pointer field, so this reverse index is the sole navigation back.
+  test("renders an Appears-in-projects row — the ONLY backlog → initiatives path", () => {
+    // Backlog 87 appears in project "procurement" AND project "ai-eval".
+    // Backlog carries no initiatives pointer field, so this reverse index
+    // is the sole navigation back.
     const item = mkItem({ id: "87" });
     const ledger = buildLedgerContext({
       backlogItems: [item],
-      roadmap: mkRoadmapWith([
-        { id: "2", title: "Procurement", linked_backlog: ["87", "103"] },
-        { id: "4", title: "AI eval", linked_backlog: ["87"] },
+      initiatives: mkInitiativesWith([
+        { id: "procurement", title: "Procurement", linked_backlog: ["87", "103"] },
+        { id: "ai-eval", title: "AI eval", linked_backlog: ["87"] },
       ]),
     });
     const html = renderToStaticMarkup(
       <BacklogItemView item={item} ledger={ledger} nav={NAV} />,
     );
-    expect(html).toContain('data-frontmatter-row="appears_in_themes"');
-    expect(html).toContain('href="/?ledger=roadmap&amp;record=2"');
-    expect(html).toContain('href="/?ledger=roadmap&amp;record=4"');
-    expect(html).toContain('data-cross-ledger="roadmap"');
-    expect(html).toContain("theme 2: Procurement");
-    expect(html).toContain("theme 4: AI eval");
+    expect(html).toContain('data-frontmatter-row="appears_in_projects"');
+    expect(html).toContain('href="/?ledger=initiatives&amp;record=procurement"');
+    expect(html).toContain('href="/?ledger=initiatives&amp;record=ai-eval"');
+    expect(html).toContain('data-cross-ledger="initiatives"');
+    expect(html).toContain("project procurement: Procurement");
+    expect(html).toContain("project ai-eval: AI eval");
   });
 
-  test("omits the row when no theme references the backlog item", () => {
+  test("omits the row when no project references the backlog item", () => {
     const item = mkItem({ id: "999" });
     const ledger = buildLedgerContext({
       backlogItems: [item],
-      roadmap: mkRoadmapWith([
-        { id: "2", title: "Procurement", linked_backlog: ["87"] },
+      initiatives: mkInitiativesWith([
+        { id: "procurement", title: "Procurement", linked_backlog: ["87"] },
       ]),
     });
     const html = renderToStaticMarkup(
       <BacklogItemView item={item} ledger={ledger} nav={NAV} />,
     );
-    expect(html).not.toContain('data-frontmatter-row="appears_in_themes"');
+    expect(html).not.toContain('data-frontmatter-row="appears_in_projects"');
   });
 
-  test("omits the row when no roadmap sibling is threaded in", () => {
+  test("omits the row when no initiatives sibling is threaded in", () => {
     const item = mkItem({ id: "87" });
     const ledger = buildLedgerContext({ backlogItems: [item] });
     const html = renderToStaticMarkup(
       <BacklogItemView item={item} ledger={ledger} nav={NAV} />,
     );
-    expect(html).not.toContain('data-frontmatter-row="appears_in_themes"');
+    expect(html).not.toContain('data-frontmatter-row="appears_in_projects"');
   });
 });

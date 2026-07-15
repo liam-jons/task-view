@@ -29,7 +29,7 @@ import {
 } from "./markdown-renderer";
 import { activeRecordHref, type LedgerSlug } from "./anchors";
 import { PriorityBadge, StatusBadge } from "./status-badge";
-import { renderAppearsInThemes } from "./task-list-view";
+import { renderAppearsInProjects } from "./task-list-view";
 import type { LedgerContext, NavStripData } from "./types";
 
 export const BacklogItemView: React.FC<{
@@ -83,19 +83,20 @@ export const BacklogItemView: React.FC<{
       value: <PriorityBadge priority={item.priority} />,
     },
     { key: "track", label: "Track", value: item.track },
-    // {20.30}: reverse cross-ledger backlinks — the roadmap themes whose
-    // `linked_backlog` reference this item (computed at load from the sibling
-    // roadmap's forward edges). Backlog items carry NO roadmap pointer field,
-    // so this is the ONLY backlog → roadmap nav path. Rendered only when at
-    // least one theme references the item.
+    // {20.30}: reverse cross-ledger backlinks — the initiatives PROJECTS
+    // (any depth, INV-13) whose `linked_backlog` reference this item
+    // (computed at load from every project's forward edges, tree-wide,
+    // ID-148.10). Backlog items carry NO initiatives pointer field, so
+    // this is the ONLY backlog → initiatives nav path. Rendered only when
+    // at least one project references the item.
     ...((): FrontmatterRow[] => {
-      const themeIds = ledger.themesByLinkedBacklog.get(item.id) ?? [];
-      if (themeIds.length === 0) return [];
+      const projectSlugs = ledger.projectsByLinkedBacklog.get(item.id) ?? [];
+      if (projectSlugs.length === 0) return [];
       return [
         {
-          key: "appears_in_themes",
-          label: "Appears in themes",
-          value: renderAppearsInThemes(themeIds, ledger),
+          key: "appears_in_projects",
+          label: "Appears in projects",
+          value: renderAppearsInProjects(projectSlugs, ledger),
         },
       ];
     })(),

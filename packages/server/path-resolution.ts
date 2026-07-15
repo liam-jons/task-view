@@ -8,8 +8,8 @@
  *      of the three known canonical values. Return the ledger path,
  *      detected kind, and the named record id (parsed from the mirror
  *      filename, with the Task-list 'ID-' prefix stripped where present).
- *      Roadmap themes + Backlog items carry their raw id (ID-20.19 themes[]
- *      world — there is no legacy 'section-' prefix to strip).
+ *      Initiatives (top-level initiative id — ID-148.10) + Backlog items
+ *      carry their raw id — there is no prefix to strip.
  *   2. `scanForLedgers(cwd)` — when no path is supplied (PRODUCT inv 43),
  *      scan the CWD for JSON files whose `document_name` matches one of
  *      the three known values. Return zero / one / multiple matches.
@@ -90,9 +90,8 @@ async function readDocumentNameIfKnown(
  * Inverse of `computeRecordFilename` from mirror-generator.ts:
  *   - Task-list mirrors carry the 'ID-' prefix → strip to recover the
  *     bare integer Task id.
- *   - Roadmap themes + Backlog items carry their raw id (no prefix). The
- *     legacy Roadmap 'section-' prefix was retired with the sections[]
- *     model in ID-20.19 (themes[] world) — there is nothing to strip.
+ *   - Initiatives (ID-148.10 — top-level initiative id) + Backlog items
+ *     carry their raw id (no prefix) — nothing to strip.
  *
  * We do not attempt to reverse the §3.2 unsafe-char → '-' substitution
  * because the substitution is intentionally lossy; the viewer looks up
@@ -106,7 +105,7 @@ function parseMirrorStem(
   if (documentName === "Knowledge Hub Task List" && stem.startsWith("ID-")) {
     return { recordId: stem.slice(3) };
   }
-  // Roadmap themes + Backlog items: raw stem is the id.
+  // Initiatives (top-level initiative id) + Backlog items: raw stem is the id.
   return { recordId: stem };
 }
 
@@ -230,8 +229,9 @@ export async function scanForLedgers(cwd: string): Promise<ScanResult> {
  * matching record's page directly. When the supplied recordId is null,
  * we emit a bare `/` so the viewer lands on the index page.
  *
- * Roadmap themes resolve by bare-digit id (ID-20.19 themes[] world); the
- * retired `&section=1` fragment is gone — the SSR viewer never read it.
+ * Initiatives (ID-148.10) resolve by project slug or initiative dotted
+ * path; the legacy `&section=1` fragment is gone — the SSR viewer never
+ * read it.
  */
 export function buildLedgerLaunchUrl(
   base: string,

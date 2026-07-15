@@ -5,7 +5,7 @@
  *   typed-record fixture
  *      → mirror-generator (text mirror)
  *      → structured-frontmatter parser (typed back)
- *      → TaskListView / RoadmapThemeView / BacklogItemView renderer
+ *      → TaskListView / InitiativesTreeView / BacklogItemView renderer
  *
  * This is the closest analogue in the colocated layout to TECH §4.2's
  * `tests/integration/*-render.test.ts` rows. It verifies the SPA's
@@ -18,7 +18,7 @@ import { detectSchema } from "../../server/detect-schema";
 import { renderIndexMd } from "../../server/index-generator";
 import type { Task } from "@task-view/schemas/task-list";
 import { BacklogItemView } from "./backlog-item-view";
-import { RoadmapThemeView } from "./roadmap-theme-view";
+import { InitiativesTreeView } from "./initiatives-tree-view";
 import {
   extractFrontmatterRaw,
   parseStructuredFrontmatter,
@@ -111,33 +111,36 @@ const backlogFixture = {
   ],
 };
 
-const roadmapFixture = {
-  document_name: "Knowledge Hub Roadmap" as const,
+const initiativesFixture = {
+  document_name: "Canonical Platform - Initiatives" as const,
   document_purpose: "fixture",
-  date: "2026-05-21",
-  status: "Active" as const,
-  forward_looking_only: true as const,
+  date: "2026-07-15",
+  status: "active",
   related_documents: [],
   last_updated: "fixture",
-  themes: [
+  initiatives: [
     {
       id: "3",
-      title: "Theme 3",
-      description: "Theme description.",
-      time_horizon: "now" as const,
-      status: "in_progress" as const,
-      linked_tasks: ["20"],
-      linked_backlog: ["45"],
-      session_refs: ["kh-prod-readiness-S63"],
-      commit_refs: ["abc1234"],
-      cross_doc_links: [
+      title: "Initiative 3",
+      description: "Initiative description.",
+      status: "active",
+      projects: [
         {
-          path: "docs/specs/per-task-mirror/TECH.md",
-          anchor: "#section-3-1",
-          raw: "TECH §3.1",
+          id: "end-to-end-project",
+          title: "End-to-end project",
+          summary: "Summary.",
+          description: "Project description.",
+          substrate_doc: "",
+          status: "in-progress",
+          blocked_by: [],
+          blocking: [],
+          linked_tasks: ["20"],
+          linked_backlog: ["45"],
+          originating_session: ["kh-prod-readiness-S63"],
         },
       ],
-      notes: "Theme notes prose.",
+      originating_session: ["kh-prod-readiness-S63"],
+      "sub-initiatives": [],
     },
   ],
 };
@@ -219,18 +222,18 @@ describe("Backlog end-to-end render (inv 21-25 happy path)", () => {
   });
 });
 
-// ── Roadmap end-to-end ────────────────────────────────────────────────────────
+// ── Initiatives end-to-end (ID-148.10, repurposed roadmap arm) ──────────────
 
-describe("Roadmap end-to-end render (themes[] happy path — ID-20.19)", () => {
-  test("typed RoadmapTheme → RoadmapThemeView yields all theme surfaces", () => {
-    const detected = detectSchema(roadmapFixture);
-    expect(detected.kind).toBe("roadmap");
-    if (detected.kind !== "roadmap") return;
-    const theme = detected.data.themes[0];
+describe("Initiatives end-to-end render (nested tree happy path — ID-148.10)", () => {
+  test("typed Initiative → InitiativesTreeView yields all initiative + project surfaces", () => {
+    const detected = detectSchema(initiativesFixture);
+    expect(detected.kind).toBe("initiatives");
+    if (detected.kind !== "initiatives") return;
+    const initiative = detected.data.initiatives[0];
     // Build a ledger that knows the linked Task + Backlog ids so the
     // cross-record links resolve live (not broken-target).
     const ledger = buildLedgerContext({
-      roadmap: detected.data,
+      initiatives: detected.data,
       tasks: [
         {
           id: "20",
@@ -266,23 +269,23 @@ describe("Roadmap end-to-end render (themes[] happy path — ID-20.19)", () => {
           notes: null,
         },
       ],
-      existingPaths: new Set(["docs/specs/per-task-mirror/TECH.md"]),
     });
     const html = renderToStaticMarkup(
-      <RoadmapThemeView theme={theme} ledger={ledger} nav={NAV} />,
+      <InitiativesTreeView initiative={initiative} ledger={ledger} nav={NAV} />,
     );
     // ID-20.25: title split into a .record-view-field-value span.
     expect(html).toContain("3: ");
     expect(html).toContain(
-      '<span class="record-view-field-value">Theme 3</span>',
+      '<span class="record-view-field-value">Initiative 3</span>',
     );
-    expect(html).toContain("Theme description");
-    // time_horizon + status frontmatter rows
-    expect(html).toContain('data-frontmatter-row="time_horizon"');
+    expect(html).toContain("Initiative description");
     expect(html).toContain('data-frontmatter-row="status"');
-    // {20.29}: linked_tasks / linked_backlog are CROSS-ledger edges now —
-    // they route to the sibling task-list / backlog ledgers (live, not
-    // missing, because the sibling ids are threaded into the LedgerContext).
+    // The direct project renders, slug-addressed for editing (INV-13).
+    expect(html).toContain('data-project-slug="end-to-end-project"');
+    // {20.29}-equivalent: linked_tasks / linked_backlog are CROSS-ledger
+    // edges — they route to the sibling task-list / backlog ledgers (live,
+    // not missing, because the sibling ids are threaded into the
+    // LedgerContext).
     expect(html).toContain('data-section="linked_tasks"');
     expect(html).toContain('href="/?ledger=task-list&amp;record=20"');
     expect(html).toContain('data-cross-ledger="task-list"');
@@ -291,11 +294,6 @@ describe("Roadmap end-to-end render (themes[] happy path — ID-20.19)", () => {
     expect(html).toContain('data-section="linked_backlog"');
     expect(html).toContain('href="/?ledger=backlog&amp;record=45"');
     expect(html).toContain('data-cross-ledger="backlog"');
-    // cross_doc_links render
-    expect(html).toContain('href="docs/specs/per-task-mirror/TECH.md#section-3-1"');
-    // notes section
-    expect(html).toContain('data-section="notes"');
-    expect(html).toContain("Theme notes prose");
   });
 });
 

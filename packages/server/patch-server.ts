@@ -126,6 +126,12 @@ import {
   warningScopesForPatches,
 } from "./discipline-warnings";
 import { promoteTransaction } from "./ledger-transaction";
+import {
+  resolveRecordId,
+  findProjectBySlug,
+  resolveInitiativeNode,
+  type TreeDoc,
+} from "./initiatives-tree";
 import { withPathLock, withPathLocks } from "./path-mutex";
 import { scanForLedgers } from "./path-resolution";
 import { LOOPBACK_HOSTNAME, resolveServerHostname } from "./loopback-bind";
@@ -260,22 +266,23 @@ function lookupRecord(
     if (!task) return null;
     return { kind: "task", record: task };
   }
-  if (detected.kind === "roadmap") {
-    // Roadmap shape note (ID-20.19): the Phase-B themes[] roadmap replaced
-    // the retired sections[]/items[] model. A roadmap record is a theme
-    // resolved by its bare-digit id; the old `section-` prefix form is gone.
-    const theme = detected.data.themes.find((t) => t.id === recordId);
-    if (!theme) return null;
-    return { kind: "roadmap-theme", record: theme };
+  // ID-148.10: repurposed roadmap arm — a bare `recordId` disambiguates to
+  // either a project (slug, tree-walk-found) or an initiative/sub-initiative
+  // (dotted path), via the SAME resolver the field-patch walk uses (INV-13).
+  if (detected.kind === "initiatives") {
+    const resolved = resolveRecordId(
+      detected.data as unknown as TreeDoc,
+      recordId,
+    );
+    if (resolved.kind === "project") {
+      return { kind: "project", record: resolved.location.project };
+    }
+    if (resolved.kind === "initiative") {
+      return { kind: "initiative", record: resolved.node };
+    }
+    return null;
   }
-  // ID-90 U8: umbrellas — fourth known kind. Records are umbrella entries
-  // keyed by their kebab-case id.
-  if (detected.kind === "umbrellas") {
-    const umbrella = detected.data.umbrellas.find((u) => u.id === recordId);
-    if (!umbrella) return null;
-    return { kind: "umbrella", record: umbrella };
-  }
-  // WS-C C2: retros — fifth known kind. Records are session retros keyed by
+  // WS-C C2: retros — fourth known kind. Records are session retros keyed by
   // their session id (`S<n>`).
   if (detected.kind === "retro") {
     const retro = detected.data.retros.find((r) => r.id === recordId);
@@ -296,17 +303,39 @@ function computeMirrorFilename(
   if (recordKind === "task") {
     return computeRecordFilename("task-list", { id: recordId });
   }
-  if (recordKind === "roadmap-theme") {
-    return computeRecordFilename("roadmap", { id: recordId });
+  // ID-148.10 (INV-9): a project/initiative's mirror is its OWNING
+  // top-level initiative's single mirror file — resolve the ancestor.
+  if (recordKind === "project" || recordKind === "initiative") {
+    if (detected.kind !== "initiatives") return "";
+    const topLevelId = resolveTopLevelInitiativeIdForRecordId(
+      detected.data as unknown as TreeDoc,
+      recordId,
+    );
+    if (!topLevelId) return "";
+    return computeRecordFilename("initiatives", { id: topLevelId });
   }
-  // ID-90 U8: umbrellas carry no mirror obligation (PRODUCT invariant 53) —
-  // there is no mirror filename for an umbrella record. WS-C C2: retros carry
-  // no .md mirror yet either — same empty-filename treatment.
-  if (recordKind === "umbrella" || recordKind === "retro") {
-    return "";
+  // ID-148.10 (INV-9): retros now carry a mirror (previously excluded).
+  if (recordKind === "retro") {
+    return computeRecordFilename("retro", { id: recordId });
   }
   // backlog-item
   return computeRecordFilename("backlog", { id: recordId });
+}
+
+/**
+ * Resolve the TOP-LEVEL initiative id that owns a given `recordId` (a
+ * project slug OR an initiative/sub-initiative dotted path) — mirrors
+ * `mirror-generator.ts`'s internal `resolveTopLevelInitiativeId` disambig
+ * order (path first, then project-slug tree-search).
+ */
+function resolveTopLevelInitiativeIdForRecordId(
+  doc: TreeDoc,
+  recordId: string,
+): string | null {
+  const asPath = recordId.split(".")[0];
+  if (resolveInitiativeNode(doc, asPath)) return asPath;
+  const located = findProjectBySlug(doc, recordId);
+  return located ? located.topLevelInitiativeId : null;
 }
 
 // ID-90 U1: the former `serialiseLedger` (`JSON.stringify(detected.data,
@@ -328,7 +357,7 @@ function computeMirrorFilename(
  * Routing:
  *   /                           → ledger index page
  *   /?record=ID-N               → per-record page
- *   /?record=<theme-id>         → roadmap theme page
+ *   /?record=<project-slug|initiative-path> → initiatives project/initiative page
  *   /?track=…&status=…&priority=… → backlog index with filter state (PRODUCT inv 23)
  *
  * Responses:
@@ -383,21 +412,9 @@ async function handleGetRoot(
       { status: 422 },
     );
   }
-  // ID-90 U8: umbrellas documents have no record-view surface — no mirrors
-  // (PRODUCT invariant 53) and no viewer pages; membership edits go through
-  // the field-PATCH API. Render a plain explanatory page rather than a 500.
-  if (canonical.detected.kind === "umbrellas") {
-    return new Response(
-      "<!doctype html><html><body><main><h1>umbrellas</h1>" +
-        "<p>Umbrella documents have no record-view surface. Membership edits " +
-        "are field PATCHes on ['umbrellas', id, 'task_ids'] via the ledger " +
-        "API (ID-90 U8; PRODUCT invariants 49–50, 53).</p></main></body></html>",
-      { status: 200, headers: { "content-type": "text/html; charset=utf-8" } },
-    );
-  }
   // WS-C C2: retros have no record-view surface yet — render a plain
-  // explanatory page (same treatment as umbrellas) rather than a 500. The
-  // retro write path is the ledger-CLI `create-retro` → POST /api/ledger/retro.
+  // explanatory page rather than a 500. The retro write path is the
+  // ledger-CLI `create-retro` → POST /api/ledger/retro.
   if (canonical.detected.kind === "retro") {
     return new Response(
       "<!doctype html><html><body><main><h1>retros</h1>" +
@@ -422,8 +439,8 @@ async function handleGetRoot(
   const launchedSlug = slugForDocumentName(
     canonical.detected.kind === "task-list"
       ? "Knowledge Hub Task List"
-      : canonical.detected.kind === "roadmap"
-        ? "Knowledge Hub Roadmap"
+      : canonical.detected.kind === "initiatives"
+        ? "Canonical Platform - Initiatives"
         : "Product Backlog",
   );
   const requestedSlug = decodeLedgerParam(search);
@@ -470,22 +487,22 @@ async function handleGetRoot(
  */
 async function readSiblingLedgers(
   ledgerPath: string,
-  currentKind: "task-list" | "roadmap" | "backlog",
+  currentKind: "task-list" | "initiatives" | "backlog",
 ): Promise<SiblingLedgers> {
   const siblings: SiblingLedgers = {};
-  // A roadmap page links out to task-list + backlog; a task page links out
-  // to the roadmap (capability_theme chip). We read whatever is useful for
-  // the current kind's outbound edges.
-  // {20.30}: a backlog page now also reads the roadmap sibling so its REVERSE
-  // "Appears in themes" backlinks resolve (the inverse index is built from the
-  // roadmap's linked_backlog). Backlog has no FORWARD cross-ledger edge, but
-  // the roadmap is what carries the reverse pointer to it.
+  // ID-148.10: an initiatives page links out to task-list + backlog; a task
+  // page links out to initiatives (project link chips). We read whatever is
+  // useful for the current kind's outbound edges.
+  // {20.30}: a backlog page also reads the initiatives sibling so its
+  // REVERSE "Appears in projects" backlinks resolve (the inverse index is
+  // built from each project's linked_backlog). Backlog has no FORWARD
+  // cross-ledger edge, but initiatives carries the reverse pointer to it.
   const wanted: KnownDocumentName[] =
-    currentKind === "roadmap"
+    currentKind === "initiatives"
       ? ["Knowledge Hub Task List", "Product Backlog"]
       : currentKind === "task-list"
-        ? ["Knowledge Hub Roadmap"]
-        : ["Knowledge Hub Roadmap"]; // backlog → roadmap (reverse index, {20.30})
+        ? ["Canonical Platform - Initiatives"]
+        : ["Canonical Platform - Initiatives"]; // backlog → initiatives (reverse index, {20.30})
   for (const name of wanted) {
     const path = await resolveLedgerPathByName(ledgerPath, name);
     if (path === null) continue;
@@ -496,7 +513,7 @@ async function readSiblingLedgers(
       continue;
     }
     if (detected.kind === "task-list") siblings.tasks = detected.data.tasks;
-    else if (detected.kind === "roadmap") siblings.roadmap = detected.data;
+    else if (detected.kind === "initiatives") siblings.initiatives = detected.data;
     else if (detected.kind === "backlog") siblings.backlogItems = detected.data.items;
   }
   return siblings;
@@ -505,13 +522,15 @@ async function readSiblingLedgers(
 /**
  * editable-ledger-switch §2: the viewer-renderable ledger slugs present in the
  * launch directory, for the editable ledger switcher. Mirrors
- * `handleGetHealth`'s scan but narrows to the THREE slugs with a viewer surface
- * — umbrellas/retro are routed-but-not-navigable (SPEC OQ-4), so they never
- * appear in the switcher.
+ * `handleGetHealth`'s scan but narrows to the THREE slugs with a viewer
+ * surface — retro is routed-but-not-navigable (SPEC OQ-4), so it never
+ * appears in the switcher. ID-148.10: `roadmap` is repurposed to
+ * `initiatives` (viewer-navigable WITH editing, OQ2); `umbrellas` is fully
+ * retired (no slug at all — see cross-ledger.ts).
  */
 async function scanViewerLedgers(
   ledgerPath: string,
-): Promise<("task-list" | "roadmap" | "backlog")[]> {
+): Promise<("task-list" | "initiatives" | "backlog")[]> {
   const dir = resolve(dirname(ledgerPath));
   const scan = await scanForLedgers(dir);
   const names =
@@ -520,10 +539,10 @@ async function scanViewerLedgers(
       : scan.kind === "multiple"
         ? scan.paths.map((p) => scan.perPathName[p])
         : [];
-  const slugs = new Set<"task-list" | "roadmap" | "backlog">();
+  const slugs = new Set<"task-list" | "initiatives" | "backlog">();
   for (const name of names) {
     const slug = slugForDocumentName(name);
-    if (slug === "task-list" || slug === "roadmap" || slug === "backlog") {
+    if (slug === "task-list" || slug === "initiatives" || slug === "backlog") {
       slugs.add(slug);
     }
   }
@@ -543,7 +562,7 @@ async function renderSiblingLedger(
   slug: NonNullable<ReturnType<typeof decodeLedgerParam>>,
   search: URLSearchParams,
   styles: Awaited<ReturnType<typeof getViewerStyles>>,
-  availableLedgers: readonly ("task-list" | "roadmap" | "backlog")[],
+  availableLedgers: readonly ("task-list" | "initiatives" | "backlog")[],
 ): Promise<Response> {
   const siblingPath = await resolveActiveLedger(ctx, slug);
   if (siblingPath === null) {
@@ -558,13 +577,9 @@ async function renderSiblingLedger(
   if (canonical.detected.kind === "unknown") {
     return siblingNotAvailableResponse(slug, styles);
   }
-  // ID-90 U8: umbrellas documents have no viewer surface (PRODUCT inv 53) —
-  // a nav to them is a dead-end, same treatment as a missing sibling. WS-C C2:
-  // retros likewise have no viewer surface yet — same dead-end treatment.
-  if (
-    canonical.detected.kind === "umbrellas" ||
-    canonical.detected.kind === "retro"
-  ) {
+  // WS-C C2: retros have no viewer surface yet — a nav to them is a
+  // dead-end, same treatment as a missing sibling.
+  if (canonical.detected.kind === "retro") {
     return siblingNotAvailableResponse(slug, styles);
   }
   const siblings = await readSiblingLedgers(siblingPath, canonical.detected.kind);
@@ -654,26 +669,17 @@ async function handleGetLedger(ctx: RequestContext): Promise<Response> {
       { status: 422 },
     );
   }
-  // ID-90 U8: umbrellas carry no mirror obligation (PRODUCT invariant 53) —
-  // the mirror fields are empty for the fourth kind. WS-C C2: retros carry no
-  // mirror dir yet either — same empty-mirror treatment. The inline kind checks
-  // are kept (rather than a hoisted boolean) so TS narrows `detected.kind` to a
-  // MirroredLedgerKind in the else-arm.
-  const mirrorDir =
-    canonical.detected.kind === "umbrellas" ||
-    canonical.detected.kind === "retro"
-      ? ""
-      : resolveMirrorDir(canonical.detected.kind, ctx.ledgerPath);
+  // ID-148.10: `umbrellas` is retired entirely (no kind left to special-case)
+  // and retros now carry a mirror (INV-9 — was previously excluded) — every
+  // known kind is now a MirroredLedgerKind, so no empty-mirror special case
+  // remains.
+  const mirrorDir = resolveMirrorDir(canonical.detected.kind, ctx.ledgerPath);
   return jsonResponse({
     ok: true,
     kind: canonical.detected.kind,
     data: canonical.detected.data,
     mirrorDir,
-    mirrorDirName:
-      canonical.detected.kind === "umbrellas" ||
-      canonical.detected.kind === "retro"
-        ? ""
-        : computeMirrorDirName(canonical.detected.kind),
+    mirrorDirName: computeMirrorDirName(canonical.detected.kind),
     mtime: canonical.mtimeIso,
   });
 }
@@ -1062,9 +1068,15 @@ async function handlePostRecord(
   ctx: RequestContext,
   request: Request,
 ): Promise<Response> {
-  let body: { baseMtime?: unknown; record?: unknown };
+  let body: {
+    baseMtime?: unknown;
+    record?: unknown;
+    /** ID-148.10 (INV-13): required for `initiatives` project creates — the
+     * dotted initiative/sub-initiative path to insert the project under. */
+    initiativePath?: unknown;
+  };
   try {
-    body = (await request.json()) as { baseMtime?: unknown; record?: unknown };
+    body = (await request.json()) as typeof body;
   } catch (err) {
     return jsonResponse(
       { ok: false, error: "invalid-json", detail: (err as Error).message },
@@ -1113,22 +1125,6 @@ async function handlePostRecord(
     );
   }
 
-  // ID-90 U8: record creates do not apply to umbrellas — the umbrella id-set
-  // is never mutated through record splices; membership edits are field
-  // PATCHes on ['umbrellas', id, 'task_ids'] (PRODUCT invariants 49-50).
-  if (canonical.detected.kind === "umbrellas") {
-    return jsonResponse(
-      {
-        ok: false,
-        error: "unsupported-op",
-        detail:
-          "umbrellas documents do not support record creates; membership " +
-          "edits are field PATCHes on ['umbrellas', id, 'task_ids'].",
-      },
-      { status: 422 },
-    );
-  }
-
   // §5.4 mtime check — BEFORE mutation.
   const baseMtimeMs = Date.parse(body.baseMtime);
   if (!Number.isFinite(baseMtimeMs)) {
@@ -1162,15 +1158,19 @@ async function handlePostRecord(
   );
   // WS-C C2: retro ids are caller-supplied session ids (`S<n>`) — there is NO
   // auto-allocation / nextId / high-water mark for retros. A retro create that
-  // omits `id` is a client error, not an auto-id opportunity.
-  if (canonical.detected.kind === "retro") {
+  // omits `id` is a client error, not an auto-id opportunity. ID-148.10:
+  // initiatives project ids are likewise caller-supplied (globally-unique
+  // kebab slugs) — no auto-id minting (INV-13).
+  if (canonical.detected.kind === "retro" || canonical.detected.kind === "initiatives") {
     if (record.id === undefined) {
       return jsonResponse(
         {
           ok: false,
           error: "invalid-body",
           detail:
-            "retro records require a caller-supplied session id of the form S<digits> (e.g. \"S264\"); retros are not auto-allocated.",
+            canonical.detected.kind === "retro"
+              ? "retro records require a caller-supplied session id of the form S<digits> (e.g. \"S264\"); retros are not auto-allocated."
+              : "initiatives project records require a caller-supplied globally-unique kebab-slug id; projects are not auto-allocated.",
         },
         { status: 422 },
       );
@@ -1179,13 +1179,15 @@ async function handlePostRecord(
     const collectionKey =
       canonical.detected.kind === "task-list"
         ? ("tasks" as const)
-        : canonical.detected.kind === "roadmap"
-          ? ("themes" as const)
-          : ("items" as const);
+        : ("items" as const);
     record = { ...record, id: nextId(canonical.detected, collectionKey) };
   }
 
-  const result = insertRecord(canonical.detected, record);
+  // ID-148.10 (INV-13): threaded through to insertRecord's tree-insert for
+  // the initiatives kind only; ignored by every other kind's flat insert.
+  const initiativePath =
+    typeof body.initiativePath === "string" ? body.initiativePath : undefined;
+  const result = insertRecord(canonical.detected, record, initiativePath);
   if (!result.ok) {
     if (result.kind === "duplicate-id") {
       return jsonResponse(
@@ -1243,11 +1245,14 @@ async function handlePostRecord(
     collection:
       canonical.detected.kind === "task-list"
         ? "tasks"
-        : canonical.detected.kind === "roadmap"
-          ? "themes"
+        : canonical.detected.kind === "initiatives"
+          ? "projects"
           : canonical.detected.kind === "retro"
             ? "retros"
             : "items",
+    // ID-148.10 (INV-13): required by the "projects" splice branch only;
+    // harmless/unused for every other collection.
+    initiativePath,
     record,
   });
   if (!spliced.ok) {
@@ -1295,7 +1300,7 @@ async function handlePostRecord(
     );
   }
   // ID-90.12 U10 (invariant 41): discipline warnings scoped to the created
-  // record ({35.30} — KH create-task parity); [] for roadmap/backlog kinds.
+  // record ({35.30} — KH create-task parity); [] for initiatives/backlog kinds.
   const responseWarnings = [
     ...disciplineWarnings(result.detected, {
       taskId: String(result.recordId),
@@ -1437,22 +1442,6 @@ async function handleDeleteRecord(
         ok: false,
         error: "unknown-document-name",
         documentName: canonical.detected.documentName,
-      },
-      { status: 422 },
-    );
-  }
-
-  // ID-90 U8: record deletes do not apply to umbrellas — the umbrella id-set
-  // is never mutated through record splices; membership edits are field
-  // PATCHes on ['umbrellas', id, 'task_ids'] (PRODUCT invariants 49-50).
-  if (canonical.detected.kind === "umbrellas") {
-    return jsonResponse(
-      {
-        ok: false,
-        error: "unsupported-op",
-        detail:
-          "umbrellas documents do not support record deletes; membership " +
-          "edits are field PATCHes on ['umbrellas', id, 'task_ids'].",
       },
       { status: 422 },
     );
@@ -2180,9 +2169,6 @@ async function resolveTransactionSiblings(
 ): Promise<{
   taskListPath: string;
   backlogPath: string;
-  /** ID-90 U7: roadmap sibling path when present in the dir — required only
-   * when the capability-theme third leg is requested. */
-  roadmapPath: string | null;
 } | null> {
   const dir = dirname(ledgerPath);
   const scan = await scanForLedgers(dir);
@@ -2201,11 +2187,7 @@ async function resolveTransactionSiblings(
     // error message actionable).
     return null;
   }
-  return {
-    taskListPath,
-    backlogPath,
-    roadmapPath: byName["Knowledge Hub Roadmap"] ?? null,
-  };
+  return { taskListPath, backlogPath };
 }
 
 /**
@@ -2221,20 +2203,24 @@ async function resolveTransactionSiblings(
  *     taskRecord: <full Task object>, // task to insert into task-list
  *     taskListBaseMtime: string,      // client's last-seen task-list mtime
  *     backlogBaseMtime: string,       // client's last-seen backlog mtime
- *     capabilityThemeId?: string,     // ID-90 U7: bind to a roadmap theme
- *     roadmapBaseMtime?: string,      // ID-90 U7: required with capabilityThemeId
  *   }
  *
  * Responses:
  *   → 200 { ok: true, newTaskId, removedBacklogId, taskListMtime, backlogMtime, ... }
  *   → 409 { error: 'mtime-mismatch' | 'duplicate-id' }
  *   → 404 { error: 'backlog-item-not-found' }
- *   → 422 { error: 'schema-error', issues } | { error: 'unknown-document-name' | 'unknown-theme' | ... }
+ *   → 422 { error: 'schema-error', issues } | { error: 'unknown-document-name' | ... }
  *   → 400 invalid body / mtime
  *   → 500 { error: 'no-sibling-ledger' | 'stage-failed' | 'commit-failed' }
  *
  * Atomicity: validate-everything → stage-both (fsync) → commit-last. See
  * ledger-transaction.ts for the full model + residual-window discussion.
+ *
+ * ID-148.10 (TECH §3.1(d), INV-12(d)): the former "capability-theme third
+ * leg" (binding a promoted Task to a roadmap theme via `capabilityThemeId`)
+ * is RETIRED — `capability_theme` write has no initiatives analog and is a
+ * roadmap-only concept. Promote is now a two-leg (task-list + backlog)
+ * transaction only.
  */
 async function handlePostTransaction(
   ctx: RequestContext,
@@ -2246,9 +2232,6 @@ async function handlePostTransaction(
     taskRecord?: unknown;
     taskListBaseMtime?: unknown;
     backlogBaseMtime?: unknown;
-    /** ID-90 U7: optional capability-theme third leg. */
-    capabilityThemeId?: unknown;
-    roadmapBaseMtime?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -2303,30 +2286,6 @@ async function handlePostTransaction(
   if (!opt.ok) return opt.response;
   const options = opt.options;
 
-  // ID-90 U7: optional capability-theme third leg — when bound, the client
-  // must also supply its last-seen roadmap mtime (the same per-document
-  // collision contract the other two legs carry).
-  if (body.capabilityThemeId !== undefined) {
-    if (
-      typeof body.capabilityThemeId !== "string" ||
-      body.capabilityThemeId === ""
-    ) {
-      return jsonResponse(
-        { ok: false, error: "invalid-capabilityThemeId" },
-        { status: 400 },
-      );
-    }
-    if (
-      typeof body.roadmapBaseMtime !== "string" ||
-      body.roadmapBaseMtime === ""
-    ) {
-      return jsonResponse(
-        { ok: false, error: "missing-roadmapBaseMtime" },
-        { status: 400 },
-      );
-    }
-  }
-
   const siblings = await resolveTransactionSiblings(ctx.ledgerPath);
   if (!siblings) {
     return jsonResponse(
@@ -2341,30 +2300,12 @@ async function handlePostTransaction(
     );
   }
 
-  // ID-90 U7: the third leg additionally needs the roadmap sibling.
-  if (body.capabilityThemeId !== undefined && siblings.roadmapPath === null) {
-    return jsonResponse(
-      {
-        ok: false,
-        error: "no-sibling-ledger",
-        detail:
-          "Promote with capabilityThemeId requires a 'Knowledge Hub Roadmap' " +
-          "ledger in the launched ledger's directory.",
-      },
-      { status: 500 },
-    );
-  }
-
   // ID-90 U9: the transaction holds the mutation mutex for EVERY canonical
-  // path it touches (two legs, or three with the capability-theme leg).
-  // withPathLocks acquires in fixed lexicographic order of the resolved
-  // paths (deadlock-free by construction — see path-mutex.ts), so a
-  // concurrent single-document writer on any leg serialises against the
-  // whole transaction (PRODUCT invariants 38, 46, 56).
+  // path it touches. withPathLocks acquires in fixed lexicographic order of
+  // the resolved paths (deadlock-free by construction — see path-mutex.ts),
+  // so a concurrent single-document writer on either leg serialises against
+  // the whole transaction (PRODUCT invariants 38, 46, 56).
   const lockPaths = [siblings.taskListPath, siblings.backlogPath];
-  if (body.capabilityThemeId !== undefined && siblings.roadmapPath !== null) {
-    lockPaths.push(siblings.roadmapPath);
-  }
   const result = await withPathLocks(lockPaths, () =>
     promoteTransaction({
       taskListPath: siblings.taskListPath,
@@ -2381,15 +2322,6 @@ async function handlePostTransaction(
       regenMirrors: options.regenMirrors,
       // ID-90 U9: invariant-34 arming rides every transaction leg too.
       requireDenylist: ctx.requireDenylist,
-      ...(body.capabilityThemeId !== undefined && siblings.roadmapPath !== null
-        ? {
-            capabilityTheme: {
-              roadmapPath: siblings.roadmapPath,
-              roadmapBaseMtime: body.roadmapBaseMtime as string,
-              themeId: body.capabilityThemeId as string,
-            },
-          }
-        : {}),
     }),
   );
 
@@ -2417,13 +2349,6 @@ async function handlePostTransaction(
     ...(result.dryRun === true ? { dryRun: true } : {}),
     ...(result.mirrorRegen !== undefined
       ? { mirrorRegen: result.mirrorRegen }
-      : {}),
-    // ID-90 U7: present when the capability-theme leg was bound.
-    ...(result.boundCapabilityTheme !== undefined
-      ? {
-          boundCapabilityTheme: result.boundCapabilityTheme,
-          roadmapMtime: result.roadmapMtime,
-        }
       : {}),
     // U10 warnings envelope: discipline + budget + guard-override
     // warnings (invariant 41).

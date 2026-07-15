@@ -21,7 +21,8 @@ describe("ledger-budgets registry (ID-90 U0, invariants 24/59)", () => {
   test("LEDGER_BUDGETS carries the canonical per-record-kind numbers", () => {
     expect(LEDGER_BUDGETS.task).toEqual({ description: 1500, status_note: 300 });
     expect(LEDGER_BUDGETS.subtask).toEqual({ description: 250, testStrategy: 300 });
-    expect(LEDGER_BUDGETS.theme).toEqual({ description: 1500, notes: 300 });
+    expect(LEDGER_BUDGETS.project).toEqual({ summary: 500, description: 1500 });
+    expect(LEDGER_BUDGETS.initiative).toEqual({ description: 1500 });
     expect(LEDGER_BUDGETS.item).toEqual({ title: 80, description: 500 });
   });
 

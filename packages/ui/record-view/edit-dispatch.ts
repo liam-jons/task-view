@@ -10,8 +10,8 @@
  *   - `data-edit-kind`    — the editor variant (see {@link DispatchKind})
  *   - `data-edit-field`   — the FieldPath joined by ">"
  *   - `data-record-id`    — the top-level record id (closest ancestor)
- *   - `data-record-kind`  — "task" | "roadmap-theme" | "backlog-item" |
- *                            "*-index"
+ *   - `data-record-kind`  — "task" | "project" | "initiative" |
+ *                            "backlog-item" | "*-index"
  *
  * This module is the pure, DOM-free, fully-unit-testable core: it turns
  * a `(kind, rawValue, fieldPath)` triple into a {@link FieldPatch} and a

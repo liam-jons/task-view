@@ -33,12 +33,17 @@ import type { ZodError } from "zod";
  *   - `['tasks', '20', 'description']`
  *   - `['tasks', '20', 'subtasks', '10', 'details']`
  *   - `['tasks', '20', 'dependencies']`  (array — replaced wholesale)
- *   - `['sections', '3.1', 'items', 'ID-30', 'priority']`
+ *   - `['projects', 'kb-ingestion-pipeline', 'status']` (ID-148.10 — a
+ *     Project, addressed by its globally-unique slug)
+ *   - `['initiatives', '4.2', 'status']` (ID-148.10 — an
+ *     Initiative/SubInitiative, addressed by dotted path)
  *
- * The first segment is always the top-level array property
- * (`tasks` / `sections` / `items`) per TECH §5.1; deeper segments are
- * id strings (Task id is a string; Subtask id is an integer-as-string;
- * Roadmap section id is `§N.M`; Backlog item id is the canonical id).
+ * The first segment is the top-level collection key (`tasks` / `items`) OR,
+ * for initiatives (ID-148.10, INV-13, a nested tree rather than a flat
+ * collection), one of `projects` / `initiatives`; deeper segments are id
+ * strings (Task id is a string; Subtask id is an integer-as-string; Project
+ * id is a kebab slug; Initiative/SubInitiative id is a dotted path; Backlog
+ * item id is the canonical id).
  */
 export type FieldPath = readonly string[];
 
