@@ -1434,9 +1434,11 @@ describe("editable-ledger-switch — active slug + per-slug base mtime", () => {
   test("activeSlug reads the [data-active-ledger] SSR hook", async () => {
     const mod = await import("../../apps/server/web/index");
     const nav = document.createElement("nav");
-    nav.setAttribute("data-active-ledger", "roadmap");
+    // ID-148.10: `roadmap` is repurposed to `initiatives` — `isLedgerSlug`
+    // only allows task-list/initiatives/backlog.
+    nav.setAttribute("data-active-ledger", "initiatives");
     document.body.appendChild(nav);
-    expect(mod.activeSlug()).toBe("roadmap");
+    expect(mod.activeSlug()).toBe("initiatives");
   });
 
   test("activeSlug falls back to ?ledger=, else undefined (bare launched route)", async () => {
@@ -1457,16 +1459,16 @@ describe("editable-ledger-switch — active slug + per-slug base mtime", () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : String(input);
       calls.push(url);
-      const slug = url.includes("roadmap") ? "roadmap" : "backlog";
+      const slug = url.includes("initiatives") ? "initiatives" : "backlog";
       return jsonResponse(200, { ok: true, mtime: `mtime-${slug}` });
     }) as typeof fetch;
     try {
-      expect(await mod.ensureBaseMtime("roadmap")).toBe("mtime-roadmap");
+      expect(await mod.ensureBaseMtime("initiatives")).toBe("mtime-initiatives");
       expect(await mod.ensureBaseMtime("backlog")).toBe("mtime-backlog");
-      // Re-asking for roadmap is served from its own cache — no extra fetch,
-      // and never the backlog base (the cross-ledger 409 this prevents).
-      expect(await mod.ensureBaseMtime("roadmap")).toBe("mtime-roadmap");
-      expect(calls).toEqual(["/api/ledger/roadmap", "/api/ledger/backlog"]);
+      // Re-asking for initiatives is served from its own cache — no extra
+      // fetch, and never the backlog base (the cross-ledger 409 this prevents).
+      expect(await mod.ensureBaseMtime("initiatives")).toBe("mtime-initiatives");
+      expect(calls).toEqual(["/api/ledger/initiatives", "/api/ledger/backlog"]);
     } finally {
       globalThis.fetch = saved;
     }

@@ -708,13 +708,17 @@ async function tempsIn(dir: string): Promise<string[]> {
 }
 
 describe("transaction (promote) — U10 envelope", () => {
-  test("dryRun: full three-leg gates, would-be payload, NOTHING staged or renamed (temps absent)", async () => {
+  test("dryRun: full two-leg gates, would-be payload, NOTHING staged or renamed (temps absent)", async () => {
+    // ID-148.10 (DR-073, INV-12(d)): the former capability-theme third leg
+    // (`capabilityThemeId`/`roadmapBaseMtime`/`boundCapabilityTheme`) is
+    // RETIRED — `capability_theme` write has no initiatives analog. Promote
+    // is a two-leg (task-list + backlog) transaction only; the unused
+    // `roadmapPath` fixture leg is left untouched as a harmless sibling file.
     const paths = await writeTransactionLedgers();
     const url = await startServer(paths.taskListPath);
     const before = {
       taskList: await snapshotFile(paths.taskListPath),
       backlog: await snapshotFile(paths.backlogPath),
-      roadmap: await snapshotFile(paths.roadmapPath),
     };
 
     const res = await fetch(`${url}/api/ledger/transaction`, {
@@ -725,8 +729,6 @@ describe("transaction (promote) — U10 envelope", () => {
         taskRecord: makeNewTask("99"),
         taskListBaseMtime: await mtimeOf(paths.taskListPath),
         backlogBaseMtime: await mtimeOf(paths.backlogPath),
-        capabilityThemeId: "3",
-        roadmapBaseMtime: await mtimeOf(paths.roadmapPath),
         dryRun: true,
       }),
     });
@@ -736,26 +738,20 @@ describe("transaction (promote) — U10 envelope", () => {
     expect(body.dryRun).toBe(true);
     expect(body.newTaskId).toBe("99");
     expect(body.removedBacklogId).toBe("101");
-    expect(body.boundCapabilityTheme).toBe("3");
+    expect(body.boundCapabilityTheme).toBeUndefined();
 
-    // Byte-paranoia across ALL THREE legs.
+    // Byte-paranoia across BOTH legs.
     for (const [name, snap] of Object.entries(before)) {
-      const path =
-        name === "taskList"
-          ? paths.taskListPath
-          : name === "backlog"
-            ? paths.backlogPath
-            : paths.roadmapPath;
+      const path = name === "taskList" ? paths.taskListPath : paths.backlogPath;
       const after = await snapshotFile(path);
       expect(after.bytes.equals(snap.bytes)).toBe(true);
       expect(after.mtimeMs).toBe(snap.mtimeMs);
     }
     // Stage NOTHING, rename NOTHING: no orphaned temps in the dir.
     expect(await tempsIn(testDir)).toEqual([]);
-    // No mirror artefacts on any leg.
+    // No mirror artefacts on either leg.
     expect(existsSync(join(testDir, "tasks"))).toBe(false);
     expect(existsSync(join(testDir, "backlog"))).toBe(false);
-    expect(existsSync(join(testDir, "roadmap"))).toBe(false);
   });
 
   test("a dryRun promote that violates a gate STILL rejects (gates never bypassed)", async () => {

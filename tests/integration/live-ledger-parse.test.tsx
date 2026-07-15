@@ -2,16 +2,21 @@
  * live-ledger-parse.test.tsx — ID-20.19 acceptance gate.
  *
  * Regression test proving the re-vendored schema bundle parses the LIVE
- * Knowledge Hub ledgers (task-list / roadmap / backlog) without ZodError,
- * and that the read-mode renderer round-trips the new shapes:
- *   - roadmap `themes[]` (NOT the retired `sections[]`)
- *   - Task `capability_theme` back-link
+ * Knowledge Hub ledgers (task-list / initiatives / backlog) without
+ * ZodError, and that the read-mode renderer round-trips the shapes:
+ *   - initiatives `initiatives[]` -> `projects[]` + recursive
+ *     `sub-initiatives[]` (ID-148.10, repurposed from the retired roadmap
+ *     `themes[]` — INV-12(a))
+ *   - Task `capability_theme` back-link (legacy field — READ-tolerant only;
+ *     the WRITE path is retired, DR-073/INV-12(d))
  *   - Subtask `status: "cancelled"` (S261/S262 amendment — ID-25.1..25.4)
  *
  * Fixtures are PORTABLE COPIES of the three live KH ledgers, snapshotted
- * into `tests/fixtures/live-ledgers/` at re-vendor time (ID-20.19). They
- * are deliberately not read from an absolute KH path so the suite runs in
- * any checkout / CI. Refresh them alongside any future schema re-vendor.
+ * into `tests/fixtures/live-ledgers/` at re-vendor time (ID-20.19;
+ * `initiatives.json` replaces the retired `product-roadmap.json`,
+ * ID-148.10). They are deliberately not read from an absolute KH path so
+ * the suite runs in any checkout / CI. Refresh them alongside any future
+ * schema re-vendor.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -23,11 +28,11 @@ import {
   SubtaskStatus,
 } from "@task-view/schemas/task-list";
 import {
-  RoadmapSchema,
-  parseRoadmapWithWarnings,
-} from "@task-view/schemas/roadmap";
+  InitiativesSchema,
+  parseInitiativesWithWarnings,
+} from "@task-view/schemas/initiatives";
 import { BacklogSchema } from "@task-view/schemas/backlog";
-import { RoadmapThemeView } from "../../packages/ui/record-view/roadmap-theme-view";
+import { InitiativesTreeView } from "../../packages/ui/record-view/initiatives-tree-view";
 import { TaskListView } from "../../packages/ui/record-view/task-list-view";
 import {
   buildLedgerContext,
@@ -79,17 +84,18 @@ describe("Live KH ledger parse (ID-20.19 acceptance gate)", () => {
     expect(withTheme.length).toBeGreaterThan(0);
   });
 
-  test("live product-roadmap.json parses with the themes[] shape", () => {
-    const raw = loadFixture("product-roadmap.json");
-    expect(() => RoadmapSchema.parse(raw)).not.toThrow();
-    const { value } = parseRoadmapWithWarnings(raw);
-    expect(value.document_name).toBe("Knowledge Hub Roadmap");
-    expect(value.themes.length).toBeGreaterThan(0);
-    // No retired sections[] field survives the strict() root.
-    expect((value as Record<string, unknown>).sections).toBeUndefined();
-    for (const theme of value.themes) {
-      expect(["now", "next", "later"]).toContain(theme.time_horizon);
-      expect(["pending", "in_progress", "done"]).toContain(theme.status);
+  test("live initiatives.json parses with the initiatives[] -> projects[] shape", () => {
+    const raw = loadFixture("initiatives.json");
+    expect(() => InitiativesSchema.parse(raw)).not.toThrow();
+    const { value } = parseInitiativesWithWarnings(raw);
+    expect(value.document_name).toBe("Canonical Platform - Initiatives");
+    expect(value.initiatives.length).toBeGreaterThan(0);
+    // Lenient read (INV-2/INV-3): status is a bare string, no enum — the
+    // live document may carry dirty/legacy values. Every initiative still
+    // carries a non-empty status string.
+    for (const initiative of value.initiatives) {
+      expect(typeof initiative.status).toBe("string");
+      expect(initiative.status.length).toBeGreaterThan(0);
     }
   });
 
@@ -102,22 +108,24 @@ describe("Live KH ledger parse (ID-20.19 acceptance gate)", () => {
 });
 
 describe("Round-trip render against live-shaped fixtures (ID-20.19)", () => {
-  test("a themes[] roadmap theme renders via RoadmapThemeView", () => {
-    const roadmap = RoadmapSchema.parse(loadFixture("product-roadmap.json"));
+  test("a top-level Initiative renders via InitiativesTreeView (ID-148.10)", () => {
+    const initiatives = InitiativesSchema.parse(
+      loadFixture("initiatives.json"),
+    );
     const tasks = TaskListSchema.parse(loadFixture("task-list.json")).tasks;
-    const theme = roadmap.themes[0];
-    const ledger = buildLedgerContext({ roadmap, tasks });
+    const initiative = initiatives.initiatives[0];
+    const ledger = buildLedgerContext({ initiatives, tasks });
     const html = renderToStaticMarkup(
-      <RoadmapThemeView theme={theme} ledger={ledger} nav={NAV} />,
+      <InitiativesTreeView initiative={initiative} ledger={ledger} nav={NAV} />,
     );
     // ID-20.25: title split into a .record-view-field-value span (the
     // editable value) beside the id prefix + a text-kind pencil.
-    expect(html).toContain(`${theme.id}: `);
+    expect(html).toContain(`${initiative.id}: `);
     expect(html).toContain(
-      `<span class="record-view-field-value">${theme.title}</span>`,
+      `<span class="record-view-field-value">${initiative.title}</span>`,
     );
-    expect(html).toContain('data-record-kind="roadmap-theme"');
-    expect(html).toContain('data-frontmatter-row="time_horizon"');
+    expect(html).toContain('data-record-kind="initiative"');
+    expect(html).toContain('data-frontmatter-row="status"');
   });
 
   test("a capability_theme-bearing Task renders via TaskListView", () => {

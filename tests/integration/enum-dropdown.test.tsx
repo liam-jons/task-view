@@ -9,9 +9,11 @@
  * The enums (per PRODUCT inv 30):
  *   - Task-list: Task.status (8), Task.priority (8), Subtask.status (6 —
  *     'cancelled' retained at Subtask level per S261/S262)
- *   - Roadmap: RoadmapStatus (6, nullable), RoadmapPriority (8, nullable) —
- *     the roadmap item-status / priority enums still exported by
- *     roadmap-schema after the ID-20.19 themes[] migration
+ *   - Initiatives (ID-148.10, repurposed from the retired roadmap
+ *     `themes[]` arm — INV-12(a)): `INITIATIVE_STATUSES` (5) and
+ *     `PROJECT_STATUSES` (11) — plain vocabularies, NOT nullable (INV-2/
+ *     INV-3: lenient-read `z.string()`, strict-write enforced at the
+ *     server gate, never `.nullable()` like the retired roadmap enums).
  *   - Backlog: BacklogItem.status (5), BacklogItem.priority (8), BacklogItem.type (8)
  *
  * Source of truth: `.options` (Zod 4 surface) is read at render time
@@ -26,9 +28,9 @@ import {
 } from "@task-view/schemas/task-list";
 import { Priority } from "@task-view/schemas/work-status";
 import {
-  RoadmapPriority,
-  RoadmapStatus,
-} from "@task-view/schemas/roadmap";
+  INITIATIVE_STATUSES,
+  PROJECT_STATUSES,
+} from "@task-view/schemas/initiatives";
 import {
   BacklogItemType,
   BacklogStatus,
@@ -88,52 +90,51 @@ describe("Task-list enum dropdowns (PRODUCT inv 30)", () => {
   });
 });
 
-describe("Roadmap nullable enum dropdowns (PRODUCT inv 30)", () => {
-  test("RoadmapStatus — 6 values + (unset) sentinel", () => {
-    expect(RoadmapStatus.options.length).toBe(6);
+describe("Initiatives enum dropdowns (PRODUCT inv 30, ID-148.10)", () => {
+  test("INITIATIVE_STATUSES — 5 values, not nullable (INV-2/INV-3)", () => {
+    expect(INITIATIVE_STATUSES.length).toBe(5);
     const html = renderToStaticMarkup(
       <EnumDropdownField
-        fieldPath={["themes", "3", "status"]}
-        draft={null}
-        options={RoadmapStatus.options}
-        nullable
+        fieldPath={["initiatives", "3", "status"]}
+        draft="active"
+        options={INITIATIVE_STATUSES}
       />,
     );
-    RoadmapStatus.options.forEach((v) => {
+    INITIATIVE_STATUSES.forEach((v) => {
       expect(html).toContain(`value="${v}"`);
     });
-    // Sentinel "(unset)" option present
-    expect(html).toContain("(unset)");
-    expect(html).toContain("data-nullable-sentinel");
-    // 6 enum options + 1 sentinel = 7 total
-    expect(optionCount(html)).toBe(7);
+    expect(optionCount(html)).toBe(5);
+    // No nullable sentinel — initiative status is never absent.
+    expect(html).not.toContain("(unset)");
   });
 
-  test("RoadmapPriority — 8 values + (unset) sentinel", () => {
-    expect(RoadmapPriority.options.length).toBe(8);
+  test("PROJECT_STATUSES — 11 values, not nullable", () => {
+    expect(PROJECT_STATUSES.length).toBe(11);
     const html = renderToStaticMarkup(
       <EnumDropdownField
-        fieldPath={["themes", "3", "priority"]}
-        draft={null}
-        options={RoadmapPriority.options}
-        nullable
+        fieldPath={["projects", "sample-project", "status"]}
+        draft="idea"
+        options={PROJECT_STATUSES}
       />,
     );
-    expect(html).toContain("(unset)");
-    expect(optionCount(html)).toBe(9); // 8 + sentinel
+    PROJECT_STATUSES.forEach((v) => {
+      expect(html).toContain(`value="${v}"`);
+    });
+    expect(optionCount(html)).toBe(11);
   });
 
-  test("nullable dropdown with non-null draft selects that value", () => {
+  test("a project status dropdown selects the current draft value", () => {
     const html = renderToStaticMarkup(
       <EnumDropdownField
-        fieldPath={["themes", "3", "status"]}
-        draft="pending"
-        options={RoadmapStatus.options}
-        nullable
+        fieldPath={["projects", "sample-project", "status"]}
+        draft="in-progress"
+        options={PROJECT_STATUSES}
       />,
     );
     // React's SSR renders defaultValue as the <select> selected attribute
-    expect(html).toMatch(/<select[^>]*data-edit-field="themes&gt;3&gt;status"/);
+    expect(html).toMatch(
+      /<select[^>]*data-edit-field="projects&gt;sample-project&gt;status"/,
+    );
   });
 });
 

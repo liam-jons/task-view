@@ -19,9 +19,10 @@ import { DocLinkPerEntryForm } from "../../packages/ui/record-view/edit-affordan
 import { buildFieldPatch } from "../../packages/ui/record-view/edit-state";
 
 // We import the schema by its canonical path within the vendored
-// schemas package. DocLinkSchema lives in roadmap-schema.ts but is
-// re-used across all three ledgers.
-import { DocLinkSchema } from "@task-view/schemas/roadmap";
+// schemas package. DocLinkSchema was relocated to the neutral doc-link.ts
+// module (ID-148.10, TECH §3.1(a), INV-12(c)) and is re-used across all
+// four ledgers.
+import { DocLinkSchema } from "@task-view/schemas/doc-link";
 
 const SAMPLE_DOC_LINKS = [
   {

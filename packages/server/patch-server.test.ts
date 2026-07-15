@@ -172,37 +172,49 @@ async function writeFixtureBacklog(path: string): Promise<string> {
   return content;
 }
 
-function makeRoadmapLedgerObject() {
+// ID-148.10 (INV-12(a)): repurposed roadmap fixture — a top-level Initiative
+// (id "10", matching the retired theme's id so test intent stays legible)
+// with one Project carrying the SAME cross-ledger links the old theme fixture
+// carried (linked_tasks: ["20"] into the task-list fixture, linked_backlog:
+// ["101"] into the backlog fixture).
+function makeInitiativesLedgerObject() {
   return {
-    document_name: "Knowledge Hub Roadmap",
-    document_purpose: "Forward-looking capability roadmap.",
+    document_name: "Canonical Platform - Initiatives",
+    document_purpose: "Structured record of active initiatives.",
     date: "2026-05-25",
-    status: "Active",
-    forward_looking_only: true,
+    status: "active",
     related_documents: [],
     last_updated: "fixture",
-    themes: [
+    initiatives: [
       {
         id: "10",
         title: "Procurement intelligence",
-        description: "Theme 10 description.",
-        time_horizon: "now",
-        status: "in_progress",
-        // Links to a Task that exists in the task-list fixture (id 20) and
-        // a backlog item that exists in the backlog fixture (id 101).
-        linked_tasks: ["20"],
-        linked_backlog: ["101"],
-        session_refs: [],
-        commit_refs: [],
-        cross_doc_links: [],
-        notes: null,
+        description: "Initiative 10 description.",
+        status: "active",
+        projects: [
+          {
+            id: "procurement-project",
+            title: "Procurement project",
+            summary: "Summary.",
+            description: "Description.",
+            substrate_doc: "",
+            status: "in-progress",
+            blocked_by: [],
+            blocking: [],
+            linked_tasks: ["20"],
+            linked_backlog: ["101"],
+            originating_session: [],
+          },
+        ],
+        originating_session: [],
+        "sub-initiatives": [],
       },
     ],
   };
 }
 
-async function writeFixtureRoadmap(path: string): Promise<string> {
-  const content = JSON.stringify(makeRoadmapLedgerObject(), null, 2);
+async function writeFixtureInitiatives(path: string): Promise<string> {
+  const content = JSON.stringify(makeInitiativesLedgerObject(), null, 2);
   await writeFile(path, content, "utf8");
   return content;
 }
@@ -1268,14 +1280,14 @@ describe("PATCH end-to-end — atomic write integrity (PRODUCT inv 36)", () => {
 
 // ── {20.29} GET / cross-ledger nav (SPEC §5 slice 6) ─────────────────────────
 
-describe("GET / — cross-ledger nav ({20.29} SPEC §5 slice 6)", () => {
-  test("launched on roadmap, /?ledger=task-list&record=20 → 200 editable sibling task", async () => {
+describe("GET / — cross-ledger nav ({20.29} SPEC §5 slice 6, ID-148.10 initiatives)", () => {
+  test("launched on initiatives, /?ledger=task-list&record=20 → 200 editable sibling task", async () => {
     // All three siblings co-located in the launch dir (the real KH layout).
-    await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
+    await writeFixtureInitiatives(join(testDir, "initiatives.json"));
     await writeFixtureTaskList(join(testDir, "task-list.json"));
     await writeFixtureBacklog(join(testDir, "product-backlog.json"));
     handle = startPatchServer({
-      ledgerPath: join(testDir, "product-roadmap.json"),
+      ledgerPath: join(testDir, "initiatives.json"),
     });
 
     const res = await fetch(`${handle.url}/?ledger=task-list&record=20`);
@@ -1297,20 +1309,20 @@ describe("GET / — cross-ledger nav ({20.29} SPEC §5 slice 6)", () => {
     expect(html).toContain('data-active-ledger="task-list"');
   });
 
-  test("launched on task-list, /?ledger=roadmap&record=10 → 200 theme content", async () => {
+  test("launched on task-list, /?ledger=initiatives&record=10 → 200 initiative content", async () => {
     await writeFixtureTaskList(join(testDir, "task-list.json"));
-    await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
+    await writeFixtureInitiatives(join(testDir, "initiatives.json"));
     await writeFixtureBacklog(join(testDir, "product-backlog.json"));
     handle = startPatchServer({ ledgerPath: join(testDir, "task-list.json") });
 
-    const res = await fetch(`${handle.url}/?ledger=roadmap&record=10`);
+    const res = await fetch(`${handle.url}/?ledger=initiatives&record=10`);
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('data-record-kind="roadmap-theme"');
+    expect(html).toContain('data-record-kind="initiative"');
     expect(html).toContain('data-record-id="10"');
     expect(html).toContain("Procurement intelligence");
-    // Theme 10 links to Task 20 (exists in sibling task-list) + backlog 101
-    // → live cross-ledger links, NOT (missing).
+    // Initiative 10's project links to Task 20 (exists in sibling task-list)
+    // + backlog 101 → live cross-ledger links, NOT (missing).
     expect(html).toContain('href="/?ledger=task-list&amp;record=20"');
     expect(html).toContain('data-cross-ledger="task-list"');
     expect(html).toContain('href="/?ledger=backlog&amp;record=101"');
@@ -1318,10 +1330,10 @@ describe("GET / — cross-ledger nav ({20.29} SPEC §5 slice 6)", () => {
   });
 
   test("absent sibling ledger in dir → 404 HTML, not 500", async () => {
-    // Only the roadmap is present; no task-list sibling to resolve.
-    await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
+    // Only initiatives is present; no task-list sibling to resolve.
+    await writeFixtureInitiatives(join(testDir, "initiatives.json"));
     handle = startPatchServer({
-      ledgerPath: join(testDir, "product-roadmap.json"),
+      ledgerPath: join(testDir, "initiatives.json"),
     });
 
     const res = await fetch(`${handle.url}/?ledger=task-list&record=20`);
@@ -1333,10 +1345,10 @@ describe("GET / — cross-ledger nav ({20.29} SPEC §5 slice 6)", () => {
   });
 
   test("sibling present but record id absent → 404 not-found", async () => {
-    await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
+    await writeFixtureInitiatives(join(testDir, "initiatives.json"));
     await writeFixtureTaskList(join(testDir, "task-list.json"));
     handle = startPatchServer({
-      ledgerPath: join(testDir, "product-roadmap.json"),
+      ledgerPath: join(testDir, "initiatives.json"),
     });
 
     const res = await fetch(`${handle.url}/?ledger=task-list&record=999`);
@@ -1346,58 +1358,59 @@ describe("GET / — cross-ledger nav ({20.29} SPEC §5 slice 6)", () => {
   });
 
   test("bare /?record=N (no ledger param) is unchanged — launched ledger, editable", async () => {
-    await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
+    await writeFixtureInitiatives(join(testDir, "initiatives.json"));
     await writeFixtureTaskList(join(testDir, "task-list.json"));
     handle = startPatchServer({
-      ledgerPath: join(testDir, "product-roadmap.json"),
+      ledgerPath: join(testDir, "initiatives.json"),
     });
 
     const res = await fetch(`${handle.url}/?record=10`);
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('data-record-kind="roadmap-theme"');
+    expect(html).toContain('data-record-kind="initiative"');
     expect(html).toContain('data-record-id="10"');
     // Launched ledger is editable → pencils present.
     expect(html).toContain("data-edit-action");
     // The switcher is mounted on the launched page too, marking it active.
     expect(html).toContain("data-ledger-switcher");
-    expect(html).toContain('data-active-ledger="roadmap"');
+    expect(html).toContain('data-active-ledger="initiatives"');
   });
 
-  test("?ledger=roadmap on a roadmap launch is identical to bare ?record (self)", async () => {
-    await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
+  test("?ledger=initiatives on an initiatives launch is identical to bare ?record (self)", async () => {
+    await writeFixtureInitiatives(join(testDir, "initiatives.json"));
     await writeFixtureTaskList(join(testDir, "task-list.json"));
     handle = startPatchServer({
-      ledgerPath: join(testDir, "product-roadmap.json"),
+      ledgerPath: join(testDir, "initiatives.json"),
     });
 
-    const res = await fetch(`${handle.url}/?ledger=roadmap&record=10`);
+    const res = await fetch(`${handle.url}/?ledger=initiatives&record=10`);
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('data-record-kind="roadmap-theme"');
+    expect(html).toContain('data-record-kind="initiative"');
     // Self-target → launched ledger → editable.
     expect(html).toContain("data-edit-action");
   });
 
-  test("?ledger=roadmap&record=999 → 404 (missing record in launched-self)", async () => {
-    await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
+  test("?ledger=initiatives&record=999 → 404 (missing record in launched-self)", async () => {
+    await writeFixtureInitiatives(join(testDir, "initiatives.json"));
     handle = startPatchServer({
-      ledgerPath: join(testDir, "product-roadmap.json"),
+      ledgerPath: join(testDir, "initiatives.json"),
     });
-    const res = await fetch(`${handle.url}/?ledger=roadmap&record=999`);
+    const res = await fetch(`${handle.url}/?ledger=initiatives&record=999`);
     expect(res.status).toBe(404);
   });
 });
 
 // ── {20.30} GET / reverse cross-ledger backlinks (server-computed index) ─────
 
-describe("GET / — reverse appears-in-themes backlinks ({20.30})", () => {
-  test("launched on backlog, /?record=101 renders an appears-in-themes backlink to its theme", async () => {
-    // Roadmap theme 10 lists backlog 101 in linked_backlog (forward). The
-    // launched backlog page has no roadmap pointer field — the server reads
-    // the roadmap sibling and computes the reverse index to produce the link.
+describe("GET / — reverse appears-in-projects backlinks ({20.30}, ID-148.10)", () => {
+  test("launched on backlog, /?record=101 renders an appears-in-projects backlink to its project", async () => {
+    // Initiative 10's project "procurement-project" lists backlog 101 in
+    // linked_backlog (forward). The launched backlog page has no initiatives
+    // pointer field — the server reads the initiatives sibling and computes
+    // the reverse index to produce the link.
     await writeFixtureBacklog(join(testDir, "product-backlog.json"));
-    await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
+    await writeFixtureInitiatives(join(testDir, "initiatives.json"));
     handle = startPatchServer({
       ledgerPath: join(testDir, "product-backlog.json"),
     });
@@ -1406,32 +1419,15 @@ describe("GET / — reverse appears-in-themes backlinks ({20.30})", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain('data-record-kind="backlog-item"');
-    expect(html).toContain('data-frontmatter-row="appears_in_themes"');
-    expect(html).toContain('href="/?ledger=roadmap&amp;record=10"');
-    expect(html).toContain('data-cross-ledger="roadmap"');
-    expect(html).toContain("theme 10: Procurement intelligence");
+    expect(html).toContain('data-frontmatter-row="appears_in_projects"');
+    expect(html).toContain(
+      'href="/?ledger=initiatives&amp;record=procurement-project"',
+    );
+    expect(html).toContain('data-cross-ledger="initiatives"');
+    expect(html).toContain("project procurement-project: Procurement project");
   });
 
-  test("following that backlink (/?ledger=roadmap&record=10) lands on the theme, editable", async () => {
-    await writeFixtureBacklog(join(testDir, "product-backlog.json"));
-    await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
-    handle = startPatchServer({
-      ledgerPath: join(testDir, "product-backlog.json"),
-    });
-
-    const res = await fetch(`${handle.url}/?ledger=roadmap&record=10`);
-    expect(res.status).toBe(200);
-    const html = await res.text();
-    expect(html).toContain('data-record-kind="roadmap-theme"');
-    expect(html).toContain('data-record-id="10"');
-    expect(html).toContain("Procurement intelligence");
-    // {editable-ledger-switch} The switched-to sibling roadmap is EDITABLE;
-    // the read-only banner is gone.
-    expect(html).toContain("data-edit-action");
-    expect(html).not.toContain("data-ledger-banner");
-  });
-
-  test("launched on backlog WITHOUT a roadmap sibling → no backlink row", async () => {
+  test("launched on backlog WITHOUT an initiatives sibling → no backlink row", async () => {
     await writeFixtureBacklog(join(testDir, "product-backlog.json"));
     handle = startPatchServer({
       ledgerPath: join(testDir, "product-backlog.json"),
@@ -1441,20 +1437,23 @@ describe("GET / — reverse appears-in-themes backlinks ({20.30})", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain('data-record-kind="backlog-item"');
-    expect(html).not.toContain('data-frontmatter-row="appears_in_themes"');
+    expect(html).not.toContain('data-frontmatter-row="appears_in_projects"');
   });
 
-  test("launched on task-list, /?record=20 renders the task's appears-in-themes backlink", async () => {
-    // Theme 10's linked_tasks include task 20 → reverse backlink on task 20.
+  test("launched on task-list, /?record=20 renders the task's appears-in-projects backlink", async () => {
+    // Project "procurement-project"'s linked_tasks include task 20 → reverse
+    // backlink on task 20.
     await writeFixtureTaskList(join(testDir, "task-list.json"));
-    await writeFixtureRoadmap(join(testDir, "product-roadmap.json"));
+    await writeFixtureInitiatives(join(testDir, "initiatives.json"));
     handle = startPatchServer({ ledgerPath: join(testDir, "task-list.json") });
 
     const res = await fetch(`${handle.url}/?record=20`);
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('data-frontmatter-row="appears_in_themes"');
-    expect(html).toContain('href="/?ledger=roadmap&amp;record=10"');
+    expect(html).toContain('data-frontmatter-row="appears_in_projects"');
+    expect(html).toContain(
+      'href="/?ledger=initiatives&amp;record=procurement-project"',
+    );
   });
 });
 
@@ -1970,162 +1969,3 @@ describe("PATCH /api/ledger/record/:recordId — appendText op (ID-90.9 U6, inv 
   });
 });
 
-// ── ID-90 U7: POST /api/ledger/transaction — capability-theme third leg ──────
-
-describe("POST /api/ledger/transaction — capability-theme third leg (ID-90 U7)", () => {
-  async function setupThreeLedgers(): Promise<{
-    taskListPath: string;
-    backlogPath: string;
-    roadmapPath: string;
-    roadmapOriginal: string;
-  }> {
-    const taskListPath = join(testDir, "task-list.json");
-    const backlogPath = join(testDir, "product-backlog.json");
-    const roadmapPath = join(testDir, "product-roadmap.json");
-    await writeFixtureTaskList(taskListPath);
-    await writeFixtureBacklog(backlogPath);
-    const roadmapOriginal = await writeFixtureRoadmap(roadmapPath);
-    return { taskListPath, backlogPath, roadmapPath, roadmapOriginal };
-  }
-
-  test("promote with capabilityThemeId binds the Task AND pushes linked_tasks[]", async () => {
-    const { taskListPath, backlogPath, roadmapPath } = await setupThreeLedgers();
-    handle = startPatchServer({ ledgerPath: backlogPath });
-
-    const res = await fetch(`${handle.url}/api/ledger/transaction`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        op: "promote",
-        sourceBacklogId: "101",
-        taskRecord: makeNewTaskRecord("42"),
-        taskListBaseMtime: await getLedgerMtime(taskListPath),
-        backlogBaseMtime: await getLedgerMtime(backlogPath),
-        capabilityThemeId: "10",
-        roadmapBaseMtime: await getLedgerMtime(roadmapPath),
-      }),
-    });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      ok: boolean;
-      newTaskId: string;
-      boundCapabilityTheme?: string;
-      roadmapMtime?: string;
-    };
-    expect(body.ok).toBe(true);
-    expect(body.newTaskId).toBe("42");
-    expect(body.boundCapabilityTheme).toBe("10");
-    expect(typeof body.roadmapMtime).toBe("string");
-
-    const roadmap = JSON.parse(await readFile(roadmapPath, "utf8")) as {
-      themes: { linked_tasks: string[] }[];
-    };
-    expect(roadmap.themes[0].linked_tasks).toEqual(["20", "42"]);
-    const taskList = JSON.parse(await readFile(taskListPath, "utf8")) as {
-      tasks: { id: string; capability_theme?: string }[];
-    };
-    expect(
-      taskList.tasks.find((t) => t.id === "42")?.capability_theme,
-    ).toBe("10");
-  });
-
-  test("unknown theme id → 422 unknown-theme, none of the three files mutated", async () => {
-    const { taskListPath, backlogPath, roadmapPath, roadmapOriginal } =
-      await setupThreeLedgers();
-    handle = startPatchServer({ ledgerPath: backlogPath });
-    const taskOriginal = await readFile(taskListPath, "utf8");
-    const backlogOriginal = await readFile(backlogPath, "utf8");
-
-    const res = await fetch(`${handle.url}/api/ledger/transaction`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        op: "promote",
-        sourceBacklogId: "101",
-        taskRecord: makeNewTaskRecord("42"),
-        taskListBaseMtime: await getLedgerMtime(taskListPath),
-        backlogBaseMtime: await getLedgerMtime(backlogPath),
-        capabilityThemeId: "99",
-        roadmapBaseMtime: await getLedgerMtime(roadmapPath),
-      }),
-    });
-    expect(res.status).toBe(422);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe("unknown-theme");
-    expect(await readFile(taskListPath, "utf8")).toBe(taskOriginal);
-    expect(await readFile(backlogPath, "utf8")).toBe(backlogOriginal);
-    expect(await readFile(roadmapPath, "utf8")).toBe(roadmapOriginal);
-  });
-
-  test("capabilityThemeId without roadmapBaseMtime → 400 missing-roadmapBaseMtime", async () => {
-    const { taskListPath, backlogPath } = await setupThreeLedgers();
-    handle = startPatchServer({ ledgerPath: backlogPath });
-
-    const res = await fetch(`${handle.url}/api/ledger/transaction`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        op: "promote",
-        sourceBacklogId: "101",
-        taskRecord: makeNewTaskRecord("42"),
-        taskListBaseMtime: await getLedgerMtime(taskListPath),
-        backlogBaseMtime: await getLedgerMtime(backlogPath),
-        capabilityThemeId: "10",
-      }),
-    });
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe("missing-roadmapBaseMtime");
-  });
-
-  test("capabilityThemeId with NO roadmap sibling in the dir → 500 no-sibling-ledger", async () => {
-    const taskListPath = join(testDir, "task-list.json");
-    const backlogPath = join(testDir, "product-backlog.json");
-    await writeFixtureTaskList(taskListPath);
-    await writeFixtureBacklog(backlogPath);
-    handle = startPatchServer({ ledgerPath: backlogPath });
-
-    const res = await fetch(`${handle.url}/api/ledger/transaction`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        op: "promote",
-        sourceBacklogId: "101",
-        taskRecord: makeNewTaskRecord("42"),
-        taskListBaseMtime: await getLedgerMtime(taskListPath),
-        backlogBaseMtime: await getLedgerMtime(backlogPath),
-        capabilityThemeId: "10",
-        roadmapBaseMtime: new Date().toISOString(),
-      }),
-    });
-    expect(res.status).toBe(500);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe("no-sibling-ledger");
-  });
-
-  test("promote WITHOUT capabilityThemeId still works two-leg (roadmap sibling untouched)", async () => {
-    const { taskListPath, backlogPath, roadmapPath, roadmapOriginal } =
-      await setupThreeLedgers();
-    handle = startPatchServer({ ledgerPath: backlogPath });
-
-    const res = await fetch(`${handle.url}/api/ledger/transaction`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        op: "promote",
-        sourceBacklogId: "101",
-        taskRecord: makeNewTaskRecord("42"),
-        taskListBaseMtime: await getLedgerMtime(taskListPath),
-        backlogBaseMtime: await getLedgerMtime(backlogPath),
-      }),
-    });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      ok: boolean;
-      boundCapabilityTheme?: string;
-    };
-    expect(body.ok).toBe(true);
-    expect(body.boundCapabilityTheme).toBeUndefined();
-    expect(await readFile(roadmapPath, "utf8")).toBe(roadmapOriginal);
-  });
-});

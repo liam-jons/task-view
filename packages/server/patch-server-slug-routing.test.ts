@@ -4,7 +4,8 @@
  * multi-document loopback daemon per ledger directory).
  *
  *   - `/api/ledger/:slug/…` routes any request to the named document in
- *     the launch directory (all four known kinds, incl. umbrellas).
+ *     the launch directory (all four known kinds — ID-148.10: task-list,
+ *     initiatives, backlog, retro; `umbrellas` is fully retired, INV-12(b)).
  *   - Bare `/api/ledger/…` keeps routing to the LAUNCH document (viewer
  *     back-compat).
  *   - `GET /api/health` → {ok, version, ledgerDir, documents: [{slug,
@@ -40,7 +41,7 @@ afterEach(async () => {
   await rm(testDir, { recursive: true, force: true });
 });
 
-// ── Synthetic fixtures (all four known document kinds) ──────────────────────
+// ── Synthetic fixtures (all four known document kinds, ID-148.10) ───────────
 
 function makeTaskListLedger() {
   return {
@@ -69,28 +70,41 @@ function makeTaskListLedger() {
   };
 }
 
-function makeRoadmapLedger() {
+// ID-148.10 (INV-12(a)): repurposed roadmap fixture — a top-level Initiative
+// (id "10", matching the retired theme's id so test intent stays legible)
+// with one Project carrying the SAME cross-ledger links the old theme
+// fixture carried (linked_tasks: ["20"] into the task-list fixture).
+function makeInitiativesLedger() {
   return {
-    document_name: "Knowledge Hub Roadmap",
+    document_name: "Canonical Platform - Initiatives",
     document_purpose: "Synthetic fixture.",
     date: "2026-05-25",
-    status: "Active",
-    forward_looking_only: true,
+    status: "active",
     related_documents: [],
     last_updated: "synthetic fixture",
-    themes: [
+    initiatives: [
       {
         id: "10",
-        title: "Synthetic theme",
-        description: "Theme body.",
-        time_horizon: "now",
-        status: "in_progress",
-        linked_tasks: ["20"],
-        linked_backlog: [],
-        session_refs: [],
-        commit_refs: [],
-        cross_doc_links: [],
-        notes: null,
+        title: "Synthetic initiative",
+        description: "Initiative body.",
+        status: "active",
+        projects: [
+          {
+            id: "synthetic-project",
+            title: "Synthetic project",
+            summary: "Summary.",
+            description: "Description.",
+            substrate_doc: "",
+            status: "in-progress",
+            blocked_by: [],
+            blocking: [],
+            linked_tasks: ["20"],
+            linked_backlog: [],
+            originating_session: [],
+          },
+        ],
+        originating_session: [],
+        "sub-initiatives": [],
       },
     ],
   };
@@ -120,21 +134,33 @@ function makeBacklogLedger() {
   };
 }
 
-function makeUmbrellasDoc() {
+// ID-148.10 (INV-12(b)): umbrellas is fully retired — the fourth-document
+// slot in the fixture set is now `retro` (WS-C C2's fourth known kind).
+function makeRetrosDoc() {
   return {
-    document_name: "umbrellas",
-    document_purpose: "Synthetic umbrella groupings fixture.",
-    // UmbrellasSchema requires the session-id prefix on last_updated.
-    last_updated: "kh-main-S1 synthetic fixture",
+    document_name: "Knowledge Hub Retros",
+    document_purpose: "Synthetic retros fixture.",
     related_documents: [],
-    umbrellas: [
+    last_updated: "kh-main-S1 synthetic fixture",
+    retros: [
       {
-        id: "synthetic-umbrella",
-        title: "Synthetic Umbrella",
-        substrate_doc: "docs/synthetic-umbrella.md",
-        task_ids: ["20"],
-        status: "in_progress",
-        phase: "Phase 1",
+        id: "S1",
+        session_id: "S1",
+        date: "2026-05-25",
+        track: "main",
+        session_refs: [],
+        commit_refs: [],
+        cross_doc_links: [],
+        bugs_discovered: [],
+        failed_assumptions: [],
+        architecture_decisions: [],
+        rejected_approaches: [],
+        workflow_improvements: [],
+        unresolved_questions: [],
+        deprecated: false,
+        deprecation_reason: null,
+        superseding_record_id: null,
+        last_conflict_check: null,
       },
     ],
   };
@@ -144,9 +170,9 @@ function makeUmbrellasDoc() {
 async function writeAllFour(): Promise<Record<string, string>> {
   const paths = {
     taskList: join(testDir, "task-list.json"),
-    roadmap: join(testDir, "product-roadmap.json"),
+    initiatives: join(testDir, "initiatives.json"),
     backlog: join(testDir, "product-backlog.json"),
-    umbrellas: join(testDir, "umbrellas.json"),
+    retro: join(testDir, "product-retros.json"),
   };
   await writeFile(
     paths.taskList,
@@ -154,8 +180,8 @@ async function writeAllFour(): Promise<Record<string, string>> {
     "utf8",
   );
   await writeFile(
-    paths.roadmap,
-    JSON.stringify(makeRoadmapLedger(), null, 2),
+    paths.initiatives,
+    JSON.stringify(makeInitiativesLedger(), null, 2),
     "utf8",
   );
   await writeFile(
@@ -164,8 +190,8 @@ async function writeAllFour(): Promise<Record<string, string>> {
     "utf8",
   );
   await writeFile(
-    paths.umbrellas,
-    JSON.stringify(makeUmbrellasDoc(), null, 2),
+    paths.retro,
+    JSON.stringify(makeRetrosDoc(), null, 2),
     "utf8",
   );
   return paths;
@@ -184,9 +210,9 @@ describe("slug routing — /api/ledger/:slug/… serves every known document (in
 
     const expectations: Array<{ slug: string; kind: string }> = [
       { slug: "task-list", kind: "task-list" },
-      { slug: "roadmap", kind: "roadmap" },
+      { slug: "initiatives", kind: "initiatives" },
       { slug: "backlog", kind: "backlog" },
-      { slug: "umbrellas", kind: "umbrellas" },
+      { slug: "retro", kind: "retro" },
     ];
     for (const { slug, kind } of expectations) {
       const res = await fetch(`${handle.url}/api/ledger/${slug}`);
@@ -201,29 +227,29 @@ describe("slug routing — /api/ledger/:slug/… serves every known document (in
     const paths = await writeAllFour();
     handle = startPatchServer({ ledgerPath: paths.taskList });
 
-    const res = await fetch(`${handle.url}/api/ledger/roadmap/record/10`);
+    const res = await fetch(`${handle.url}/api/ledger/initiatives/record/10`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       kind: string;
       record: { id: string; title: string };
     };
-    expect(body.kind).toBe("roadmap-theme");
+    expect(body.kind).toBe("initiative");
     expect(body.record.id).toBe("10");
   });
 
-  test("slug-routed PATCH lands bytes in the named sibling — incl. an umbrellas membership edit", async () => {
+  test("slug-routed PATCH lands bytes in the named sibling — incl. an initiatives project edit", async () => {
     const paths = await writeAllFour();
     handle = startPatchServer({ ledgerPath: paths.taskList });
 
     const res = await fetch(
-      `${handle.url}/api/ledger/umbrellas/record/synthetic-umbrella`,
+      `${handle.url}/api/ledger/initiatives/record/synthetic-project`,
       {
         method: "PATCH",
         body: JSON.stringify({
-          baseMtime: await mtimeOf(paths.umbrellas),
+          baseMtime: await mtimeOf(paths.initiatives),
           patches: [
             {
-              fieldPath: ["umbrellas", "synthetic-umbrella", "task_ids"],
+              fieldPath: ["projects", "synthetic-project", "linked_tasks"],
               newValue: ["20", "21"],
             },
           ],
@@ -232,10 +258,15 @@ describe("slug routing — /api/ledger/:slug/… serves every known document (in
     );
     expect(res.status).toBe(200);
 
-    const umbrellas = JSON.parse(await readFile(paths.umbrellas, "utf8")) as {
-      umbrellas: Array<{ id: string; task_ids: string[] }>;
+    const initiatives = JSON.parse(
+      await readFile(paths.initiatives, "utf8"),
+    ) as {
+      initiatives: Array<{ projects: Array<{ id: string; linked_tasks: string[] }> }>;
     };
-    expect(umbrellas.umbrellas[0].task_ids).toEqual(["20", "21"]);
+    expect(initiatives.initiatives[0].projects[0].linked_tasks).toEqual([
+      "20",
+      "21",
+    ]);
     // The LAUNCH document is untouched — the slug routed, it did not alias.
     const taskList = JSON.parse(await readFile(paths.taskList, "utf8")) as {
       tasks: Array<{ id: string }>;
@@ -269,7 +300,7 @@ describe("slug routing — /api/ledger/:slug/… serves every known document (in
 
   test("slug-routed transaction promotes across the directory's ledgers", async () => {
     const paths = await writeAllFour();
-    handle = startPatchServer({ ledgerPath: paths.umbrellas });
+    handle = startPatchServer({ ledgerPath: paths.retro });
 
     const res = await fetch(`${handle.url}/api/ledger/backlog/transaction`, {
       method: "POST",
@@ -305,7 +336,7 @@ describe("slug routing — /api/ledger/:slug/… serves every known document (in
   });
 
   test("a slug whose document is absent from the directory → 404 document-not-found", async () => {
-    // Only the task-list exists — no roadmap sibling.
+    // Only the task-list exists — no initiatives sibling.
     const taskListPath = join(testDir, "task-list.json");
     await writeFile(
       taskListPath,
@@ -314,11 +345,11 @@ describe("slug routing — /api/ledger/:slug/… serves every known document (in
     );
     handle = startPatchServer({ ledgerPath: taskListPath });
 
-    const res = await fetch(`${handle.url}/api/ledger/roadmap`);
+    const res = await fetch(`${handle.url}/api/ledger/initiatives`);
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: string; slug: string };
     expect(body.error).toBe("document-not-found");
-    expect(body.slug).toBe("roadmap");
+    expect(body.slug).toBe("initiatives");
   });
 });
 
@@ -380,14 +411,16 @@ describe("GET /api/health — daemon identity + document registry", () => {
     );
     expect(Object.keys(bySlug).sort()).toEqual([
       "backlog",
-      "roadmap",
+      "initiatives",
+      "retro",
       "task-list",
-      "umbrellas",
     ]);
     expect(bySlug["task-list"].document_name).toBe("Knowledge Hub Task List");
     expect(bySlug["task-list"].path).toBe(resolve(paths.taskList));
-    expect(bySlug["umbrellas"].document_name).toBe("umbrellas");
-    expect(bySlug["umbrellas"].path).toBe(resolve(paths.umbrellas));
+    expect(bySlug["initiatives"].document_name).toBe(
+      "Canonical Platform - Initiatives",
+    );
+    expect(bySlug["initiatives"].path).toBe(resolve(paths.initiatives));
   });
 
   test("lists only the documents actually present in the directory", async () => {
@@ -437,46 +470,52 @@ describe("loopback-only binding unchanged by U9 (inv 55)", () => {
 // the viewer (switcher + editable siblings) to the slug write seam.
 
 describe("editable-ledger-switch — editable switch + slug-routed writes (E2E)", () => {
-  test("launched on task-list, /?ledger=roadmap is EDITABLE with a switcher (no banner)", async () => {
+  test("launched on task-list, /?ledger=initiatives is EDITABLE with a switcher (no banner)", async () => {
     const paths = await writeAllFour();
     handle = startPatchServer({ ledgerPath: paths.taskList });
 
-    const res = await fetch(`${handle.url}/?ledger=roadmap&record=10`);
+    const res = await fetch(`${handle.url}/?ledger=initiatives&record=10`);
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('data-record-kind="roadmap-theme"');
+    expect(html).toContain('data-record-kind="initiative"');
     expect(html).toContain('data-record-id="10"');
     // Switched-to sibling is editable — edit affordances present, banner gone.
     expect(html).toContain("data-edit-action");
     expect(html).not.toContain("data-ledger-banner");
-    // The switcher is mounted, marking roadmap active, with task-list + backlog
-    // as switch targets (all present in the launch directory; umbrellas hidden).
+    // The switcher is mounted, marking initiatives active, with task-list +
+    // backlog as switch targets (all present in the launch directory; retro
+    // has no viewer surface and stays hidden).
     expect(html).toContain("data-ledger-switcher");
-    expect(html).toContain('data-active-ledger="roadmap"');
+    expect(html).toContain('data-active-ledger="initiatives"');
     expect(html).toContain('href="/?ledger=task-list"');
     expect(html).toContain('href="/?ledger=backlog"');
   });
 
-  test("a slug-routed PATCH from the switched-to roadmap lands in roadmap; task-list untouched", async () => {
+  test("a slug-routed PATCH from the switched-to initiatives lands in initiatives; task-list untouched", async () => {
     const paths = await writeAllFour();
     handle = startPatchServer({ ledgerPath: paths.taskList });
 
-    // The client, viewing /?ledger=roadmap, writes via
-    // recordPatchPath(id,"roadmap") → /api/ledger/roadmap/record/10.
-    const res = await fetch(`${handle.url}/api/ledger/roadmap/record/10`, {
-      method: "PATCH",
-      body: JSON.stringify({
-        baseMtime: await mtimeOf(paths.roadmap),
-        patches: [
-          {
-            fieldPath: ["themes", "10", "description"],
-            newValue: "Edited via switch.",
-          },
-        ],
-      }),
-    });
+    // The client, viewing /?ledger=initiatives, writes via
+    // recordPatchPath(id,"initiatives") → /api/ledger/initiatives/record/10.
+    const res = await fetch(
+      `${handle.url}/api/ledger/initiatives/record/10`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          baseMtime: await mtimeOf(paths.initiatives),
+          patches: [
+            {
+              fieldPath: ["initiatives", "10", "description"],
+              newValue: "Edited via switch.",
+            },
+          ],
+        }),
+      },
+    );
     expect(res.status).toBe(200);
-    expect(await readFile(paths.roadmap, "utf8")).toContain("Edited via switch.");
+    expect(await readFile(paths.initiatives, "utf8")).toContain(
+      "Edited via switch.",
+    );
     // The launch ledger (task-list) is untouched — the slug routed, not aliased.
     expect(await readFile(paths.taskList, "utf8")).not.toContain(
       "Edited via switch.",
