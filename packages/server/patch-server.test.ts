@@ -781,6 +781,173 @@ describe("PATCH /api/ledger/record/:recordId — initiatives atomic move (INV-13
   });
 });
 
+// ── ID-148.13 TECH §2 INV-3 status-enum gate, HTTP end-to-end ────────────────
+//
+// Direct HTTP PATCH/POST against the real server — bypassing any CLI —
+// proves the server-side half of INV-3 (the initiatives schema itself is
+// deliberately lenient `z.string()`; the enum is enforced at this gate).
+
+describe("PATCH /api/ledger/record/:recordId — INV-3 status-enum gate (initiatives)", () => {
+  test("rejects an out-of-enum project status with a clean 422 envelope, file unchanged", async () => {
+    const ledger = join(testDir, "initiatives.json");
+    const original = await writeFixtureInitiatives(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record/procurement-project`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        patches: [
+          {
+            fieldPath: ["projects", "procurement-project", "status"],
+            newValue: "not-a-real-status",
+          },
+        ],
+      }),
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { ok: boolean; error: string; detail: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("invalid-status");
+    expect(body.detail).toContain("not-a-real-status");
+
+    // Nothing written — file bytes are unchanged.
+    const stillOnDisk = await readFile(ledger, "utf8");
+    expect(stillOnDisk).toBe(original);
+  });
+
+  test("accepts a valid project status transition", async () => {
+    const ledger = join(testDir, "initiatives.json");
+    await writeFixtureInitiatives(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record/procurement-project`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        patches: [
+          {
+            fieldPath: ["projects", "procurement-project", "status"],
+            newValue: "paused",
+          },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+
+    const updated = JSON.parse(await readFile(ledger, "utf8")) as {
+      initiatives: Array<{ projects: Array<{ id: string; status: string }> }>;
+    };
+    expect(
+      updated.initiatives[0].projects.find((p) => p.id === "procurement-project")?.status,
+    ).toBe("paused");
+  });
+
+  test("rejects an out-of-enum initiative status", async () => {
+    const ledger = join(testDir, "initiatives.json");
+    const original = await writeFixtureInitiatives(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record/10`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        patches: [{ fieldPath: ["initiatives", "10", "status"], newValue: "in-progress" }],
+      }),
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("invalid-status");
+
+    const stillOnDisk = await readFile(ledger, "utf8");
+    expect(stillOnDisk).toBe(original);
+  });
+});
+
+describe("POST /api/ledger/record — INV-3 status-enum gate (initiatives project create)", () => {
+  test("rejects a project create with an out-of-enum status, nothing written", async () => {
+    const ledger = join(testDir, "initiatives.json");
+    const original = await writeFixtureInitiatives(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        record: { id: "bad-status-project", title: "Bad status project", status: "bogus" },
+        initiativePath: "10",
+      }),
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { ok: boolean; error: string; detail: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("invalid-status");
+    expect(body.detail).toContain("bogus");
+
+    const stillOnDisk = await readFile(ledger, "utf8");
+    expect(stillOnDisk).toBe(original);
+  });
+
+  test("accepts a project create with a valid explicit status", async () => {
+    const ledger = join(testDir, "initiatives.json");
+    await writeFixtureInitiatives(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        record: { id: "good-status-project", title: "Good status project", status: "ready" },
+        initiativePath: "10",
+      }),
+    });
+    expect(res.status).toBe(201);
+
+    const updated = JSON.parse(await readFile(ledger, "utf8")) as {
+      initiatives: Array<{ projects: Array<{ id: string; status: string }> }>;
+    };
+    expect(
+      updated.initiatives[0].projects.find((p) => p.id === "good-status-project")?.status,
+    ).toBe("ready");
+  });
+
+  test("accepts a project create with NO explicit status (structural default 'idea' is valid)", async () => {
+    const ledger = join(testDir, "initiatives.json");
+    await writeFixtureInitiatives(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        record: { id: "default-status-project", title: "Default status project" },
+        initiativePath: "10",
+      }),
+    });
+    expect(res.status).toBe(201);
+
+    const updated = JSON.parse(await readFile(ledger, "utf8")) as {
+      initiatives: Array<{ projects: Array<{ id: string; status: string }> }>;
+    };
+    expect(
+      updated.initiatives[0].projects.find((p) => p.id === "default-status-project")?.status,
+    ).toBe("idea");
+  });
+});
+
 // ── §5.1 POST /api/ledger/regen ──────────────────────────────────────────────
 
 describe("POST /api/ledger/regen", () => {

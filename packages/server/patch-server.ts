@@ -92,6 +92,7 @@ import {
   type ApplyPatchesResult,
   type FieldPatch,
 } from "./patch-apply";
+import type { InitiativesDocument } from "@task-view/schemas/initiatives";
 import { atomicWriteFile } from "./atomic-write";
 import {
   escapeSerialise,
@@ -111,6 +112,10 @@ import {
   checkBudgetForCreate,
   createRecordKindFor,
 } from "./gates/budget-gate";
+import {
+  checkStatusEnumForPatches,
+  checkStatusEnumForCreate,
+} from "./gates/status-enum-gate";
 import {
   beforeCollectionIds,
   topLevelCollectionFor,
@@ -849,6 +854,23 @@ async function handlePatchRecord(
     );
   }
 
+  // TECH §2 INV-3 status-enum gate — post-mutation / pre-serialisation,
+  // same hook point as the U2 budget gate below. `initiatives` status
+  // SETs re-validate against PROJECT_STATUSES/INITIATIVE_STATUSES here
+  // (the schema itself is deliberately lenient — see gates/status-enum-gate.ts);
+  // every other kind is a no-op.
+  const statusEnum = checkStatusEnumForPatches(
+    canonical.detected.kind,
+    applyResult.parsed as InitiativesDocument,
+    patches,
+  );
+  if (!statusEnum.ok) {
+    return jsonResponse(
+      { ok: false, error: statusEnum.error, detail: statusEnum.detail },
+      { status: 422 },
+    );
+  }
+
   // ID-90 U2 budget gate — post-mutation / pre-serialisation. Each patched
   // field is a mutated field (can hard-reject); untouched over-budget fields
   // soft-warn (PRODUCT invariants 25–27). U10: `force` arrives as a body
@@ -1190,6 +1212,17 @@ async function handlePostRecord(
         error: result.kind,
         detail: "detail" in result ? result.detail : undefined,
       },
+      { status: 422 },
+    );
+  }
+
+  // TECH §2 INV-3 status-enum gate — create mode, same hook point as the
+  // U2 budget gate below. A no-op for every createKind except "project"
+  // (see gates/status-enum-gate.ts).
+  const statusEnum = checkStatusEnumForCreate(createKind, record);
+  if (!statusEnum.ok) {
+    return jsonResponse(
+      { ok: false, error: statusEnum.error, detail: statusEnum.detail },
       { status: 422 },
     );
   }
