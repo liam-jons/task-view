@@ -1063,6 +1063,317 @@ async function deleteBacklogRecord(button: HTMLElement): Promise<void> {
   }
 }
 
+// ── Initiatives whole-record create / delete / move (ID-148.10 Checker
+//    Finding B) ───────────────────────────────────────────────────────────
+//
+// Same shell discipline as the backlog delete flow above: all business logic
+// lives in the tested pure helpers (edit-dispatch.ts / edit-state.ts) or the
+// server (record-mutate.ts's create defaults + INV-5 non-empty guard,
+// patch-apply.ts's atomic-move semantics); this shell only does DOM + fetch.
+// A dedicated `[data-project-action-error]` banner (parallel to backlog's
+// `[data-delete-error]`) avoids the two dispatchers colliding on one page.
+
+/** Surface a page-level error for a project create/delete/move affordance. */
+function setProjectActionError(anchor: Element, message: string): void {
+  const host = anchor.closest<HTMLElement>("[data-record-kind]") ?? document.body;
+  let el = host.querySelector<HTMLElement>("[data-project-action-error]");
+  if (!el) {
+    el = document.createElement("p");
+    el.setAttribute("data-project-action-error", "");
+    el.setAttribute("role", "alert");
+    el.className = "record-view-inline-error";
+    host.insertBefore(el, host.firstChild);
+  }
+  el.textContent = message;
+}
+
+/**
+ * `[data-project-create-action]` — POST /api/ledger/record with the
+ * caller-supplied slug + title under the enclosing `data-initiative-path`.
+ * Server-side create defaults (`withCreateDefaults`) fill every other
+ * Project field. On success the page reloads — the new project (and every
+ * cross-reference to it) is part of the SAME tree this page renders.
+ */
+async function createProjectRecord(button: HTMLElement): Promise<void> {
+  const form = button.closest<HTMLElement>("[data-project-create-form]");
+  if (!form) return;
+  const initiativePath = form.getAttribute("data-initiative-path");
+  const slugInput = form.querySelector<HTMLInputElement>(
+    "[data-project-create-slug]",
+  );
+  const titleInput = form.querySelector<HTMLInputElement>(
+    "[data-project-create-title]",
+  );
+  const slug = slugInput?.value.trim() ?? "";
+  const title = titleInput?.value.trim() ?? "";
+  if (!initiativePath || slug === "" || title === "") {
+    setProjectActionError(
+      form,
+      "A project needs both a slug and a title.",
+    );
+    return;
+  }
+
+  let base: string;
+  try {
+    base = await ensureBaseMtime();
+  } catch (err) {
+    setProjectActionError(form, `Could not create — ${(err as Error).message}.`);
+    return;
+  }
+
+  let json: unknown;
+  try {
+    const res = await fetch(ledgerRecordCreatePath(activeSlug()), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime: base,
+        record: { id: slug, title },
+        initiativePath,
+      }),
+    });
+    json = await res.json();
+  } catch (err) {
+    setProjectActionError(
+      form,
+      `Could not create — network error: ${(err as Error).message}.`,
+    );
+    return;
+  }
+
+  const outcome = classifySaveResult(json);
+  if (outcome.kind === "ok" || outcome.kind === "mirror-regen-failed") {
+    window.location.reload();
+    return;
+  }
+  if (outcome.kind === "mtime-conflict" && outcome.currentMtime) {
+    adoptMtime(outcome.currentMtime);
+  }
+  setProjectActionError(form, outcome.message);
+}
+
+/** The record-CREATE endpoint — same slug-routing convention as PATCH/DELETE. */
+function ledgerRecordCreatePath(slug: LedgerSlug | undefined): string {
+  return slug ? `/api/ledger/${slug}/record` : "/api/ledger/record";
+}
+
+/**
+ * `[data-project-delete-action]` — DELETE a project by its slug
+ * (`data-project-slug` on the enclosing `ProjectBlock` section). The
+ * server-side INV-5 non-empty guard rejects this with `project-not-empty`
+ * while the project still holds linked_tasks/linked_backlog — surfaced
+ * here as a plain inline message (unlink first via the field pencils).
+ */
+async function deleteProjectRecord(button: HTMLElement): Promise<void> {
+  const host = button.closest<HTMLElement>("[data-project-slug]");
+  const slug = host?.getAttribute("data-project-slug");
+  if (!slug) return;
+
+  const confirmed = await confirmDelete(
+    `Delete project "${slug}"? This cannot be undone.`,
+  );
+  if (!confirmed) return;
+
+  let base: string;
+  try {
+    base = await ensureBaseMtime();
+  } catch (err) {
+    setProjectActionError(button, `Could not delete — ${(err as Error).message}.`);
+    return;
+  }
+
+  let json: unknown;
+  try {
+    const res = await fetch(recordDeletePath(slug, activeSlug()), {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(buildDeleteRequest(base)),
+    });
+    json = await res.json();
+  } catch (err) {
+    setProjectActionError(
+      button,
+      `Could not delete — network error: ${(err as Error).message}.`,
+    );
+    return;
+  }
+
+  const outcome: DeleteOutcome = classifyDeleteResult(json);
+  switch (outcome.kind) {
+    case "ok":
+    case "not-found":
+      window.location.reload();
+      return;
+    case "mtime-conflict":
+      if (outcome.currentMtime) adoptMtime(outcome.currentMtime);
+      setProjectActionError(button, outcome.message);
+      return;
+    case "schema-error":
+    case "network-error":
+      setProjectActionError(button, outcome.message);
+      return;
+  }
+}
+
+/** A tree node shape wide enough to walk without importing the server-side
+ * schema types into the client bundle — mirrors initiatives-tree.ts's
+ * structural TreeNode/TreeDoc duck-typing. */
+interface WalkableProject {
+  id: string;
+  linked_tasks?: unknown;
+  linked_backlog?: unknown;
+}
+interface WalkableNode {
+  projects?: unknown;
+  "sub-initiatives"?: unknown;
+}
+interface WalkableDoc {
+  initiatives?: unknown;
+}
+
+/** Tree-walk-find a project by slug in a freshly-fetched initiatives
+ * document (mirrors `findProjectBySlug` in initiatives-tree.ts — duplicated
+ * here rather than imported so the client bundle never pulls in server
+ * modules; both walks share the SAME recursive shape, "sub-initiatives"
+ * first is irrelevant since a project can live at any depth). */
+function findProjectInDoc(doc: WalkableDoc, slug: string): WalkableProject | null {
+  function walk(node: WalkableNode): WalkableProject | null {
+    const projects = Array.isArray(node.projects)
+      ? (node.projects as WalkableProject[])
+      : [];
+    const hit = projects.find((p) => p.id === slug);
+    if (hit) return hit;
+    const subs = Array.isArray(node["sub-initiatives"])
+      ? (node["sub-initiatives"] as WalkableNode[])
+      : [];
+    for (const sub of subs) {
+      const found = walk(sub);
+      if (found) return found;
+    }
+    return null;
+  }
+  const top = Array.isArray(doc.initiatives)
+    ? (doc.initiatives as WalkableNode[])
+    : [];
+  for (const node of top) {
+    const found = walk(node);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * `[data-move-action]` — atomic re-parent of ONE linked id (INV-13):
+ * fetches the live initiatives document, tree-walks it to find BOTH the
+ * source (this project) and target project's CURRENT array for the given
+ * section, computes the two new arrays, and sends them as ONE PATCH request
+ * (`buildMultiPatchRequest`) — a single gate cycle, record-set delta ∅.
+ */
+async function moveLinkedRecord(button: HTMLElement): Promise<void> {
+  const form = button.closest<HTMLElement>("[data-move-form]");
+  if (!form) return;
+  const section = form.getAttribute("data-move-section");
+  const sourceSlug = form.getAttribute("data-source-slug");
+  if (section !== "linked_tasks" && section !== "linked_backlog") return;
+  if (!sourceSlug) return;
+
+  const idInput = form.querySelector<HTMLInputElement>("[data-move-id]");
+  const targetInput = form.querySelector<HTMLInputElement>("[data-move-target]");
+  const id = idInput?.value.trim() ?? "";
+  const targetSlug = targetInput?.value.trim() ?? "";
+  if (id === "" || targetSlug === "") {
+    setProjectActionError(form, "Move needs both an id and a target project.");
+    return;
+  }
+  if (targetSlug === sourceSlug) {
+    setProjectActionError(form, "Target project must differ from the source.");
+    return;
+  }
+
+  let base: string;
+  try {
+    base = await ensureBaseMtime();
+  } catch (err) {
+    setProjectActionError(form, `Could not move — ${(err as Error).message}.`);
+    return;
+  }
+
+  let doc: WalkableDoc;
+  try {
+    const res = await fetch(ledgerApiPath(activeSlug()), {
+      headers: { accept: "application/json" },
+    });
+    const body = (await res.json()) as { ok?: boolean; data?: unknown };
+    if (!body.ok || typeof body.data !== "object" || body.data === null) {
+      throw new Error("could not read the live ledger");
+    }
+    doc = body.data as WalkableDoc;
+  } catch (err) {
+    setProjectActionError(form, `Could not move — ${(err as Error).message}.`);
+    return;
+  }
+
+  const source = findProjectInDoc(doc, sourceSlug);
+  const target = findProjectInDoc(doc, targetSlug);
+  if (!source) {
+    setProjectActionError(form, `Source project "${sourceSlug}" not found.`);
+    return;
+  }
+  if (!target) {
+    setProjectActionError(form, `Target project "${targetSlug}" not found.`);
+    return;
+  }
+
+  const sourceIds = Array.isArray(source[section])
+    ? (source[section] as string[])
+    : [];
+  const targetIds = Array.isArray(target[section])
+    ? (target[section] as string[])
+    : [];
+  if (!sourceIds.includes(id)) {
+    setProjectActionError(
+      form,
+      `"${id}" is not currently linked on "${sourceSlug}".`,
+    );
+    return;
+  }
+  const newSourceIds = sourceIds.filter((existing) => existing !== id);
+  const newTargetIds = targetIds.includes(id) ? targetIds : [...targetIds, id];
+
+  const patches = [
+    { fieldPath: ["projects", sourceSlug, section], newValue: newSourceIds },
+    { fieldPath: ["projects", targetSlug, section], newValue: newTargetIds },
+  ];
+  const requestBody = buildMultiPatchRequest(patches, base);
+
+  let json: unknown;
+  try {
+    const res = await fetch(recordPatchPath(sourceSlug, activeSlug()), {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(requestBody),
+    });
+    json = await res.json();
+  } catch (err) {
+    setProjectActionError(
+      form,
+      `Could not move — network error: ${(err as Error).message}.`,
+    );
+    return;
+  }
+
+  const outcome = classifySaveResult(json);
+  if (outcome.kind === "ok" || outcome.kind === "mirror-regen-failed") {
+    window.location.reload();
+    return;
+  }
+  if (outcome.kind === "mtime-conflict" && outcome.currentMtime) {
+    adoptMtime(outcome.currentMtime);
+  }
+  setProjectActionError(form, outcome.message);
+}
+
 // ── Delegated listeners ──────────────────────────────────────────────────────
 
 function onClick(event: MouseEvent): void {
@@ -1085,6 +1396,30 @@ function onClick(event: MouseEvent): void {
   if (deleteEl) {
     event.preventDefault();
     void deleteBacklogRecord(deleteEl);
+    return;
+  }
+
+  // ID-148.10 Checker Finding B: initiatives whole-record create/delete/move.
+  const createProjectEl = target.closest<HTMLElement>(
+    "[data-project-create-action]",
+  );
+  if (createProjectEl) {
+    event.preventDefault();
+    void createProjectRecord(createProjectEl);
+    return;
+  }
+  const deleteProjectEl = target.closest<HTMLElement>(
+    "[data-project-delete-action]",
+  );
+  if (deleteProjectEl) {
+    event.preventDefault();
+    void deleteProjectRecord(deleteProjectEl);
+    return;
+  }
+  const moveEl = target.closest<HTMLElement>("[data-move-action]");
+  if (moveEl) {
+    event.preventDefault();
+    void moveLinkedRecord(moveEl);
     return;
   }
 

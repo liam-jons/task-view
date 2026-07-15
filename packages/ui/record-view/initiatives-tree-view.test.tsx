@@ -358,3 +358,63 @@ describe("InitiativesTreeView — nested sub-initiatives (arbitrary depth, INV-1
     expect(html).toContain("No sub-initiatives");
   });
 });
+
+// ── ID-148.10 Checker Finding B: whole-record create/delete/move ────────────
+
+describe("InitiativesTreeView — whole-record create/delete/move (INV-13, OQ2)", () => {
+  test("a top-level initiative's Projects section carries a create-project form addressed to its own path", () => {
+    const initiative = mkInitiative({ id: "4", projects: [] });
+    const ledger = buildLedgerContext({ initiatives: mkInitiativesDoc([initiative]) });
+    const html = renderToStaticMarkup(
+      <InitiativesTreeView initiative={initiative} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain("data-project-create-form");
+    expect(html).toContain('data-initiative-path="4"');
+    expect(html).toContain("data-project-create-slug");
+    expect(html).toContain("data-project-create-title");
+    expect(html).toContain("data-project-create-action");
+  });
+
+  test("a sub-initiative's Projects section carries its OWN create form, addressed by its dotted path", () => {
+    const sub = mkSubInitiative({ id: "2" });
+    const initiative = mkInitiative({ id: "4", "sub-initiatives": [sub] });
+    const ledger = buildLedgerContext({ initiatives: mkInitiativesDoc([initiative]) });
+    const html = renderToStaticMarkup(
+      <InitiativesTreeView initiative={initiative} ledger={ledger} nav={NAV} />,
+    );
+    // Both the top-level (path "4") and the sub-initiative (path "4.2")
+    // forms are present, each addressed to its own node.
+    expect(html).toContain('data-initiative-path="4"');
+    expect(html).toContain('data-initiative-path="4.2"');
+  });
+
+  test("a project carries a delete-project button scoped to its own slug", () => {
+    const project = mkProject({ id: "foundation-project" });
+    const initiative = mkInitiative({ projects: [project] });
+    const ledger = buildLedgerContext({ initiatives: mkInitiativesDoc([initiative]) });
+    const html = renderToStaticMarkup(
+      <InitiativesTreeView initiative={initiative} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain("data-project-delete-action");
+    expect(html).toContain("Delete project foundation-project");
+  });
+
+  test("a project's linked_tasks/linked_backlog sections each carry a move form addressed to the project's own slug", () => {
+    const project = mkProject({ id: "foundation-project", linked_tasks: ["20"] });
+    const initiative = mkInitiative({ projects: [project] });
+    const ledger = buildLedgerContext({
+      initiatives: mkInitiativesDoc([initiative]),
+      tasks: [mkTask("20")],
+    });
+    const html = renderToStaticMarkup(
+      <InitiativesTreeView initiative={initiative} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain("data-move-form");
+    expect(html).toContain('data-move-section="linked_tasks"');
+    expect(html).toContain('data-move-section="linked_backlog"');
+    expect(html).toContain('data-source-slug="foundation-project"');
+    expect(html).toContain("data-move-id");
+    expect(html).toContain("data-move-target");
+    expect(html).toContain("data-move-action");
+  });
+});

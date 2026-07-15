@@ -715,6 +715,72 @@ describe("PATCH /api/ledger/record/:recordId — multi-field save (PRODUCT inv 3
   });
 });
 
+// ── ID-148.10 Checker Finding B: initiatives atomic move (INV-13), E2E ───────
+//
+// The "move" UI affordance composes a 2-field-patch batch — one project's
+// linked_tasks/linked_backlog minus the id, another's plus the id — into a
+// SINGLE PATCH request. Not a dedicated wire-level opcode: the SAME generic
+// multi-field PATCH route (already covered at the pure applyInitiativesPatches
+// level in patch-apply.test.ts) — this proves it end-to-end through the real
+// HTTP server, one gate cycle, record-set delta ∅.
+
+describe("PATCH /api/ledger/record/:recordId — initiatives atomic move (INV-13)", () => {
+  test("a single 2-patch batch re-parents a linked task between two projects atomically", async () => {
+    const ledger = join(testDir, "initiatives.json");
+    await writeFixtureInitiatives(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    // Insert a second, empty-linked target project under initiative 10.
+    const created = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        record: { id: "target-project", title: "Target project" },
+        initiativePath: "10",
+      }),
+    });
+    expect(created.status).toBe(201);
+    const afterCreateMtime = await getLedgerMtime(ledger);
+
+    // "procurement-project" (the fixture) starts with linked_tasks: ["20"].
+    // Move task "20" from procurement-project to target-project — ONE PATCH,
+    // two field-patches.
+    const res = await fetch(`${handle.url}/api/ledger/record/procurement-project`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime: afterCreateMtime,
+        patches: [
+          {
+            fieldPath: ["projects", "procurement-project", "linked_tasks"],
+            newValue: [],
+          },
+          {
+            fieldPath: ["projects", "target-project", "linked_tasks"],
+            newValue: ["20"],
+          },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+
+    const updated = JSON.parse(await readFile(ledger, "utf8")) as {
+      initiatives: Array<{
+        projects: Array<{ id: string; linked_tasks: string[] }>;
+      }>;
+    };
+    const projects = updated.initiatives[0].projects;
+    expect(projects.find((p) => p.id === "procurement-project")?.linked_tasks).toEqual(
+      [],
+    );
+    expect(projects.find((p) => p.id === "target-project")?.linked_tasks).toEqual([
+      "20",
+    ]);
+  });
+});
+
 // ── §5.1 POST /api/ledger/regen ──────────────────────────────────────────────
 
 describe("POST /api/ledger/regen", () => {
@@ -903,6 +969,50 @@ describe("POST /api/ledger/record — record CREATE (ID-20.15)", () => {
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("missing-record");
   });
+
+  // ID-148.10 Checker Finding B: the initiatives create-project UI
+  // affordance's server-side contract (record-mutate.ts's insertRecord +
+  // withCreateDefaults) — the same POST route, exercised E2E for the first
+  // time here (previously only unit-tested).
+  test("creates a project under an addressed initiative with structural defaults", async () => {
+    const ledger = join(testDir, "initiatives.json");
+    await writeFixtureInitiatives(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        record: { id: "new-project", title: "New project" },
+        initiativePath: "10",
+      }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { ok: boolean; recordId: string };
+    expect(body.ok).toBe(true);
+    expect(body.recordId).toBe("new-project");
+
+    const updated = JSON.parse(await readFile(ledger, "utf8")) as {
+      initiatives: Array<{
+        id: string;
+        projects: Array<{
+          id: string;
+          title: string;
+          status: string;
+          linked_tasks: string[];
+        }>;
+      }>;
+    };
+    const initiative = updated.initiatives.find((i) => i.id === "10")!;
+    const created = initiative.projects.find((p) => p.id === "new-project")!;
+    expect(created).toBeDefined();
+    expect(created.title).toBe("New project");
+    // Create defaults (withCreateDefaults) fill every other field:
+    expect(created.status).toBe("idea");
+    expect(created.linked_tasks).toEqual([]);
+  });
 });
 
 // ── ID-20.15 DELETE /api/ledger/record/:recordId — record DELETE ─────────────
@@ -1017,6 +1127,40 @@ describe("DELETE /api/ledger/record/:recordId — record DELETE (ID-20.15)", () 
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("project-not-empty");
     expect(await readFile(ledger, "utf8")).toBe(original);
+  });
+
+  test("deletes an empty project (no linked_tasks/linked_backlog) cleanly", async () => {
+    const ledger = join(testDir, "initiatives.json");
+    await writeFixtureInitiatives(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    // Insert a fresh, empty-linked project, then delete it.
+    const created = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        record: { id: "empty-project", title: "Empty project" },
+        initiativePath: "10",
+      }),
+    });
+    expect(created.status).toBe(201);
+    const afterCreateMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record/empty-project`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseMtime: afterCreateMtime }),
+    });
+    expect(res.status).toBe(200);
+
+    const updated = JSON.parse(await readFile(ledger, "utf8")) as {
+      initiatives: Array<{ projects: Array<{ id: string }> }>;
+    };
+    expect(
+      updated.initiatives[0].projects.map((p) => p.id),
+    ).not.toContain("empty-project");
   });
 });
 

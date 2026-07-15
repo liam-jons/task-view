@@ -22,11 +22,21 @@
  *     kind (the same comma-separated-ids editing convention
  *     `task.dependencies` already uses elsewhere) — editing the list IS
  *     the link/unlink operation.
- *   - Whole-record create / delete / move (INV-13's atomic re-parent) are
- *     server-side capabilities exercised by the canonical CLI ({148.7},
- *     a separate dependent Subtask) — this view's editing surface is
- *     field-level, matching the testStrategy bar ("initiatives UI
- *     renders+edits").
+ *   - Whole-record create / delete / move (INV-13's atomic re-parent) ARE
+ *     wired here (ID-148.10 Checker Finding B — corrects an earlier stale
+ *     comment that wrongly attributed this to `{148.7}`, the CANONICAL
+ *     CLI's dependent Subtask in a DIFFERENT repo; nothing there covers
+ *     THIS view's UI): `CreateProjectForm` posts a caller-supplied slug +
+ *     title under an addressed initiative/sub-initiative path;
+ *     `data-project-delete-action` DELETEs a project by slug (server-side
+ *     INV-5 non-empty guard rejects it while linked_tasks/linked_backlog
+ *     are non-empty); `MoveLinkedRecordForm` composes the atomic 2-patch
+ *     re-parent batch (source array minus the id, target array plus it) in
+ *     ONE PATCH request — not a dedicated wire-level opcode, exactly the
+ *     shape `applyInitiativesPatches`'s "atomic move" test exercises. The
+ *     server write arm these three affordances hit already existed and was
+ *     already tested (`record-mutate.ts`/`patch-apply.ts`); this Subtask's
+ *     surface is the client wiring.
  *
  * Sub-initiatives do NOT carry `linked_tasks`/`linked_backlog` (INV-6 —
  * links are project-only; only the top-level Initiative carries the
@@ -177,6 +187,7 @@ export const InitiativesTreeView: React.FC<{
             <ProjectBlock key={project.id} project={project} ledger={ledger} />
           ))
         )}
+        <CreateProjectForm initiativePath={path} />
       </section>
 
       <section
@@ -263,13 +274,12 @@ const SubInitiativeBlock: React.FC<{
         />
       </div>
 
-      {node.projects.length > 0 && (
-        <div className="record-view-sub-initiative-projects">
-          {node.projects.map((project) => (
-            <ProjectBlock key={project.id} project={project} ledger={ledger} />
-          ))}
-        </div>
-      )}
+      <div className="record-view-sub-initiative-projects">
+        {node.projects.map((project) => (
+          <ProjectBlock key={project.id} project={project} ledger={ledger} />
+        ))}
+        <CreateProjectForm initiativePath={path} />
+      </div>
 
       {node["sub-initiatives"].map((child) => (
         <SubInitiativeBlock
@@ -380,6 +390,7 @@ const ProjectBlock: React.FC<{
           rawValue={project.linked_tasks.join(",")}
           ariaLabel={`Edit linked tasks for project ${slug}`}
         />
+        <MoveLinkedRecordForm section="linked_tasks" sourceSlug={slug} />
       </div>
 
       <div
@@ -404,6 +415,7 @@ const ProjectBlock: React.FC<{
           rawValue={project.linked_backlog.join(",")}
           ariaLabel={`Edit linked backlog for project ${slug}`}
         />
+        <MoveLinkedRecordForm section="linked_backlog" sourceSlug={slug} />
       </div>
 
       {(project.blocked_by.length > 0 || project.blocking.length > 0) && (
@@ -421,9 +433,109 @@ const ProjectBlock: React.FC<{
         </p>
       )}
 
+      {/* Whole-record delete (INV-5's non-empty guard rejects this
+          server-side while linked_tasks/linked_backlog are non-empty —
+          unlink first via the FieldPencils above). Mirrors the
+          data-delete-action convention backlog-item-view.tsx established,
+          scoped to this project's own hook name so the two dispatchers
+          never collide. */}
+      <div className="record-view-record-actions">
+        <button
+          type="button"
+          className="record-view-delete-button"
+          data-project-delete-action
+          aria-label={`Delete project ${slug}`}
+        >
+          Delete this project
+        </button>
+      </div>
     </section>
   );
 };
+
+/**
+ * A minimal atomic-move affordance (INV-13): re-parent ONE linked task/
+ * backlog id from THIS project to another project's SAME section, as a
+ * single 2-field-patch PATCH request (source array minus the id, target
+ * array plus the id) — not a dedicated wire-level opcode, exactly the
+ * shape `applyInitiativesPatches`'s "atomic move (two-project batch)" test
+ * exercises. The target project may be addressed by slug ANYWHERE in the
+ * SAME initiatives.json (any top-level initiative, not just this page) —
+ * the client dispatcher fetches the live document fresh and tree-walks it
+ * to find both projects' current arrays before composing the patch, so a
+ * target off this page still resolves correctly.
+ */
+const MoveLinkedRecordForm: React.FC<{
+  section: "linked_tasks" | "linked_backlog";
+  sourceSlug: string;
+}> = ({ section, sourceSlug }) => {
+  const label = section === "linked_tasks" ? "task" : "backlog item";
+  return (
+    <form
+      className="record-view-move-form"
+      data-move-form
+      data-move-section={section}
+      data-source-slug={sourceSlug}
+    >
+      <label>
+        {`Move ${label} ID`}
+        <input type="text" data-move-id aria-label={`Move ${label} id`} />
+      </label>
+      <label>
+        To project (slug)
+        <input
+          type="text"
+          data-move-target
+          aria-label={`Move ${label} to project slug`}
+        />
+      </label>
+      <button type="button" data-move-action>
+        Move
+      </button>
+    </form>
+  );
+};
+
+/**
+ * Whole-record project CREATE (INV-13): a minimal id (globally-unique
+ * kebab slug) + title form. `record-create`'s structural defaults
+ * (`withCreateDefaults`) fill in every other Project field server-side —
+ * `id`/`title` are the only two the schema requires with no inherent
+ * empty value. `initiativePath` addresses the parent node this project
+ * inserts under (a top-level initiative id or a dotted sub-initiative
+ * path) — the enclosing `<section>`/`<div>` always supplies its OWN path.
+ */
+const CreateProjectForm: React.FC<{ initiativePath: string }> = ({
+  initiativePath,
+}) => (
+  <form
+    className="record-view-project-create-form"
+    data-project-create-form
+    data-initiative-path={initiativePath}
+  >
+    <label>
+      New project slug
+      <input
+        type="text"
+        data-project-create-slug
+        aria-label="New project slug"
+        required
+      />
+    </label>
+    <label>
+      Title
+      <input
+        type="text"
+        data-project-create-title
+        aria-label="New project title"
+        required
+      />
+    </label>
+    <button type="button" data-project-create-action>
+      Add project
+    </button>
+  </form>
+);
 
 /**
  * Render one of a project's (or the transitional initiative-level)
