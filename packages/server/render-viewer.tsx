@@ -14,10 +14,13 @@
  *
  * ID-148.10 (repurposed roadmap arm, TECH §3.1(c)): the nested initiatives
  * tree (`initiatives[]` -> `projects[]` + recursive `sub-initiatives[]`) is
- * rendered ONE top-level initiative per page (INV-9) — a record param
- * resolves to a TOP-LEVEL initiative id; the full nested tree (its own
- * sub-initiatives + all projects at any depth) renders inline within that
- * one page, editable (OQ2).
+ * rendered ONE top-level initiative per page (INV-9) — a record param may be
+ * a bare top-level initiative id, a dotted sub-initiative path, or a
+ * project's globally-unique slug (any depth); `resolveTopLevelInitiativeIdForRecordId`
+ * (the same tree-walk helper the mutate/patch/mirror arms use) resolves it
+ * to its OWNING top-level initiative, and the full nested tree (sub-initiatives
+ * + all projects at any depth) renders inline within that one page, editable
+ * (OQ2).
  *
  * Backlog mode honours PRODUCT inv 23 — `?track=…&status=…&priority=…`
  * query-string filter state is decoded via the canonical
@@ -57,6 +60,10 @@ import { ThemePicker } from "@task-view/ui/record-view/theme-picker";
 import { LedgerSwitcher } from "@task-view/ui/record-view/ledger-switcher";
 import type { LedgerSlug } from "@task-view/ui/record-view/anchors";
 import type { DetectSchemaResult } from "./detect-schema";
+import {
+  resolveTopLevelInitiativeIdForRecordId,
+  type TreeDoc,
+} from "./initiatives-tree";
 import type { InitiativesDocument } from "@task-view/schemas/initiatives";
 import type {
   Task,
@@ -317,10 +324,20 @@ function renderBody({
   });
   const initiatives = detected.data.initiatives;
 
-  // INV-9: a record param always resolves to a TOP-LEVEL initiative — the
-  // full nested tree (sub-initiatives + every project at any depth) renders
-  // inline within that one page (see InitiativesTreeView).
-  const initiative = initiatives.find((i) => i.id === recordParam);
+  // INV-9: a record param always resolves to a TOP-LEVEL initiative page —
+  // the full nested tree (sub-initiatives + every project at any depth)
+  // renders inline within that one page (see InitiativesTreeView). The
+  // param itself may be a bare top-level id, a dotted sub-initiative path,
+  // or a project's globally-unique slug (any depth) — resolve via the SAME
+  // tree-walk helper the mutate/patch/mirror arms use so this can never
+  // drift on which top-level initiative a nested node belongs to.
+  const topLevelId = resolveTopLevelInitiativeIdForRecordId(
+    detected.data as unknown as TreeDoc,
+    recordParam,
+  );
+  const initiative = topLevelId
+    ? initiatives.find((i) => i.id === topLevelId)
+    : undefined;
   if (!initiative) return renderNotFound("initiative", recordParam);
   const nav = computeInitiativeNav(initiatives, initiative, activeSlug);
   return {

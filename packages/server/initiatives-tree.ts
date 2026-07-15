@@ -240,3 +240,22 @@ export function resolveRecordId(
   if (location) return { kind: "project", location };
   return { kind: "not-found" };
 }
+
+/**
+ * Resolve the TOP-LEVEL initiative id that owns a given `recordId` — a
+ * project slug OR an initiative/sub-initiative dotted path. Shared by
+ * `mirror-generator.ts`-scoping callers (`patch-server.ts`'s mirror-filename
+ * resolution) and `render-viewer.tsx`'s SSR `?record=` dispatch (INV-9: one
+ * page/mirror per top-level initiative, not per project or per
+ * sub-initiative) — a single implementation so the two paths can never
+ * drift on which top-level initiative a nested node belongs to.
+ */
+export function resolveTopLevelInitiativeIdForRecordId(
+  doc: TreeDoc,
+  recordId: string,
+): string | null {
+  const asPath = recordId.split(".")[0];
+  if (resolveInitiativeNode(doc, asPath)) return asPath;
+  const located = findProjectBySlug(doc, recordId);
+  return located ? located.topLevelInitiativeId : null;
+}

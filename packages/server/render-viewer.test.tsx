@@ -416,6 +416,59 @@ describe("renderViewer — sibling render is editable (editable-ledger-switch §
     expect(html).toContain('data-record-kind="not-found"');
   });
 
+  // Regression (ID-148.10 Checker Finding A): the reverse "Appears in
+  // projects" backlink emits `?record=<project-slug>` — this proves the
+  // dispatch resolves it to the OWNING top-level initiative's page (INV-9)
+  // instead of 404ing on the literal top-level-id-only `.find()` that used
+  // to run here.
+  test("?record=<project-slug> resolves to the OWNING top-level initiative's page (INV-9)", () => {
+    const { status, html } = renderViewer({
+      detected: INITIATIVES_WITH_PROJECT,
+      search: new URLSearchParams("record=procurement-project"),
+    });
+    expect(status).toBe(200);
+    expect(html).toContain('data-record-kind="initiative"');
+    expect(html).toContain('data-record-id="10"');
+    expect(html).toContain("Procurement intelligence");
+    expect(html).toContain('data-project-slug="procurement-project"');
+  });
+
+  test("?record=<dotted sub-initiative path> also resolves to the OWNING top-level initiative's page", () => {
+    const withSub: KnownDetected = {
+      kind: "initiatives",
+      data: {
+        ...(INITIATIVES_WITH_PROJECT as { data: Record<string, unknown> })
+          .data,
+        initiatives: [
+          {
+            ...(INITIATIVES_WITH_PROJECT as {
+              data: { initiatives: [Record<string, unknown>] };
+            }).data.initiatives[0],
+            "sub-initiatives": [
+              {
+                id: "1",
+                title: "Sub one",
+                description: "Sub description.",
+                status: "planned",
+                projects: [],
+                originating_session: [],
+                "sub-initiatives": [],
+              },
+            ],
+          },
+        ],
+      },
+    } as unknown as KnownDetected;
+    const { status, html } = renderViewer({
+      detected: withSub,
+      search: new URLSearchParams("record=10.1"),
+    });
+    expect(status).toBe(200);
+    expect(html).toContain('data-record-kind="initiative"');
+    expect(html).toContain('data-record-id="10"');
+    expect(html).toContain('data-sub-initiative-path="10.1"');
+  });
+
   test("no page mounts a read-only ledger banner (banner removed)", () => {
     const { html } = renderViewer({
       detected: TASK_LIST_WITH_TASK,

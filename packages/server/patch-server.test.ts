@@ -1425,6 +1425,16 @@ describe("GET / — reverse appears-in-projects backlinks ({20.30}, ID-148.10)",
     );
     expect(html).toContain('data-cross-ledger="initiatives"');
     expect(html).toContain("project procurement-project: Procurement project");
+    // Regression (ID-148.10 Checker Finding A): prove the emitted href
+    // actually RESOLVES — a project-slug record param used to 404 because
+    // the initiatives dispatch only matched bare top-level ids.
+    const followed = await fetch(
+      `${handle.url}/?ledger=initiatives&record=procurement-project`,
+    );
+    expect(followed.status).toBe(200);
+    const followedHtml = await followed.text();
+    expect(followedHtml).toContain('data-record-kind="initiative"');
+    expect(followedHtml).toContain('data-record-id="10"');
   });
 
   test("launched on backlog WITHOUT an initiatives sibling → no backlink row", async () => {
@@ -1454,6 +1464,12 @@ describe("GET / — reverse appears-in-projects backlinks ({20.30}, ID-148.10)",
     expect(html).toContain(
       'href="/?ledger=initiatives&amp;record=procurement-project"',
     );
+    // Regression (ID-148.10 Checker Finding A): the emitted href resolves.
+    const followed = await fetch(
+      `${handle.url}/?ledger=initiatives&record=procurement-project`,
+    );
+    expect(followed.status).toBe(200);
+    expect(await followed.text()).toContain('data-record-id="10"');
   });
 });
 

@@ -128,8 +128,7 @@ import {
 import { promoteTransaction } from "./ledger-transaction";
 import {
   resolveRecordId,
-  findProjectBySlug,
-  resolveInitiativeNode,
+  resolveTopLevelInitiativeIdForRecordId,
   type TreeDoc,
 } from "./initiatives-tree";
 import { withPathLock, withPathLocks } from "./path-mutex";
@@ -320,22 +319,6 @@ function computeMirrorFilename(
   }
   // backlog-item
   return computeRecordFilename("backlog", { id: recordId });
-}
-
-/**
- * Resolve the TOP-LEVEL initiative id that owns a given `recordId` (a
- * project slug OR an initiative/sub-initiative dotted path) — mirrors
- * `mirror-generator.ts`'s internal `resolveTopLevelInitiativeId` disambig
- * order (path first, then project-slug tree-search).
- */
-function resolveTopLevelInitiativeIdForRecordId(
-  doc: TreeDoc,
-  recordId: string,
-): string | null {
-  const asPath = recordId.split(".")[0];
-  if (resolveInitiativeNode(doc, asPath)) return asPath;
-  const located = findProjectBySlug(doc, recordId);
-  return located ? located.topLevelInitiativeId : null;
 }
 
 // ID-90 U1: the former `serialiseLedger` (`JSON.stringify(detected.data,
