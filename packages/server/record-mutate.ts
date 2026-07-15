@@ -50,6 +50,7 @@ import { ZodError } from "zod";
 import type { DetectSchemaResult } from "./detect-schema";
 import {
   allProjectSlugs,
+  findProjectBySlug,
   insertProjectAt,
   removeProjectBySlug,
   type TreeDoc,
@@ -78,7 +79,12 @@ export type RecordMutateResult =
   | { ok: false; kind: "duplicate-id"; recordId: string }
   | { ok: false; kind: "record-not-found"; recordId: string }
   | { ok: false; kind: "schema-error"; zodError: ZodError }
-  | { ok: false; kind: "invalid-body"; detail: string };
+  | { ok: false; kind: "invalid-body"; detail: string }
+  /** DELETE only, initiatives kind (TECH §2 INV-5): a project still holding
+   * `linked_tasks`/`linked_backlog` is rejected rather than silently
+   * orphaning those cross-ledger references. Unlink first (edit the
+   * project's linked_tasks/linked_backlog fields to empty), then delete. */
+  | { ok: false; kind: "project-not-empty"; recordId: string };
 
 // ── id extraction ─────────────────────────────────────────────────────────────
 
@@ -280,6 +286,29 @@ export function removeRecord(
   recordId: string,
 ): RecordMutateResult {
   if (detected.kind === "initiatives") {
+    // TECH §2 INV-5 non-empty guard: reject a delete on a project that
+    // still holds linked_tasks/linked_backlog rather than silently
+    // orphaning those cross-ledger references. Checked on the PRE-mutation
+    // document (before the clone/splice below).
+    const located = findProjectBySlug(
+      detected.data as unknown as TreeDoc,
+      recordId,
+    );
+    if (located) {
+      const project = located.project as {
+        linked_tasks?: unknown;
+        linked_backlog?: unknown;
+      };
+      const linkedTasks = Array.isArray(project.linked_tasks)
+        ? project.linked_tasks
+        : [];
+      const linkedBacklog = Array.isArray(project.linked_backlog)
+        ? project.linked_backlog
+        : [];
+      if (linkedTasks.length > 0 || linkedBacklog.length > 0) {
+        return { ok: false, kind: "project-not-empty", recordId };
+      }
+    }
     const rawClone = structuredClone(detected.data) as Record<
       string,
       unknown

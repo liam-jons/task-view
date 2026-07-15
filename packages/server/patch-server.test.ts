@@ -998,6 +998,26 @@ describe("DELETE /api/ledger/record/:recordId — record DELETE (ID-20.15)", () 
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("missing-baseMtime");
   });
+
+  // TECH §2 INV-5 non-empty guard (ID-148.10 Checker Finding B) — E2E.
+  test("returns 422 project-not-empty for a project still holding linked_tasks; nothing written", async () => {
+    const ledger = join(testDir, "initiatives.json");
+    const original = await writeFixtureInitiatives(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    // "procurement-project" (the writeFixtureInitiatives fixture) carries
+    // linked_tasks: ["20"].
+    const res = await fetch(`${handle.url}/api/ledger/record/procurement-project`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseMtime }),
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("project-not-empty");
+    expect(await readFile(ledger, "utf8")).toBe(original);
+  });
 });
 
 // ── ID-20.15 POST /api/ledger/transaction — cross-ledger Promote ─────────────

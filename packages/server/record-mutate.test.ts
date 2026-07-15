@@ -824,6 +824,46 @@ describe("removeRecord — initiatives nested project removal by slug (INV-13)",
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.kind).toBe("record-not-found");
   });
+
+  // TECH §2 INV-5 non-empty guard (ID-148.10 Checker Finding B).
+  test("rejects project-not-empty when linked_tasks is non-empty; nothing removed", () => {
+    const withLinked = insertRecord(
+      detectInitiatives(),
+      { ...newProject("linked-project"), linked_tasks: ["20"] },
+      "1",
+    );
+    expect(withLinked.ok).toBe(true);
+    if (!withLinked.ok || withLinked.detected.kind !== "initiatives") return;
+    const result = removeRecord(withLinked.detected, "linked-project");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.kind).toBe("project-not-empty");
+    // Untouched — the project is still present.
+    expect(
+      withLinked.detected.data.initiatives[0].projects.map((p) => p.id),
+    ).toContain("linked-project");
+  });
+
+  test("rejects project-not-empty when linked_backlog is non-empty", () => {
+    const withLinked = insertRecord(
+      detectInitiatives(),
+      { ...newProject("linked-backlog-project"), linked_backlog: ["101"] },
+      "1",
+    );
+    expect(withLinked.ok).toBe(true);
+    if (!withLinked.ok || withLinked.detected.kind !== "initiatives") return;
+    const result = removeRecord(withLinked.detected, "linked-backlog-project");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.kind).toBe("project-not-empty");
+  });
+
+  test("an empty project (both arrays empty) still removes cleanly", () => {
+    // Regression guard: the non-empty check must not false-positive on the
+    // ordinary empty-links case (already covered above, but pinned here
+    // explicitly against the new guard code path).
+    const detected = detectInitiatives();
+    const result = removeRecord(detected, "existing-project");
+    expect(result.ok).toBe(true);
+  });
 });
 
 describe("removeSubtask — subtask DELETE (ID-90.9 U5)", () => {
