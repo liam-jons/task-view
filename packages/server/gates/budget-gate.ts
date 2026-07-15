@@ -43,6 +43,7 @@ import type { InitiativesDocument } from "@task-view/schemas/initiatives";
 import type { BacklogDocument } from "@task-view/schemas/backlog";
 import type { RetrosDocument } from "@task-view/schemas/retro";
 import type { FieldPatch } from "../patch-apply";
+import type { CreateRecordKind } from "../record-mutate";
 import {
   findProjectBySlug,
   resolveInitiativeNode,
@@ -429,8 +430,11 @@ export function checkBudgetForCreate(
 /** Map a detected document kind to the registry record-kind a whole-record
  * CREATE on that ledger budgets against. ID-148.10: `initiatives` always
  * creates a `project` (INV-13 — only projects are whole-record-created via
- * this generic path; initiatives/sub-initiatives are not). */
-export function createRecordKindFor(kind: KnownKind): LedgerRecordKind {
+ * this generic path; initiatives/sub-initiatives are not). Return type is
+ * `CreateRecordKind` (the strict subset of `LedgerRecordKind` this function
+ * ever actually returns) — it feeds `withCreateDefaults` directly at the
+ * sole call site (`patch-server.ts`), which requires that narrower type. */
+export function createRecordKindFor(kind: KnownKind): CreateRecordKind {
   if (kind === "task-list") return "task";
   if (kind === "initiatives") return "project";
   // WS-C C2: retro creates budget against the empty `retro` registry entry
