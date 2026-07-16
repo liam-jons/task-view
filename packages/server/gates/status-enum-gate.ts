@@ -122,18 +122,20 @@ export function checkStatusEnumForPatches(
 /**
  * CREATE-hook entry point (post-mutation / pre-serialisation) — call
  * alongside `checkBudgetForCreate` with the SAME create-defaulted `record`.
- * `createRecordKindFor("initiatives")` always returns `"project"` (INV-13 —
- * only projects are whole-record-created via the generic create path;
- * initiatives/sub-initiatives are not), so a create-mode check only ever
- * validates against `PROJECT_STATUSES`.
+ * `createRecordKindFor("initiatives", …)` returns either `"project"` or
+ * `"initiative"` (ID-156.8 — the two addressable initiatives node shapes,
+ * INV-13); every other createKind is a no-op here (their schemas already
+ * hard-`.enum()` status at the final `.parse()` inside `insertRecord`).
  */
 export function checkStatusEnumForCreate(
   createKind: CreateRecordKind,
   record: Record<string, unknown>,
 ): StatusEnumGateOutcome {
-  if (createKind !== "project") return { ok: true };
-  if (!isValidStatus("project", record.status)) {
-    return invalidStatusOutcome("project", record.status);
+  if (createKind !== "project" && createKind !== "initiative") {
+    return { ok: true };
+  }
+  if (!isValidStatus(createKind, record.status)) {
+    return invalidStatusOutcome(createKind, record.status);
   }
   return { ok: true };
 }

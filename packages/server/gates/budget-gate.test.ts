@@ -15,6 +15,7 @@ import {
   checkBudget,
   checkBudgetForPatches,
   checkBudgetForCreate,
+  createRecordKindFor,
   type BudgetGate,
 } from "./budget-gate";
 import type { TaskList, Task } from "@task-view/schemas/task-list";
@@ -670,5 +671,33 @@ describe("multi-violation enumeration (ID-90.12 U10)", () => {
       );
       expect(outcome.detail).not.toContain("; ");
     }
+  });
+});
+
+// ── createRecordKindFor (ID-156.8) ────────────────────────────────────────────
+
+describe("createRecordKindFor", () => {
+  test("maps task-list to task, backlog to item, retro to retro", () => {
+    expect(createRecordKindFor("task-list")).toBe("task");
+    expect(createRecordKindFor("backlog")).toBe("item");
+    expect(createRecordKindFor("retro")).toBe("retro");
+  });
+
+  test("initiatives defaults to project when no nodeKind is requested", () => {
+    expect(createRecordKindFor("initiatives")).toBe("project");
+  });
+
+  test("initiatives resolves to project when nodeKind is explicitly 'project'", () => {
+    expect(createRecordKindFor("initiatives", "project")).toBe("project");
+  });
+
+  test("initiatives resolves to initiative when nodeKind is 'initiative'", () => {
+    expect(createRecordKindFor("initiatives", "initiative")).toBe(
+      "initiative",
+    );
+  });
+
+  test("a non-initiatives kind ignores the nodeKind param", () => {
+    expect(createRecordKindFor("task-list", "initiative")).toBe("task");
   });
 });

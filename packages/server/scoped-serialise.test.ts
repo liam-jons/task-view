@@ -778,6 +778,105 @@ describe("scopedSpliceSerialise — insert/remove byte stability", () => {
     expect(r.kind).toBe("walk-error");
   });
 
+  // ID-156.8: "parent-or-root" initiative/sub-initiative INSERT — the
+  // OTHER addressable initiatives node shape (create-only; no remove
+  // support is wired for this collection).
+  test("initiatives: a new TOP-LEVEL initiative inserts at root when initiativePath is absent", () => {
+    const original = escapeSerialise(initiativesFixtureDoc());
+    const record = {
+      id: "999910",
+      title: "New top-level",
+      description: "",
+      status: "proposed",
+      projects: [],
+      originating_session: [],
+      "sub-initiatives": [],
+    };
+
+    const inserted = scopedSpliceSerialise(original, {
+      kind: "insert",
+      collection: "initiatives",
+      record,
+    });
+    expect(inserted.ok).toBe(true);
+    if (!inserted.ok) return;
+    expect(inserted.kind).toBe("initiatives");
+    expect(inserted.text).toContain('"id": "999910"');
+    const parsed = JSON.parse(inserted.text) as { initiatives: { id: string }[] };
+    expect(parsed.initiatives.map((i) => i.id)).toEqual(["10", "11", "999910"]);
+  });
+
+  test("initiatives: a new sub-initiative inserts under an existing TOP-LEVEL initiativePath", () => {
+    const original = escapeSerialise(initiativesFixtureDoc());
+    const record = {
+      id: "5",
+      title: "New sub under 10",
+      description: "",
+      status: "proposed",
+      projects: [],
+      originating_session: [],
+      "sub-initiatives": [],
+    };
+
+    const inserted = scopedSpliceSerialise(original, {
+      kind: "insert",
+      collection: "initiatives",
+      initiativePath: "10",
+      record,
+    });
+    expect(inserted.ok).toBe(true);
+    if (!inserted.ok) return;
+    const parsed = JSON.parse(inserted.text) as {
+      initiatives: { id: string; "sub-initiatives": { id: string }[] }[];
+    };
+    expect(
+      parsed.initiatives.find((i) => i.id === "10")?.["sub-initiatives"].map((s) => s.id),
+    ).toEqual(["5"]);
+  });
+
+  test("initiatives: a new sub-sub-initiative inserts under an existing NESTED initiativePath", () => {
+    const original = escapeSerialise(initiativesFixtureDoc());
+    const record = {
+      id: "9",
+      title: "New sub-sub under 11.1",
+      description: "",
+      status: "proposed",
+      projects: [],
+      originating_session: [],
+      "sub-initiatives": [],
+    };
+
+    const inserted = scopedSpliceSerialise(original, {
+      kind: "insert",
+      collection: "initiatives",
+      initiativePath: "11.1",
+      record,
+    });
+    expect(inserted.ok).toBe(true);
+    if (!inserted.ok) return;
+    const parsed = JSON.parse(inserted.text) as {
+      initiatives: {
+        id: string;
+        "sub-initiatives": { id: string; "sub-initiatives": { id: string }[] }[];
+      }[];
+    };
+    const sub11 = parsed.initiatives.find((i) => i.id === "11")?.["sub-initiatives"][0];
+    expect(sub11?.["sub-initiatives"].map((s) => s.id)).toEqual(["9"]);
+  });
+
+  test("initiatives: an unresolvable initiativePath is a walk-error", () => {
+    const original = escapeSerialise(initiativesFixtureDoc());
+    const r = scopedSpliceSerialise(original, {
+      kind: "insert",
+      collection: "initiatives",
+      initiativePath: "999",
+      record: { id: "x" },
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.kind).toBe("walk-error");
+  });
+
   test("backlog items insert -> remove round-trips byte-identically", () => {
     const original = escapeSerialise(backlogFixtureDoc());
     const doc = backlogFixtureDoc();

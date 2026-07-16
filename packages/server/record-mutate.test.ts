@@ -807,6 +807,139 @@ describe("insertRecord — initiatives nested project insert (INV-13)", () => {
   });
 });
 
+function newInitiative(id: string) {
+  return {
+    id,
+    title: "New initiative",
+    description: "d",
+    status: "proposed",
+    projects: [],
+    originating_session: [],
+    "sub-initiatives": [],
+  };
+}
+
+// ID-156.8: "parent-or-root" initiative/sub-initiative CREATE — the second
+// insertRecord nodeKind, alongside the default "project" (INV-13).
+describe("insertRecord — initiatives nested initiative insert, nodeKind 'initiative' (ID-156.8)", () => {
+  test("inserts a new TOP-LEVEL initiative when parentPath is absent", () => {
+    const result = insertRecord(
+      detectInitiatives(),
+      newInitiative("6"),
+      undefined,
+      "initiative",
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok && result.detected.kind === "initiatives") {
+      expect(result.detected.data.initiatives.map((i) => i.id)).toEqual([
+        "1",
+        "4",
+        "6",
+      ]);
+    }
+  });
+
+  test("inserts a new sub-initiative under an existing top-level parentPath", () => {
+    const result = insertRecord(
+      detectInitiatives(),
+      newInitiative("3"),
+      "1",
+      "initiative",
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok && result.detected.kind === "initiatives") {
+      const subs = result.detected.data.initiatives[0]["sub-initiatives"];
+      expect(subs.map((s) => s.id)).toEqual(["3"]);
+    }
+  });
+
+  test("inserts a new sub-sub-initiative under an existing nested parentPath", () => {
+    const result = insertRecord(
+      detectInitiatives(),
+      newInitiative("9"),
+      "4.2",
+      "initiative",
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok && result.detected.kind === "initiatives") {
+      const subSub =
+        result.detected.data.initiatives[1]["sub-initiatives"][0][
+          "sub-initiatives"
+        ];
+      expect(subSub.map((s) => s.id)).toEqual(["9"]);
+    }
+  });
+
+  test("rejects with invalid-body when parentPath does not resolve", () => {
+    const result = insertRecord(
+      detectInitiatives(),
+      newInitiative("x"),
+      "999",
+      "initiative",
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.kind).toBe("invalid-body");
+  });
+
+  test("rejects a duplicate id among TOP-LEVEL siblings", () => {
+    const result = insertRecord(
+      detectInitiatives(),
+      newInitiative("4"),
+      undefined,
+      "initiative",
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.kind).toBe("duplicate-id");
+      if (result.kind === "duplicate-id") expect(result.recordId).toBe("4");
+    }
+  });
+
+  test("rejects a duplicate id among SUB-initiative siblings under the same parent", () => {
+    const withOne = insertRecord(
+      detectInitiatives(),
+      newInitiative("3"),
+      "1",
+      "initiative",
+    );
+    expect(withOne.ok).toBe(true);
+    if (!withOne.ok || withOne.detected.kind !== "initiatives") return;
+    const result = insertRecord(
+      withOne.detected,
+      newInitiative("3"),
+      "1",
+      "initiative",
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.kind).toBe("duplicate-id");
+  });
+
+  test("allows the SAME bare id at UNRELATED tree positions (locally-unique only)", () => {
+    // Fixture already carries top-level id "4" — inserting a sub-initiative
+    // "4" under top-level "1" is a DIFFERENT tree position and must not
+    // collide (INV-13: initiative/sub-initiative ids are siblings-only
+    // unique, unlike a project's globally-unique slug).
+    const result = insertRecord(
+      detectInitiatives(),
+      newInitiative("4"),
+      "1",
+      "initiative",
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  test("surfaces a schema-error for a malformed initiative body", () => {
+    const result = insertRecord(
+      detectInitiatives(),
+      { ...newInitiative("bad"), projects: "not-an-array" },
+      undefined,
+      "initiative",
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.kind).toBe("schema-error");
+  });
+});
+
 describe("removeRecord — initiatives nested project removal by slug (INV-13)", () => {
   test("removes a project directly under a top-level initiative", () => {
     const detected = detectInitiatives();

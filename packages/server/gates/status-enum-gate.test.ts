@@ -189,7 +189,7 @@ describe("checkStatusEnumForPatches", () => {
 // ── checkStatusEnumForCreate ─────────────────────────────────────────────────
 
 describe("checkStatusEnumForCreate", () => {
-  test("no-op for non-project createKinds", () => {
+  test("no-op for non-project/non-initiative createKinds", () => {
     for (const kind of ["subtask", "task", "item", "retro"] as const) {
       const outcome = checkStatusEnumForCreate(kind, { status: "not-a-real-status" });
       expect(outcome.ok).toBe(true);
@@ -213,6 +213,29 @@ describe("checkStatusEnumForCreate", () => {
     if (!outcome.ok) {
       expect(outcome.error).toBe("invalid-status");
       expect(outcome.detail).toContain("bogus-status");
+    }
+  });
+
+  // ID-156.8: the "initiative" createKind (a new top-level initiative or
+  // sub-initiative) validates against INITIATIVE_STATUSES, distinct from
+  // the "project" createKind's PROJECT_STATUSES.
+  test("accepts a valid initiative create status", () => {
+    const outcome = checkStatusEnumForCreate("initiative", {
+      id: "6",
+      status: "proposed",
+    });
+    expect(outcome.ok).toBe(true);
+  });
+
+  test("rejects an out-of-enum initiative create status", () => {
+    const outcome = checkStatusEnumForCreate("initiative", {
+      id: "6",
+      status: "idea",
+    });
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.error).toBe("invalid-status");
+      expect(outcome.detail).toContain("idea");
     }
   });
 });

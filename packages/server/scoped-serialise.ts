@@ -370,11 +370,18 @@ export function scopedSerialise(
 // + bytes. This is the foundation primitive for scoped creates/promotes — the
 // whole-file oracle (record-mutate.ts) stays the schema-validation oracle.
 
-/** Top-level record collections, keyed per ledger kind. `projects` (ID-148.10)
- * is NOT actually top-level — see `resolveSpliceCollection`'s tree-walk
- * branch — but is kept in this union so `SpliceOp.collection` stays a single
+/** Top-level record collections, keyed per ledger kind. `projects`
+ * (ID-148.10) and `initiatives` (ID-156.8) are NOT actually top-level arrays
+ * addressed by name — see `resolveSpliceCollection`'s tree-walk branches —
+ * but are kept in this union so `SpliceOp.collection` stays a single
  * discriminant across all kinds. */
-type SpliceCollection = "tasks" | "items" | "retros" | "subtasks" | "projects";
+type SpliceCollection =
+  | "tasks"
+  | "items"
+  | "retros"
+  | "subtasks"
+  | "projects"
+  | "initiatives";
 
 /**
  * A record-level splice operation against a parsed-original ledger.
@@ -384,12 +391,19 @@ type SpliceCollection = "tasks" | "items" | "retros" | "subtasks" | "projects";
  *     `subtasks[]` receives the record. For `collection: 'projects'`
  *     (ID-148.10, INV-13), `initiativePath` addresses the initiative/
  *     sub-initiative whose `projects[]` receives the record (REQUIRED on
- *     insert — there is no "top-level projects[]" to fall back to).
+ *     insert — there is no "top-level projects[]" to fall back to). For
+ *     `collection: 'initiatives'` (ID-156.8, "parent-or-root"),
+ *     `initiativePath` is OPTIONAL — absent/empty inserts a new TOP-LEVEL
+ *     initiative onto the document's own `initiatives[]`; present, it
+ *     addresses the initiative/sub-initiative whose `sub-initiatives[]`
+ *     receives the record.
  *   - `remove` drops the record whose id matches `recordId` from the resolved
  *     collection. For `collection: 'projects'`, `recordId` is the project's
  *     globally-unique slug — tree-walk-found wherever it currently lives (no
  *     `initiativePath` needed to remove). All other record ids are bare-digit
  *     STRINGS — top-level (`tasks`/`items`/`retros`) and subtasks alike.
+ *     `collection: 'initiatives'` has no remove support (ID-156.8 is
+ *     create-only) — `resolveSpliceCollection` rejects a remove attempt.
  */
 export type SpliceOp =
   | {
@@ -482,6 +496,38 @@ function resolveSpliceCollection(
       return { ok: false, detail: `Project slug "${slug}" not found.` };
     }
     return { ok: true, collection: located.ownerProjects };
+  }
+
+  // ID-156.8: "parent-or-root" initiative/sub-initiative INSERT — the OTHER
+  // addressable initiatives node shape. Create-only (no remove support).
+  if (op.collection === "initiatives") {
+    if (op.kind !== "insert") {
+      return {
+        ok: false,
+        detail: `'initiatives' collection has no remove-splice support (ID-156.8 is create-only).`,
+      };
+    }
+    if (op.initiativePath == null || op.initiativePath === "") {
+      const root = asArray((doc as TreeDoc).initiatives);
+      if (root) return { ok: true, collection: root };
+      const created: Record<string, unknown>[] = [];
+      (doc as TreeDoc).initiatives = created;
+      return { ok: true, collection: created };
+    }
+    const node = resolveInitiativeNode(doc as TreeDoc, op.initiativePath);
+    if (!node) {
+      return {
+        ok: false,
+        detail: `Initiative path "${op.initiativePath}" not found.`,
+      };
+    }
+    if (!Array.isArray(node["sub-initiatives"])) {
+      (node as TreeNode)["sub-initiatives"] = [];
+    }
+    return {
+      ok: true,
+      collection: node["sub-initiatives"] as Record<string, unknown>[],
+    };
   }
 
   const collection = asArray(doc[op.collection]);

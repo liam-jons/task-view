@@ -52,6 +52,8 @@ import {
   allProjectSlugs,
   findProjectBySlug,
   insertProjectAt,
+  insertInitiativeAt,
+  siblingInitiativeIds,
   removeProjectBySlug,
   type TreeDoc,
 } from "./initiatives-tree";
@@ -121,7 +123,9 @@ function existingIds(detected: KnownDetected): Set<string> {
     return new Set(detected.data.tasks.map((t) => t.id));
   }
   // ID-148.10: initiatives — the globally-unique project SLUG set,
-  // flattened tree-wide (INV-13).
+  // flattened tree-wide (INV-13). ID-156.8: an initiative/sub-initiative
+  // nodeKind create uses `siblingInitiativeIds` instead (see `insertRecord`)
+  // — its ids are only LOCALLY unique, never this global slug set.
   if (detected.kind === "initiatives") {
     return new Set(allProjectSlugs(detected.data as unknown as TreeDoc));
   }
@@ -189,14 +193,25 @@ function rebuildDetected(
  * Duplicate id is rejected with a `duplicate-id` result BEFORE the parse,
  * matching the existing 409/422 conventions (the caller maps it to 409).
  *
- * ID-148.10 (INV-13): for `detected.kind === "initiatives"`, `parentPath`
- * is REQUIRED — the dotted initiative/sub-initiative path the new project
- * inserts under. An absent or unresolvable path is `invalid-body`.
+ * ID-148.10 (INV-13): for `detected.kind === "initiatives"` with the
+ * default `nodeKind: "project"`, `parentPath` is REQUIRED — the dotted
+ * initiative/sub-initiative path the new project inserts under. An absent
+ * or unresolvable path is `invalid-body`.
+ *
+ * ID-156.8: `nodeKind: "initiative"` addresses the OTHER initiatives node
+ * shape — a new top-level initiative (`parentPath` absent/empty, "root") or
+ * a new sub-initiative under an existing path ("parent"). Its duplicate-id
+ * check is scoped to SIBLINGS at the insertion point (`siblingInitiativeIds`)
+ * rather than the tree-wide project-slug set — initiative/sub-initiative
+ * ids are only locally unique (the same bare id legitimately recurs at
+ * unrelated tree positions). `nodeKind` is ignored for every other
+ * `detected.kind`.
  */
 export function insertRecord(
   detected: KnownDetected,
   record: unknown,
   parentPath?: string,
+  nodeKind: "project" | "initiative" = "project",
 ): RecordMutateResult {
   const newId = extractId(record);
   if (newId === null) {
@@ -207,7 +222,17 @@ export function insertRecord(
         "Record body must be an object carrying a string or numeric `id` field.",
     };
   }
-  if (existingIds(detected).has(newId)) {
+  const isInitiativeCreate =
+    detected.kind === "initiatives" && nodeKind === "initiative";
+  if (isInitiativeCreate) {
+    const siblings = siblingInitiativeIds(
+      detected.data as unknown as TreeDoc,
+      parentPath,
+    );
+    if (siblings.includes(newId)) {
+      return { ok: false, kind: "duplicate-id", recordId: newId };
+    }
+  } else if (existingIds(detected).has(newId)) {
     return { ok: false, kind: "duplicate-id", recordId: newId };
   }
 
@@ -216,21 +241,32 @@ export function insertRecord(
   const rawClone = structuredClone(detected.data) as Record<string, unknown>;
 
   if (detected.kind === "initiatives") {
-    if (parentPath === undefined || parentPath === "") {
-      return {
-        ok: false,
-        kind: "invalid-body",
-        detail:
-          "initiatives project creates require a `parentPath` (the dotted initiative/sub-initiative path to insert under).",
-      };
-    }
-    const inserted = insertProjectAt(
-      rawClone as TreeDoc,
-      parentPath,
-      record,
-    );
-    if (!inserted.ok) {
-      return { ok: false, kind: "invalid-body", detail: inserted.detail };
+    if (isInitiativeCreate) {
+      const inserted = insertInitiativeAt(
+        rawClone as TreeDoc,
+        parentPath,
+        record,
+      );
+      if (!inserted.ok) {
+        return { ok: false, kind: "invalid-body", detail: inserted.detail };
+      }
+    } else {
+      if (parentPath === undefined || parentPath === "") {
+        return {
+          ok: false,
+          kind: "invalid-body",
+          detail:
+            "initiatives project creates require a `parentPath` (the dotted initiative/sub-initiative path to insert under).",
+        };
+      }
+      const inserted = insertProjectAt(
+        rawClone as TreeDoc,
+        parentPath,
+        record,
+      );
+      if (!inserted.ok) {
+        return { ok: false, kind: "invalid-body", detail: inserted.detail };
+      }
     }
   } else {
     const collectionKey = collectionKeyFor(detected.kind);
@@ -371,11 +407,14 @@ export function removeRecord(
 /** The documented record kinds, each with structural create defaults.
  * ID-148.10: `project` replaces the retired `theme` (initiatives projects
  * are created via a dedicated tree-insert, not a flat-collection push, but
- * still need the SAME structural-defaults treatment). */
+ * still need the SAME structural-defaults treatment). ID-156.8: `initiative`
+ * is the OTHER initiatives node shape — a top-level initiative or
+ * sub-initiative, also tree-inserted rather than flat-collection-pushed. */
 export type CreateRecordKind =
   | "subtask"
   | "task"
   | "project"
+  | "initiative"
   | "item"
   | "retro";
 
@@ -417,6 +456,22 @@ const CREATE_DEFAULTS: Record<CreateRecordKind, Record<string, unknown>> = {
     linked_tasks: [],
     linked_backlog: [],
     originating_session: [],
+  },
+  // ID-156.8: initiatives initiative/sub-initiative structural defaults.
+  // `status: "proposed"` is the lowest/untriaged INITIATIVE_STATUSES value
+  // (initiatives-schema.ts). Fields kept to the shape SHARED by both a
+  // top-level Initiative and a nested SubInitiative — `substrate_doc` is
+  // optional on both (omitted, unlike project's forced `""`) and
+  // `linked_tasks`/`linked_backlog` are Initiative-only transitional
+  // tolerance fields with no SubInitiative analog, so they are not
+  // defaulted here either (a caller targeting a top-level create may still
+  // supply them explicitly — supplied fields win).
+  initiative: {
+    description: "",
+    status: "proposed",
+    projects: [],
+    originating_session: [],
+    "sub-initiatives": [],
   },
   item: {
     // `type` / `track` are required scalars with no inherent empty value;

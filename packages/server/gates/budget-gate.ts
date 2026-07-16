@@ -428,15 +428,21 @@ export function checkBudgetForCreate(
 }
 
 /** Map a detected document kind to the registry record-kind a whole-record
- * CREATE on that ledger budgets against. ID-148.10: `initiatives` always
- * creates a `project` (INV-13 — only projects are whole-record-created via
- * this generic path; initiatives/sub-initiatives are not). Return type is
+ * CREATE on that ledger budgets against. ID-148.10: `initiatives` creates a
+ * `project` by default (INV-13's first addressable node shape). ID-156.8:
+ * `nodeKind: "initiative"` resolves to the OTHER addressable node shape — a
+ * new top-level initiative or sub-initiative ("parent-or-root") — when the
+ * caller (`patch-server.ts`) has threaded a `recordKind: "initiative"`
+ * request through; ignored for every other detected kind. Return type is
  * `CreateRecordKind` (the strict subset of `LedgerRecordKind` this function
  * ever actually returns) — it feeds `withCreateDefaults` directly at the
  * sole call site (`patch-server.ts`), which requires that narrower type. */
-export function createRecordKindFor(kind: KnownKind): CreateRecordKind {
+export function createRecordKindFor(
+  kind: KnownKind,
+  nodeKind: "project" | "initiative" = "project",
+): CreateRecordKind {
   if (kind === "task-list") return "task";
-  if (kind === "initiatives") return "project";
+  if (kind === "initiatives") return nodeKind;
   // WS-C C2: retro creates budget against the empty `retro` registry entry
   // (no field is measured — the sweep always passes).
   if (kind === "retro") return "retro";
