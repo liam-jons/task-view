@@ -493,6 +493,24 @@ describe("withCreateDefaults — structural defaults under the record (ledger-cl
     expect(r.updatedAt).toBe("2026-01-01T00:00:00.000Z");
   });
 
+  // ID-156.3: blocked_by/blocking parity with the Project record's structural
+  // defaults (`CREATE_DEFAULTS.project`).
+  test("task: blocked_by/blocking default to [] when absent", () => {
+    const r = withCreateDefaults("task", { title: "x" });
+    expect(r.blocked_by).toEqual([]);
+    expect(r.blocking).toEqual([]);
+  });
+
+  test("task: supplied blocked_by/blocking are kept", () => {
+    const r = withCreateDefaults("task", {
+      title: "x",
+      blocked_by: ["10"],
+      blocking: ["11", "12"],
+    });
+    expect(r.blocked_by).toEqual(["10"]);
+    expect(r.blocking).toEqual(["11", "12"]);
+  });
+
   test("item: type feature / track unsorted / status parked when absent", () => {
     const r = withCreateDefaults("item", { description: "d" });
     expect(r.type).toBe("feature");

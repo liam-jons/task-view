@@ -47,6 +47,8 @@ const mkTask = (overrides: Partial<Task> = {}): Task => ({
   status: "in_progress",
   priority: "must",
   dependencies: [],
+  blocked_by: [],
+  blocking: [],
   subtasks: [mkSubtask()],
   updatedAt: "2026-05-21T15:30:00.000Z",
   effort_estimate: "~2h",
@@ -157,6 +159,34 @@ describe("PRODUCT inv 7 (Task-list mode: frontmatter + description + Subtasks + 
     );
     expect(html).not.toContain("data-priority-note");
     expect(html).not.toContain("data-status-note");
+  });
+
+  // ID-156.3: blocked_by/blocking parity with the initiatives Project
+  // record's read-only display (initiatives-tree-view.tsx "blocked_by /
+  // blocking render when present" test).
+  test("renders blocked_by / blocking when present", () => {
+    const task = mkTask({
+      blocked_by: ["30"],
+      blocking: ["40", "41"],
+    });
+    const ledger = buildLedgerContext({ tasks: [task] });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).toContain('data-section="blocked_by"');
+    expect(html).toContain("Blocked by: 30");
+    expect(html).toContain('data-section="blocking"');
+    expect(html).toContain("Blocking: 40, 41");
+  });
+
+  test("omits blocked_by / blocking paragraph when both empty", () => {
+    const task = mkTask({ blocked_by: [], blocking: [] });
+    const ledger = buildLedgerContext({ tasks: [task] });
+    const html = renderToStaticMarkup(
+      <TaskListView task={task} ledger={ledger} nav={NAV} />,
+    );
+    expect(html).not.toContain('data-section="blocked_by"');
+    expect(html).not.toContain('data-section="blocking"');
   });
 });
 

@@ -346,6 +346,24 @@ export const TaskListView: React.FC<{
         </p>
       )}
 
+      {/* ID-156.3: blocked_by/blocking parity with the initiatives Project
+          record's read-only display (initiatives-tree-view.tsx) — same
+          markup shape, no edit affordance yet on either side. */}
+      {(task.blocked_by.length > 0 || task.blocking.length > 0) && (
+        <p className="record-view-task-blocking">
+          {task.blocked_by.length > 0 && (
+            <span data-section="blocked_by">
+              Blocked by: {task.blocked_by.join(", ")}
+            </span>
+          )}
+          {task.blocking.length > 0 && (
+            <span data-section="blocking">
+              Blocking: {task.blocking.join(", ")}
+            </span>
+          )}
+        </p>
+      )}
+
       <section
         className="record-view-task-subtasks"
         data-section="subtasks"

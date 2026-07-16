@@ -21,6 +21,8 @@ const mkTask = (overrides: Partial<Task> = {}): Task => ({
   status: "pending",
   priority: "must",
   dependencies: [],
+  blocked_by: [],
+  blocking: [],
   subtasks: [],
   updatedAt: "2026-05-21T15:30:00.000Z",
   effort_estimate: null,

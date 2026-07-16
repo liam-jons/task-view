@@ -391,6 +391,10 @@ const CREATE_DEFAULTS: Record<CreateRecordKind, Record<string, unknown>> = {
   task: {
     status: "pending",
     dependencies: [],
+    // ID-156.3: parity with the Project record's blocked_by/blocking
+    // structural defaults (below).
+    blocked_by: [],
+    blocking: [],
     subtasks: [],
     effort_estimate: null,
     owner: null,

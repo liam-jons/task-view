@@ -131,6 +131,15 @@ export const TaskSchema = z
     priority: TaskPriority,
     /** String array of Task ids this Task depends on. */
     dependencies: z.array(z.string()),
+    /**
+     * Task-id arrays parity with the initiatives Project record's
+     * `blocked_by`/`blocking` fields (ID-156.3). `.default([])` keeps every
+     * pre-existing task-list.json record valid without either field present
+     * (record-set delta-0) while still typing the parsed output as a plain
+     * `string[]` (never `undefined`).
+     */
+    blocked_by: z.array(z.string()).default([]),
+    blocking: z.array(z.string()).default([]),
     /** Subtasks — empty array allowed for atomic Tasks (inv 5). */
     subtasks: z.array(SubtaskSchema),
     /** ISO 8601 timestamp of last write to this Task or any Subtask. */

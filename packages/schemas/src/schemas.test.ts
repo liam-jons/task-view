@@ -158,6 +158,37 @@ describe("Vendored schemas: parse acceptance", () => {
     }
   });
 
+  // ID-156.3: parity with the Project record's blocked_by/blocking fields.
+  // `minimalTaskList` above carries no blocked_by/blocking — every existing
+  // task-list.json record must still parse (record-set delta-0).
+  test("TaskSchema defaults blocked_by/blocking to [] for a pre-existing record without them", () => {
+    const result = TaskListSchema.safeParse(minimalTaskList);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.tasks[0].blocked_by).toEqual([]);
+      expect(result.data.tasks[0].blocking).toEqual([]);
+    }
+  });
+
+  test("TaskSchema accepts explicit blocked_by/blocking Task-id arrays", () => {
+    const withLinks = {
+      ...minimalTaskList,
+      tasks: [
+        {
+          ...minimalTaskList.tasks[0],
+          blocked_by: ["30"],
+          blocking: ["40", "41"],
+        },
+      ],
+    };
+    const result = TaskListSchema.safeParse(withLinks);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.tasks[0].blocked_by).toEqual(["30"]);
+      expect(result.data.tasks[0].blocking).toEqual(["40", "41"]);
+    }
+  });
+
   test("SubtaskStatus accepts 'cancelled' (S261/S262 amendment)", () => {
     const withCancelledSubtask = {
       ...minimalTaskList,
