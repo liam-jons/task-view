@@ -805,6 +805,49 @@ describe("insertRecord — initiatives nested project insert (INV-13)", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.kind).toBe("schema-error");
   });
+
+  // ID-156.6 upstream: canonical's `create-project` CLI verb already rejects
+  // a digit-dotted slug (e.g. "4", "4.2") client-side — `resolveRecordId`
+  // tries the initiative-path interpretation FIRST, so such a slug would
+  // insert successfully but then be PERMANENTLY unreachable as a project by
+  // every id-addressed verb. This is the server-side equivalent, closing the
+  // gap for any OTHER caller that reaches this path directly (no client-side
+  // guard to rely on).
+  test("rejects a bare-digit slug shaped like a top-level initiative path", () => {
+    const result = insertRecord(detectInitiatives(), newProject("4"), "1");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.kind).toBe("invalid-slug");
+      if (result.kind === "invalid-slug") expect(result.recordId).toBe("4");
+    }
+  });
+
+  test("rejects a dotted slug shaped like a nested initiative path", () => {
+    const result = insertRecord(detectInitiatives(), newProject("4.2"), "1");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.kind).toBe("invalid-slug");
+  });
+
+  test("accepts a kebab-case slug that merely CONTAINS digits/dots", () => {
+    const result = insertRecord(
+      detectInitiatives(),
+      newProject("phase-4.2-rollout"),
+      "1",
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  test("the digit-dotted-slug guard does not apply to nodeKind 'initiative' creates", () => {
+    // A brand new top-level initiative or sub-initiative's OWN local id is
+    // legitimately a bare digit (e.g. "6") — this guard is project-slug-only.
+    const result = insertRecord(
+      detectInitiatives(),
+      newInitiative("6"),
+      undefined,
+      "initiative",
+    );
+    expect(result.ok).toBe(true);
+  });
 });
 
 function newInitiative(id: string) {

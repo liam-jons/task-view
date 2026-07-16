@@ -1261,6 +1261,20 @@ async function handlePostRecord(
         { status: 422 },
       );
     }
+    // ID-156.6 upstream: carries `recordId` (the offending slug), not
+    // `detail` — handled explicitly so the generic fallback below (which
+    // only ever reads `detail`) does not silently drop it from the response.
+    if (result.kind === "invalid-slug") {
+      return jsonResponse(
+        {
+          ok: false,
+          error: "invalid-slug",
+          recordId: result.recordId,
+          detail: `project slug "${result.recordId}" is shaped like an initiative/sub-initiative path (digits and dots only) — it would be unreachable as a project by id; choose a kebab-case slug instead`,
+        },
+        { status: 422 },
+      );
+    }
     return jsonResponse(
       {
         ok: false,

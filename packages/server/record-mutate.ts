@@ -86,7 +86,24 @@ export type RecordMutateResult =
    * `linked_tasks`/`linked_backlog` is rejected rather than silently
    * orphaning those cross-ledger references. Unlink first (edit the
    * project's linked_tasks/linked_backlog fields to empty), then delete. */
-  | { ok: false; kind: "project-not-empty"; recordId: string };
+  | { ok: false; kind: "project-not-empty"; recordId: string }
+  /** CREATE only, initiatives kind, nodeKind "project" (ID-156.6 upstream):
+   * the supplied slug is shaped like a bare digit-dotted initiative/
+   * sub-initiative path (e.g. "4", "4.2") — `resolveRecordId` tries the
+   * initiative-path interpretation FIRST, so such a slug would insert
+   * successfully but then be PERMANENTLY unreachable as a project by every
+   * id-addressed verb (GET/PATCH/DELETE). Server-side equivalent of
+   * canonical's `create-project` CLI client-side guard (ledger-cli.ts,
+   * ID-156.6 gap d) — this closes the gap for any OTHER caller reaching
+   * this path directly. */
+  | { ok: false; kind: "invalid-slug"; recordId: string };
+
+/** ID-156.6 upstream: a project slug shaped like a bare digit-dotted
+ * initiative/sub-initiative path — see `RecordMutateResult`'s
+ * `invalid-slug` doc. Mirrors canonical's ledger-cli.ts client-side guard
+ * byte-for-byte (same regex) so the two can never drift on what counts as
+ * an unreachable slug shape. */
+const DIGIT_DOTTED_PATH_SLUG = /^\d+(\.\d+)*$/;
 
 // ── id extraction ─────────────────────────────────────────────────────────────
 
@@ -224,6 +241,17 @@ export function insertRecord(
   }
   const isInitiativeCreate =
     detected.kind === "initiatives" && nodeKind === "initiative";
+  // ID-156.6 upstream: project-slug-shape guard, BEFORE the duplicate-id
+  // check — a digit-dotted slug is invalid regardless of whether it also
+  // happens to collide with an existing id. Never applies to nodeKind
+  // "initiative" (a bare digit IS that node shape's legitimate local id).
+  if (
+    detected.kind === "initiatives" &&
+    !isInitiativeCreate &&
+    DIGIT_DOTTED_PATH_SLUG.test(newId)
+  ) {
+    return { ok: false, kind: "invalid-slug", recordId: newId };
+  }
   if (isInitiativeCreate) {
     const siblings = siblingInitiativeIds(
       detected.data as unknown as TreeDoc,

@@ -1301,6 +1301,40 @@ describe("POST /api/ledger/record — record CREATE (ID-20.15)", () => {
     expect(created.status).toBe("idea");
     expect(created.linked_tasks).toEqual([]);
   });
+
+  // ID-156.6 upstream: canonical's `create-project` CLI verb already rejects
+  // a digit-dotted slug client-side — this is the server-side equivalent,
+  // closing the gap for any OTHER caller (e.g. a direct HTTP client) that
+  // reaches this route without that client-side guard.
+  test("rejects a project slug shaped like a digit-dotted initiative path, nothing written", async () => {
+    const ledger = join(testDir, "initiatives.json");
+    const original = await writeFixtureInitiatives(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        record: { id: "4.2", title: "Unreachable project" },
+        initiativePath: "10",
+      }),
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as {
+      ok: boolean;
+      error: string;
+      recordId: string;
+      detail: string;
+    };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("invalid-slug");
+    expect(body.recordId).toBe("4.2");
+    expect(body.detail).toContain("4.2");
+
+    expect(await readFile(ledger, "utf8")).toBe(original);
+  });
 });
 
 // ID-156.8: the OTHER addressable initiatives node shape — a whole-record
