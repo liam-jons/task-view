@@ -82,6 +82,7 @@ import { detectSchema, type DetectSchemaResult } from "./detect-schema";
 import {
   generateMirrors,
   generateRecordMirror,
+  generateRecordMirrors,
   resolveMirrorDir,
   computeRecordFilename,
   computeMirrorDirName,
@@ -730,6 +731,31 @@ function walkErrorStatus(result: ApplyPatchesResult<unknown>): number {
   return 500;
 }
 
+/**
+ * ID-158: a PATCH batch's `patches` array can touch records under
+ * DIFFERENT owning mirrors — e.g. a move-task/move-backlog 2-field-patch
+ * batch re-parenting a linked id between two projects that live under two
+ * different top-level initiatives (INV-9). Each patch's `fieldPath[1]`
+ * identifies the record it addresses (taskId / project-slug-or-initiative
+ * -path / backlog item id — consistent across all three `applyXPatch`
+ * walkers in patch-apply.ts), so unioning those with the URL `recordId`
+ * gives the full set of records `generateRecordMirrors` needs to resolve
+ * and regenerate. The URL recordId is included defensively — it should
+ * already appear in at least one patch, but a batch could in principle
+ * omit it.
+ */
+function touchedRecordIdsForPatches(
+  patches: readonly FieldPatch[],
+  recordId: string,
+): string[] {
+  const ids = new Set<string>([recordId]);
+  for (const patch of patches) {
+    const id = patch.fieldPath[1];
+    if (id) ids.add(id);
+  }
+  return [...ids];
+}
+
 async function handlePatchRecord(
   ctx: RequestContext,
   recordId: string,
@@ -1012,16 +1038,19 @@ async function handlePatchRecord(
 
   // §5.5 mirror regen — runs ONCE after the whole multi-field PATCH, not
   // once per field. Subtask 20.23 (PRODUCT inv 38): scope the regen to the
-  // touched record's mirror ONLY. A field PATCH mutates fields within one
-  // existing record — it can never add or remove records — so unaffected
+  // touched record's mirror(s) ONLY. A field PATCH mutates fields within
+  // existing records — it can never add or remove records — so unaffected
   // mirrors stay byte-identical (mtime stable). The prior full-ledger
   // regen rewrote every mirror (20.16 S10 / Side-observation 5).
+  // ID-158: the batch can touch records under different owning mirrors
+  // (e.g. a cross-initiative move) — regen every mirror the batch's
+  // patches (plus the URL recordId) actually touch, not just recordId's.
   let regen;
   try {
-    regen = await generateRecordMirror(
+    regen = await generateRecordMirrors(
       serialisedDetected,
       ctx.ledgerPath,
-      recordId,
+      touchedRecordIdsForPatches(patches, recordId),
     );
   } catch (err) {
     // The canonical wrote successfully; mirror regen failed. Surface

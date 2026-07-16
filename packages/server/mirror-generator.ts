@@ -664,20 +664,55 @@ export async function generateRecordMirror(
   canonicalPath: string,
   recordId: string,
 ): Promise<{ mirrorDir: string; written: string[]; deleted: string[] }> {
+  return generateRecordMirrors(detected, canonicalPath, [recordId]);
+}
+
+/**
+ * Regenerate the mirror(s) owning ALL of the given `recordIds` (ID-158).
+ *
+ * A single PATCH batch can touch records under DIFFERENT owning mirrors —
+ * e.g. canonical's move-task/move-backlog verbs thread a 2-field-patch
+ * batch that re-parents a linked id between two projects, and when those
+ * projects live under different TOP-LEVEL initiatives (INV-9), the prior
+ * single-`recordId` `generateRecordMirror` call only regenerated the
+ * URL-addressed record's owning mirror — the other project's owning
+ * initiative mirror went stale even though its record set changed.
+ *
+ * Each id is resolved to its planned mirror independently via
+ * {@link renderRecordMirror} (the same per-kind resolution
+ * `generateRecordMirror` already used); results are de-duplicated by
+ * filename before writing, so ids that resolve to the SAME owning mirror
+ * (e.g. two projects under one initiative) write that mirror exactly once.
+ * ids that don't resolve to any record are silently skipped (defensive,
+ * matching `generateRecordMirror`'s not-found tolerance).
+ */
+export async function generateRecordMirrors(
+  detected: DetectSchemaResult,
+  canonicalPath: string,
+  recordIds: readonly string[],
+): Promise<{ mirrorDir: string; written: string[]; deleted: string[] }> {
   if (detected.kind === "unknown") {
     throw new Error(
       `Cannot generate mirror for unknown ledger kind (document_name: ${detected.documentName ?? "null"}).`,
     );
   }
   const mirrorDir = resolveMirrorDir(detected.kind, canonicalPath);
-  const planned = renderRecordMirror(detected, recordId);
-  if (!planned) {
+  const plannedByFilename = new Map<string, PlannedMirror>();
+  for (const recordId of recordIds) {
+    const planned = renderRecordMirror(detected, recordId);
+    if (planned) plannedByFilename.set(planned.filename, planned);
+  }
+  if (plannedByFilename.size === 0) {
     return { mirrorDir, written: [], deleted: [] };
   }
   // Ensure the mirror directory exists (inv 40 first-run tolerance).
   await mkdir(mirrorDir, { recursive: true });
-  await atomicWrite(join(mirrorDir, planned.filename), planned.content);
-  return { mirrorDir, written: [planned.filename], deleted: [] };
+  const written: string[] = [];
+  for (const planned of plannedByFilename.values()) {
+    await atomicWrite(join(mirrorDir, planned.filename), planned.content);
+    written.push(planned.filename);
+  }
+  return { mirrorDir, written, deleted: [] };
 }
 
 /**

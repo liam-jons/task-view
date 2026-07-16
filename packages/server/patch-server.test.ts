@@ -781,6 +781,127 @@ describe("PATCH /api/ledger/record/:recordId — initiatives atomic move (INV-13
   });
 });
 
+// ── ID-158: cross-initiative move must regen BOTH owning initiatives ────────
+//
+// The atomic-move test above only exercises a same-initiative move (both
+// projects live under initiative "10"), so scoping the regen to the URL
+// recordId's single owning initiative never surfaced a defect there. When
+// --from and --to projects live under DIFFERENT top-level initiatives, the
+// --from initiative's mirror must ALSO regenerate — its record set changed
+// (linked_tasks emptied) even though the URL only names the --to project.
+// bl-466 (ID-148.7 executor finding, confirmed by its Checker, S474/S475).
+
+function makeTwoInitiativesLedgerObject() {
+  return {
+    document_name: "Canonical Platform - Initiatives",
+    document_purpose: "Structured record of active initiatives.",
+    date: "2026-05-25",
+    status: "active",
+    related_documents: [],
+    last_updated: "fixture",
+    initiatives: [
+      {
+        id: "10",
+        title: "Procurement intelligence",
+        description: "Initiative 10 description.",
+        status: "active",
+        projects: [
+          {
+            id: "procurement-project",
+            title: "Procurement project",
+            summary: "Summary.",
+            description: "Description.",
+            substrate_doc: "",
+            status: "in-progress",
+            blocked_by: [],
+            blocking: [],
+            linked_tasks: ["20"],
+            linked_backlog: [],
+            originating_session: [],
+          },
+        ],
+        originating_session: [],
+        "sub-initiatives": [],
+      },
+      {
+        id: "11",
+        title: "Sector intelligence",
+        description: "Initiative 11 description.",
+        status: "active",
+        projects: [
+          {
+            id: "other-project",
+            title: "Other project",
+            summary: "Summary.",
+            description: "Description.",
+            substrate_doc: "",
+            status: "backlog",
+            blocked_by: [],
+            blocking: [],
+            linked_tasks: [],
+            linked_backlog: [],
+            originating_session: [],
+          },
+        ],
+        originating_session: [],
+        "sub-initiatives": [],
+      },
+    ],
+  };
+}
+
+describe("PATCH /api/ledger/record/:recordId — cross-initiative move regens BOTH mirrors (ID-158)", () => {
+  test("a 2-patch batch spanning two top-level initiatives regenerates both initiatives' mirrors", async () => {
+    const ledger = join(testDir, "initiatives.json");
+    await writeFile(
+      ledger,
+      JSON.stringify(makeTwoInitiativesLedgerObject(), null, 2),
+      "utf8",
+    );
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    // Move task "20" from procurement-project (initiative "10") to
+    // other-project (initiative "11") — ONE PATCH, two field-patches. URL
+    // recordId is threaded as the TO project, matching canonical's
+    // recordId:<toSlug> move-verb convention.
+    const res = await fetch(`${handle.url}/api/ledger/record/other-project`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        patches: [
+          {
+            fieldPath: ["projects", "procurement-project", "linked_tasks"],
+            newValue: [],
+          },
+          {
+            fieldPath: ["projects", "other-project", "linked_tasks"],
+            newValue: ["20"],
+          },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { mirrorsWritten: string[] };
+
+    // Both owning top-level initiatives regenerate — not just "11" (the
+    // URL recordId's owner).
+    expect(body.mirrorsWritten.sort()).toEqual(["10.md", "11.md"]);
+
+    const initiative10Mirror = await readFile(
+      join(testDir, "initiatives", "10.md"),
+      "utf8",
+    );
+    const initiative11Mirror = await readFile(
+      join(testDir, "initiatives", "11.md"),
+      "utf8",
+    );
+    expect(initiative10Mirror).toContain("Linked tasks: _none_");
+    expect(initiative11Mirror).toContain("Linked tasks: 20");
+  });
+});
+
 // ── ID-148.13 TECH §2 INV-3 status-enum gate, HTTP end-to-end ────────────────
 //
 // Direct HTTP PATCH/POST against the real server — bypassing any CLI —

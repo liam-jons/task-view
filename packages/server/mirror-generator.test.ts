@@ -31,6 +31,7 @@ import {
   computeRecordFilename,
   generateMirrors,
   generateRecordMirror,
+  generateRecordMirrors,
   sanitiseFilenameStem,
 } from "./mirror-generator";
 
@@ -588,6 +589,57 @@ describe("generateRecordMirror — scoped single-record regen (Subtask 20.23)", 
 
     const result = await generateRecordMirror(detected, ledgerPath, "2.1");
     expect(result.written).toEqual(["2.md"]);
+  });
+});
+
+describe("generateRecordMirrors — multi-record scoped regen (ID-158)", () => {
+  test("regenerates BOTH owning top-level initiatives' mirrors when the ids span two initiatives", async () => {
+    const ledger = makeInitiatives();
+    ledgerPath = join(testDir, "initiatives.json");
+    await writeFile(ledgerPath, JSON.stringify(ledger, null, 2), "utf8");
+    const detected = detectSchema(ledger);
+
+    // "foundation-project" is owned by top-level initiative "1";
+    // "nested-project" is owned (via sub-initiative "2.1") by initiative "2"
+    // — a move batch re-parenting a linked id between them touches both.
+    const result = await generateRecordMirrors(detected, ledgerPath, [
+      "foundation-project",
+      "nested-project",
+    ]);
+    expect(result.written.sort()).toEqual(["1.md", "2.md"]);
+
+    mirrorDir = join(testDir, "initiatives");
+    // Both files actually landed on disk, not just reported as written.
+    await readFile(join(mirrorDir, "1.md"), "utf8");
+    await readFile(join(mirrorDir, "2.md"), "utf8");
+  });
+
+  test("de-duplicates when multiple ids resolve to the SAME owning initiative", async () => {
+    const ledger = makeInitiatives();
+    ledgerPath = join(testDir, "initiatives.json");
+    await writeFile(ledgerPath, JSON.stringify(ledger, null, 2), "utf8");
+    const detected = detectSchema(ledger);
+
+    // "foundation-project" and bare initiative path "1" both resolve to
+    // top-level initiative "1" — must write "1.md" exactly once.
+    const result = await generateRecordMirrors(detected, ledgerPath, [
+      "foundation-project",
+      "1",
+    ]);
+    expect(result.written).toEqual(["1.md"]);
+  });
+
+  test("task-list mode: behaves like one generateRecordMirror call per id (no owning-record indirection)", async () => {
+    const ledger = makeTaskList(["20", "30"]);
+    ledgerPath = join(testDir, "task-list.json");
+    await writeFile(ledgerPath, JSON.stringify(ledger, null, 2), "utf8");
+    const detected = detectSchema(ledger);
+
+    const result = await generateRecordMirrors(detected, ledgerPath, [
+      "20",
+      "30",
+    ]);
+    expect(result.written.sort()).toEqual(["ID-20.md", "ID-30.md"]);
   });
 });
 
