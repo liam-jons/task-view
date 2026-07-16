@@ -205,6 +205,62 @@ describe("createParentDeathMonitor — foreground orphan guard", () => {
     expect(fired).toBe(0);
     monitor.stop();
   });
+
+  // S477: ephemeral --port-file spawns pass the SAME immediate OS parent
+  // (the short-lived ledger-cli process) as the persistent daemon path, so
+  // `--port-file` alone can't distinguish "bounded by façade kill/respawn"
+  // from "never killed, must self-stop with its spawner". `parentPid` lets
+  // a caller name the pid to watch explicitly — the index.ts wiring arms
+  // this ONLY when `--parent-pid` is passed, leaving the existing
+  // `--port-file`-without-`--parent-pid` exemption (the persistent daemon)
+  // untouched.
+  test("parentPid matching the real process.ppid behaves like the default (not orphaned while alive)", () => {
+    let fired = 0;
+    const monitor = createParentDeathMonitor({
+      onOrphaned: () => {
+        fired += 1;
+      },
+      // Threaded through to defaultIsOrphaned exactly as process.ppid would
+      // be — the test runner (our real parent) is alive, so no fire.
+      parentPid: process.ppid,
+      checkIntervalMs: null,
+    });
+    monitor.check();
+    expect(fired).toBe(0);
+    monitor.stop();
+  });
+
+  test("parentPid diverging from the real process.ppid is treated as already-orphaned (fast path)", () => {
+    let fired = 0;
+    const monitor = createParentDeathMonitor({
+      onOrphaned: () => {
+        fired += 1;
+      },
+      // PID 1 (init/launchd) is never this test process's real OS parent —
+      // proves the override actually changes the probe's target rather
+      // than being silently ignored in favour of process.ppid.
+      parentPid: 1,
+      checkIntervalMs: null,
+    });
+    monitor.check();
+    expect(fired).toBe(1);
+    monitor.stop();
+  });
+
+  test("an explicit isOrphaned probe still overrides parentPid", () => {
+    let fired = 0;
+    const monitor = createParentDeathMonitor({
+      onOrphaned: () => {
+        fired += 1;
+      },
+      parentPid: process.ppid, // would read as "alive" via the default probe...
+      isOrphaned: () => true, // ...but the explicit override wins
+      checkIntervalMs: null,
+    });
+    monitor.check();
+    expect(fired).toBe(1);
+    monitor.stop();
+  });
 });
 
 // ── Launch-document pick for --serve-dir ─────────────────────────────────────

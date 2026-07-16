@@ -25,6 +25,17 @@
  *     arm; umbrellas is fully retired), so repeated daemon spawns against
  *     the same directory always agree.
  *
+ *   - `--parent-pid <pid>` (ID-156.9): {@link createParentDeathMonitor}'s
+ *     `parentPid` option — an opt-in that arms parent-death reaping for a
+ *     `--port-file` spawn. The façade's PERSISTENT daemon (default ledger
+ *     dir, reused/killed-and-respawned by `ensureServer`) and its EPHEMERAL
+ *     per-invocation spawns (non-default dir, never reused, never killed on
+ *     the success path — S477) share the same immediate OS parent, so
+ *     `--port-file` alone can't tell them apart. Only a caller that names
+ *     `--parent-pid` opts a specific spawn into self-stopping when that pid
+ *     dies; every other `--port-file` caller (including the persistent
+ *     daemon) keeps the pre-existing exemption.
+ *
  * These live in packages/server (not apps/server) so they sit INSIDE the
  * `bun run typecheck` gate — apps/server's tsconfig is outside it
  * (task-view backlog-178).
@@ -159,6 +170,19 @@ export interface ParentDeathMonitorOptions {
    */
   isOrphaned?: () => boolean;
   /**
+   * The pid to watch for exit/reparent (feeds the default probe). Defaults
+   * to `process.ppid` (this process's real OS parent at creation time).
+   *
+   * S477: ephemeral `--port-file` spawns and the persistent daemon share
+   * the SAME immediate OS parent (the short-lived spawning process), so
+   * `process.ppid` alone can't tell them apart. A caller that names an
+   * explicit `parentPid` (index.ts's `--parent-pid` flag) is opting a
+   * specific spawn INTO parent-death reaping without changing the default
+   * for every other `--port-file` caller. Ignored when `isOrphaned` is
+   * also given.
+   */
+  parentPid?: number;
+  /**
    * Polling interval for the internal timer. `null` disables the internal
    * timer entirely (tests drive {@link ParentDeathMonitor.check} directly).
    * Defaults to 1000ms.
@@ -199,13 +223,19 @@ function defaultIsOrphaned(initialPpid: number): () => boolean {
  * Firing `onOrphaned` lets the caller stop gracefully.
  *
  * The internal timer is `unref`ed so it never keeps an otherwise-idle process
- * alive. NOT used in daemon mode (`--port-file`): the façade spawns the daemon
- * detached on purpose and bounds its life via `--idle-exit` + kill/respawn.
+ * alive. By default NOT armed in daemon mode (`--port-file`, index.ts): the
+ * façade's PERSISTENT daemon is spawned detached on purpose and bounds its
+ * life via `--idle-exit` + kill/respawn-on-reuse. index.ts's `--parent-pid`
+ * flag (ID-156.9) is the opt-in for `--port-file` spawns that do NOT get
+ * that kill/respawn treatment (ephemeral per-invocation servers, S477) —
+ * pass `parentPid` here to arm reaping keyed to a named pid instead of
+ * `process.ppid`.
  */
 export function createParentDeathMonitor(
   opts: ParentDeathMonitorOptions,
 ): ParentDeathMonitor {
-  const isOrphaned = opts.isOrphaned ?? defaultIsOrphaned(process.ppid);
+  const isOrphaned =
+    opts.isOrphaned ?? defaultIsOrphaned(opts.parentPid ?? process.ppid);
   let stopped = false;
   let fired = false;
   let timer: ReturnType<typeof setInterval> | null = null;

@@ -74,6 +74,13 @@ type ParsedArgs = {
   idleExit: string | undefined;
   /** ID-90 U9: arm the inv-34 fail-loud denylist posture. */
   requireDenylist: boolean;
+  /**
+   * ID-156.9: opt a `--port-file` spawn INTO parent-death reaping, keyed to
+   * this pid instead of the default foreground-only check. For spawns that
+   * are never killed/respawned by a façade (S477 ephemeral servers) — see
+   * daemon-lifecycle.ts's ParentDeathMonitorOptions.parentPid.
+   */
+  parentPid: string | undefined;
 };
 
 function parseCliArgs(argv: string[]): ParsedArgs {
@@ -92,6 +99,7 @@ function parseCliArgs(argv: string[]): ParsedArgs {
       "port-file": { type: "string" },
       "idle-exit": { type: "string" },
       "require-denylist": { type: "boolean", default: false },
+      "parent-pid": { type: "string" },
     },
     allowPositionals: true,
     // strict: unknown options will throw, which we surface via parseArgs's
@@ -114,6 +122,8 @@ function parseCliArgs(argv: string[]): ParsedArgs {
     idleExit:
       typeof values["idle-exit"] === "string" ? values["idle-exit"] : undefined,
     requireDenylist: Boolean(values["require-denylist"]),
+    parentPid:
+      typeof values["parent-pid"] === "string" ? values["parent-pid"] : undefined,
   };
 }
 
@@ -141,6 +151,11 @@ function printHelp(): void {
       "                       (fractions allowed; must be > 0).",
       "  --require-denylist   Fail loudly on EVERY mutation when the client-name",
       "                       denylist env is unset (CI posture, invariant 34).",
+      "  --parent-pid <pid>   Opt a --port-file spawn INTO parent-death reaping:",
+      "                       self-stop if pid <pid> exits. For spawns not bounded",
+      "                       by a façade's kill/respawn (e.g. ephemeral servers).",
+      "                       Foreground launches (no --port-file) already reap",
+      "                       on their launcher's death without this flag.",
       "",
       "Without a path argument, task-view scans the current working directory",
       "for `document_name`-bearing JSON files (task-list.json, initiatives.json,",
@@ -474,6 +489,20 @@ async function main(): Promise<number> {
     idleExitMs = minutes * 60_000;
   }
 
+  // ID-156.9 `--parent-pid`: validate BEFORE any port bind, same posture as
+  // the other daemon flags above.
+  let parentPid: number | undefined;
+  if (parsed.parentPid !== undefined) {
+    const pid = Number(parsed.parentPid);
+    if (!Number.isInteger(pid) || pid <= 0) {
+      console.error(
+        `task-view: --parent-pid must be a positive integer pid; got "${parsed.parentPid}".`,
+      );
+      return 64; // EX_USAGE
+    }
+    parentPid = pid;
+  }
+
   // Resolve the launch target. A positional `.md` mirror path resolves to
   // its sibling ledger + a preselected record id (Subtask 20.21 / PRODUCT
   // inv 6); a ledger JSON path (or CWD-inferred path) carries no record.
@@ -623,16 +652,32 @@ async function main(): Promise<number> {
   // bin/task-view.js shim, or a test/parent process) ties the server's life
   // to its launcher: if that launcher dies, this server is reparented to
   // PID 1 and — with no idle-exit and no browser-close shutdown — would
-  // linger forever. Self-stop when orphaned. The detached daemon is EXEMPT
-  // (`--port-file` is the discoverable-daemon signal the façade always sets);
-  // its lifetime is bounded by --idle-exit + the façade's kill/respawn.
+  // linger forever. Self-stop when orphaned.
+  //
+  // The detached daemon (`--port-file`) is EXEMPT BY DEFAULT: the façade's
+  // PERSISTENT daemon (default ledger dir) is spawned detached on purpose
+  // and its lifetime is bounded by --idle-exit + the façade's kill/respawn-
+  // on-reuse — arming this unconditionally for every --port-file spawn
+  // would kill that daemon the instant its (legitimately short-lived)
+  // spawning process exits.
+  //
+  // ID-156.9 (S477): the façade's EPHEMERAL per-invocation spawns (non-
+  // default ledger dir) also pass --port-file but are NEVER reused or
+  // killed by the façade on the success path — only --idle-exit bounds
+  // them, and a units mismatch let ~5000 orphan. `--parent-pid <pid>` is
+  // the opt-in for exactly that case: it arms this guard even under
+  // --port-file, keyed to the named pid instead of the default
+  // foreground-only gate. Every other --port-file caller (including the
+  // persistent daemon, which does not pass --parent-pid) keeps the
+  // pre-existing exemption unchanged.
   let parentDeathMonitor: ParentDeathMonitor | null = null;
-  if (parsed.portFile === undefined) {
+  if (parsed.portFile === undefined || parentPid !== undefined) {
     parentDeathMonitor = createParentDeathMonitor({
       onOrphaned: () => {
         console.error("task-view: launcher process exited — stopping.");
         void handle.stop(true);
       },
+      ...(parentPid !== undefined ? { parentPid } : {}),
     });
   }
 

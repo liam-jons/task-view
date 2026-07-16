@@ -152,6 +152,74 @@ async function readStream(stream: ReadableStream<Uint8Array> | null): Promise<st
   return await new Response(stream).text();
 }
 
+/** True while `pid` still exists (kill(pid, 0) — no signal delivered). */
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Poll until `pidAlive(pid)` is false, or the deadline elapses. */
+async function waitUntilDead(pid: number, timeoutMs: number): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (!pidAlive(pid)) return true;
+    await Bun.sleep(200);
+  }
+  return !pidAlive(pid);
+}
+
+/**
+ * A "fake parent" script (ID-156.9): spawns the real daemon as ITS OWN
+ * child — so the daemon's true OS ppid is this intermediary's pid, exactly
+ * mirroring how canonical's ensureServer spawns a --port-file server
+ * directly from the short-lived ledger-cli process (S477). Reads its own
+ * spawn config from env vars (INDEX_PATH, SERVE_DIR, PORT_FILE,
+ * EXTRA_ARGS — space-separated) so the outer test can vary the daemon args
+ * (with/without --parent-pid) without templating strings by hand. Stays
+ * alive (an unref'd interval) until the outer test kills it — the test
+ * controls exactly when the "parent" dies.
+ */
+const FAKE_PARENT_SRC = `
+const extraArgs = (process.env.EXTRA_ARGS ?? "")
+  .split(" ")
+  .filter(Boolean)
+  .map((a) => (a === "__SELF_PID__" ? String(process.pid) : a));
+const daemon = Bun.spawn({
+  cmd: [
+    "bun", process.env.INDEX_PATH,
+    "--serve-dir", process.env.SERVE_DIR,
+    "--port", "0",
+    "--port-file", process.env.PORT_FILE,
+    "--idle-exit", "10",
+    "--no-browser",
+    ...extraArgs,
+  ],
+  stdout: "ignore",
+  stderr: "ignore",
+  env: process.env,
+});
+daemon.unref();
+setInterval(() => {}, 1000);
+`;
+
+async function spawnFakeParent(
+  dir: string,
+  env: Record<string, string | undefined>,
+): Promise<import("bun").Subprocess> {
+  const helperPath = join(dir, "fake-parent.js");
+  await writeFile(helperPath, FAKE_PARENT_SRC, "utf8");
+  return Bun.spawn({
+    cmd: ["bun", helperPath],
+    stdout: "ignore",
+    stderr: "ignore",
+    env: { ...process.env, TASK_VIEW_NO_BROWSER: "1", ...env },
+  });
+}
+
 // ── --serve-dir + --port-file + /api/health ─────────────────────────────────
 
 describe("daemon: --serve-dir + --port-file + health", () => {
@@ -272,6 +340,100 @@ describe("daemon: --idle-exit", () => {
       testDir,
       "--idle-exit",
       "0",
+      "--no-browser",
+    ]);
+    expect(await proc.exited).toBe(64);
+    proc = null;
+  });
+});
+
+// ── --parent-pid (ID-156.9 / S477 ephemeral-spawn parent-death reaping) ──────
+
+describe("daemon: --parent-pid", () => {
+  test("with --parent-pid, self-stops when the named parent dies EVEN UNDER --port-file", async () => {
+    await writeAllThree(testDir);
+    const portFile = join(testDir, "handle.json");
+
+    // Fake parent spawns the daemon as its OWN child (true OS ppid = fake
+    // parent's pid — mirrors ensureServer's direct spawn), naming ITSELF
+    // via --parent-pid (`__SELF_PID__` resolves to the fake parent's own
+    // process.pid inside FAKE_PARENT_SRC).
+    const fakeParent = await spawnFakeParent(testDir, {
+      INDEX_PATH,
+      SERVE_DIR: testDir,
+      PORT_FILE: portFile,
+      EXTRA_ARGS: "--parent-pid __SELF_PID__",
+    });
+
+    let daemonPid: number | null = null;
+    try {
+      const handle = JSON.parse(await waitForFile(portFile)) as { pid: number };
+      daemonPid = handle.pid;
+      expect(pidAlive(handle.pid)).toBe(true);
+
+      fakeParent.kill(); // the "launcher" dies — daemon reparents to PID 1
+      await fakeParent.exited;
+
+      const dead = await waitUntilDead(handle.pid, 8_000);
+      expect(dead).toBe(true);
+    } finally {
+      fakeParent.kill();
+      // Defensive: if the assertion above ever regresses (self-stop didn't
+      // fire), don't leave a real orphan behind — this is the exact class
+      // of leak this subtask exists to close.
+      if (daemonPid !== null && pidAlive(daemonPid)) {
+        try {
+          process.kill(daemonPid, "SIGTERM");
+        } catch {
+          // Already gone.
+        }
+      }
+    }
+  }, 15_000);
+
+  test("without --parent-pid, a --port-file daemon remains EXEMPT (persistent-daemon back-compat)", async () => {
+    await writeAllThree(testDir);
+    const portFile = join(testDir, "handle.json");
+
+    const fakeParent = await spawnFakeParent(testDir, {
+      INDEX_PATH,
+      SERVE_DIR: testDir,
+      PORT_FILE: portFile,
+      EXTRA_ARGS: "",
+    });
+
+    let daemonPid: number | null = null;
+    try {
+      const handle = JSON.parse(await waitForFile(portFile)) as { pid: number };
+      daemonPid = handle.pid;
+
+      fakeParent.kill();
+      await fakeParent.exited;
+
+      // Give the 1s-default poll interval several ticks to (not) fire.
+      await Bun.sleep(3_000);
+      expect(pidAlive(handle.pid)).toBe(true);
+    } finally {
+      fakeParent.kill();
+      if (daemonPid !== null && pidAlive(daemonPid)) {
+        try {
+          process.kill(daemonPid, "SIGTERM");
+        } catch {
+          // Already gone.
+        }
+      }
+    }
+  }, 15_000);
+
+  test("--parent-pid with a non-positive-integer value is a usage error", async () => {
+    await writeAllThree(testDir);
+    proc = spawnDaemon([
+      "--serve-dir",
+      testDir,
+      "--port-file",
+      join(testDir, "handle.json"),
+      "--parent-pid",
+      "not-a-pid",
       "--no-browser",
     ]);
     expect(await proc.exited).toBe(64);
