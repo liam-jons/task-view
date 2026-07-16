@@ -830,6 +830,7 @@ describe("insertRecord — initiatives nested initiative insert, nodeKind 'initi
       "initiative",
     );
     expect(result.ok).toBe(true);
+    if (result.ok) expect(result.recordId).toBe("6");
     if (result.ok && result.detected.kind === "initiatives") {
       expect(result.detected.data.initiatives.map((i) => i.id)).toEqual([
         "1",
@@ -847,6 +848,11 @@ describe("insertRecord — initiatives nested initiative insert, nodeKind 'initi
       "initiative",
     );
     expect(result.ok).toBe(true);
+    // The FULL dotted path, not the bare local id — `mirror-generator.ts`'s
+    // `resolveTopLevelInitiativeId` and the record-set gate's
+    // `allInitiativePaths` both address nested nodes by their full path;
+    // a bare local id is ambiguous/unresolvable below the root.
+    if (result.ok) expect(result.recordId).toBe("1.3");
     if (result.ok && result.detected.kind === "initiatives") {
       const subs = result.detected.data.initiatives[0]["sub-initiatives"];
       expect(subs.map((s) => s.id)).toEqual(["3"]);
@@ -861,6 +867,7 @@ describe("insertRecord — initiatives nested initiative insert, nodeKind 'initi
       "initiative",
     );
     expect(result.ok).toBe(true);
+    if (result.ok) expect(result.recordId).toBe("4.2.9");
     if (result.ok && result.detected.kind === "initiatives") {
       const subSub =
         result.detected.data.initiatives[1]["sub-initiatives"][0][

@@ -298,10 +298,23 @@ export function insertRecord(
   const parsed = reparse(detected.kind, rawClone);
   if (!parsed.ok)
     return { ok: false, kind: "schema-error", zodError: parsed.zodError };
+  // ID-156.8: an initiative/sub-initiative's addressable identity is its
+  // FULL dotted path (parentPath + its own local id, or the bare local id
+  // at root) — NOT the bare local id alone, which is only locally unique
+  // and ambiguous below the root. `mirror-generator.ts`'s
+  // `resolveTopLevelInitiativeId` and the record-set gate's
+  // `allInitiativePaths` both resolve/enumerate by full path, matching how
+  // GET/PATCH/DELETE already address existing initiative/sub-initiative
+  // nodes (`resolveInitiativeNode`/`resolveRecordId`).
+  const recordId = isInitiativeCreate
+    ? parentPath && parentPath !== ""
+      ? `${parentPath}.${newId}`
+      : newId
+    : newId;
   return {
     ok: true,
     detected: rebuildDetected(detected.kind, parsed.data),
-    recordId: newId,
+    recordId,
   };
 }
 

@@ -1303,6 +1303,213 @@ describe("POST /api/ledger/record — record CREATE (ID-20.15)", () => {
   });
 });
 
+// ID-156.8: the OTHER addressable initiatives node shape — a whole-record
+// CREATE with `recordKind: "initiative"` addresses a new top-level
+// initiative (parent-or-root, `initiativePath` absent) or a new
+// sub-initiative under an existing `initiativePath`, distinct from the
+// default `recordKind: "project"` create tested above.
+describe("POST /api/ledger/record — initiative/sub-initiative create, recordKind 'initiative' (ID-156.8)", () => {
+  test("creates a new TOP-LEVEL initiative with structural defaults, no initiativePath needed", async () => {
+    const ledger = join(testDir, "initiatives.json");
+    await writeFixtureInitiatives(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        record: { id: "20", title: "New top-level initiative" },
+        recordKind: "initiative",
+      }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      ok: boolean;
+      recordId: string;
+      mirrorsWritten: string[];
+    };
+    expect(body.ok).toBe(true);
+    expect(body.recordId).toBe("20");
+    expect(body.mirrorsWritten).toContain("20.md");
+
+    const updated = JSON.parse(await readFile(ledger, "utf8")) as {
+      initiatives: Array<{
+        id: string;
+        title: string;
+        status: string;
+        projects: unknown[];
+        "sub-initiatives": unknown[];
+      }>;
+    };
+    expect(updated.initiatives.map((i) => i.id)).toEqual(["10", "20"]);
+    const created = updated.initiatives.find((i) => i.id === "20")!;
+    expect(created.title).toBe("New top-level initiative");
+    // Create defaults (CREATE_DEFAULTS.initiative) fill every other field:
+    expect(created.status).toBe("proposed");
+    expect(created.projects).toEqual([]);
+    expect(created["sub-initiatives"]).toEqual([]);
+  });
+
+  test("creates a new sub-initiative under an existing top-level initiativePath", async () => {
+    const ledger = join(testDir, "initiatives.json");
+    await writeFixtureInitiatives(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        record: { id: "1", title: "New sub-initiative" },
+        initiativePath: "10",
+        recordKind: "initiative",
+      }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      ok: boolean;
+      recordId: string;
+      mirrorsWritten: string[];
+    };
+    expect(body.ok).toBe(true);
+    // The full dotted path, not the bare local id — the addressable
+    // identity of a nested initiative/sub-initiative node.
+    expect(body.recordId).toBe("10.1");
+    // Owned by the TOP-LEVEL initiative "10" (INV-9 — one mirror per
+    // top-level initiative, not per sub-initiative).
+    expect(body.mirrorsWritten).toContain("10.md");
+
+    const updated = JSON.parse(await readFile(ledger, "utf8")) as {
+      initiatives: Array<{
+        id: string;
+        "sub-initiatives": Array<{ id: string; title: string }>;
+      }>;
+    };
+    const subs = updated.initiatives.find((i) => i.id === "10")!["sub-initiatives"];
+    expect(subs.map((s) => s.id)).toEqual(["1"]);
+    expect(subs[0].title).toBe("New sub-initiative");
+  });
+
+  test("rejects a duplicate sibling id among top-level initiatives, nothing written", async () => {
+    const ledger = join(testDir, "initiatives.json");
+    const original = await writeFixtureInitiatives(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        record: { id: "10", title: "Duplicate top-level" },
+        recordKind: "initiative",
+      }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { ok: boolean; error: string; recordId: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("duplicate-id");
+    expect(body.recordId).toBe("10");
+
+    expect(await readFile(ledger, "utf8")).toBe(original);
+  });
+
+  test("rejects an out-of-enum initiative status, nothing written", async () => {
+    const ledger = join(testDir, "initiatives.json");
+    const original = await writeFixtureInitiatives(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        record: { id: "20", title: "Bad status", status: "idea" },
+        recordKind: "initiative",
+      }),
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { ok: boolean; error: string; detail: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("invalid-status");
+    expect(body.detail).toContain("idea");
+
+    expect(await readFile(ledger, "utf8")).toBe(original);
+  });
+
+  test("rejects an unresolvable initiativePath as invalid-body, nothing written", async () => {
+    const ledger = join(testDir, "initiatives.json");
+    const original = await writeFixtureInitiatives(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        record: { id: "1", title: "Orphan" },
+        initiativePath: "999",
+        recordKind: "initiative",
+      }),
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("invalid-body");
+
+    expect(await readFile(ledger, "utf8")).toBe(original);
+  });
+
+  test("rejects an invalid recordKind value as invalid-body, nothing written", async () => {
+    const ledger = join(testDir, "initiatives.json");
+    const original = await writeFixtureInitiatives(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        record: { id: "20", title: "Bad recordKind" },
+        recordKind: "bogus",
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("invalid-recordKind");
+
+    expect(await readFile(ledger, "utf8")).toBe(original);
+  });
+
+  test("recordKind is ignored for non-initiatives ledgers (task-list create unaffected)", async () => {
+    const ledger = join(testDir, "task-list.json");
+    await writeFixtureTaskList(ledger);
+    handle = startPatchServer({ ledgerPath: ledger });
+    const baseMtime = await getLedgerMtime(ledger);
+
+    const res = await fetch(`${handle.url}/api/ledger/record`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseMtime,
+        record: makeNewTaskRecord("42"),
+        recordKind: "initiative",
+      }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { ok: boolean; recordId: string };
+    expect(body.ok).toBe(true);
+    expect(body.recordId).toBe("42");
+  });
+});
+
 // ── ID-20.15 DELETE /api/ledger/record/:recordId — record DELETE ─────────────
 
 describe("DELETE /api/ledger/record/:recordId — record DELETE (ID-20.15)", () => {

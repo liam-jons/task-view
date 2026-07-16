@@ -1105,9 +1105,18 @@ async function handlePostRecord(
   let body: {
     baseMtime?: unknown;
     record?: unknown;
-    /** ID-148.10 (INV-13): required for `initiatives` project creates — the
-     * dotted initiative/sub-initiative path to insert the project under. */
+    /** ID-148.10 (INV-13): required for `initiatives` project creates (the
+     * default `recordKind`) — the dotted initiative/sub-initiative path to
+     * insert the project under. ID-156.8: for `recordKind: "initiative"`,
+     * OPTIONAL — absent/empty creates a new TOP-LEVEL initiative; present,
+     * it addresses the initiative/sub-initiative to insert a new
+     * sub-initiative under. */
     initiativePath?: unknown;
+    /** ID-156.8: which addressable `initiatives` node shape a create
+     * targets — `"project"` (default, INV-13's first shape) or
+     * `"initiative"` (the OTHER shape — parent-or-root). Ignored for every
+     * other detected ledger kind. */
+    recordKind?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -1128,6 +1137,19 @@ async function handlePostRecord(
       { ok: false, error: "missing-record" },
       { status: 400 },
     );
+  }
+  // ID-156.8: default "project" preserves every existing caller's behaviour
+  // (an absent field never changes meaning); an explicit value outside the
+  // two known node shapes is a client error, not a silent fall-through.
+  let nodeKind: "project" | "initiative" = "project";
+  if (body.recordKind !== undefined) {
+    if (body.recordKind !== "project" && body.recordKind !== "initiative") {
+      return jsonResponse(
+        { ok: false, error: "invalid-recordKind", detail: String(body.recordKind) },
+        { status: 400 },
+      );
+    }
+    nodeKind = body.recordKind;
   }
 
   // ID-90.12 U10: per-request overrides ride as body fields (T-3).
@@ -1185,7 +1207,7 @@ async function handlePostRecord(
   // nextId max+1, PRODUCT invariant 37). The defaulted record is what flows
   // through the oracle, the budget gate AND the scoped splice, so the
   // written bytes carry the defaults.
-  const createKind = createRecordKindFor(canonical.detected.kind);
+  const createKind = createRecordKindFor(canonical.detected.kind, nodeKind);
   let record = withCreateDefaults(
     createKind,
     body.record as Record<string, unknown>,
@@ -1194,7 +1216,9 @@ async function handlePostRecord(
   // auto-allocation / nextId / high-water mark for retros. A retro create that
   // omits `id` is a client error, not an auto-id opportunity. ID-148.10:
   // initiatives project ids are likewise caller-supplied (globally-unique
-  // kebab slugs) — no auto-id minting (INV-13).
+  // kebab slugs) — no auto-id minting (INV-13). ID-156.8: an
+  // initiative/sub-initiative's LOCAL id is also caller-supplied — no
+  // auto-id minting for that node shape either.
   if (canonical.detected.kind === "retro" || canonical.detected.kind === "initiatives") {
     if (record.id === undefined) {
       return jsonResponse(
@@ -1204,7 +1228,9 @@ async function handlePostRecord(
           detail:
             canonical.detected.kind === "retro"
               ? "retro records require a caller-supplied session id of the form S<digits> (e.g. \"S264\"); retros are not auto-allocated."
-              : "initiatives project records require a caller-supplied globally-unique kebab-slug id; projects are not auto-allocated.",
+              : nodeKind === "initiative"
+                ? "initiatives initiative/sub-initiative records require a caller-supplied local id; initiatives are not auto-allocated."
+                : "initiatives project records require a caller-supplied globally-unique kebab-slug id; projects are not auto-allocated.",
         },
         { status: 422 },
       );
@@ -1221,7 +1247,7 @@ async function handlePostRecord(
   // the initiatives kind only; ignored by every other kind's flat insert.
   const initiativePath =
     typeof body.initiativePath === "string" ? body.initiativePath : undefined;
-  const result = insertRecord(canonical.detected, record, initiativePath);
+  const result = insertRecord(canonical.detected, record, initiativePath, nodeKind);
   if (!result.ok) {
     if (result.kind === "duplicate-id") {
       return jsonResponse(
@@ -1276,8 +1302,14 @@ async function handlePostRecord(
 
   // ID-90 U3: capture the pre-write id-set from the typed PRE-mutation
   // document (insertRecord clones — `canonical.detected` is untouched). A
-  // record CREATE is an `add` delta on the top-level collection.
-  const recordSetDescriptor = topLevelCollectionFor(canonical.detected.kind);
+  // record CREATE is an `add` delta on the top-level collection. ID-156.8:
+  // `nodeKind` selects which initiatives descriptor (`projects` vs the
+  // dotted-path-flattened `initiatives`) this create's delta is guarded
+  // against; ignored for every other kind.
+  const recordSetDescriptor = topLevelCollectionFor(
+    canonical.detected.kind,
+    nodeKind,
+  );
   const beforeIds = beforeCollectionIds(canonical.detected, recordSetDescriptor);
 
   // ID-90 U1: splice the new record into the parsed-ORIGINAL rawText so every
@@ -1291,12 +1323,14 @@ async function handlePostRecord(
       canonical.detected.kind === "task-list"
         ? "tasks"
         : canonical.detected.kind === "initiatives"
-          ? "projects"
+          ? nodeKind === "initiative"
+            ? "initiatives"
+            : "projects"
           : canonical.detected.kind === "retro"
             ? "retros"
             : "items",
-    // ID-148.10 (INV-13): required by the "projects" splice branch only;
-    // harmless/unused for every other collection.
+    // ID-148.10 (INV-13) / ID-156.8: required by the "projects"/"initiatives"
+    // splice branches only; harmless/unused for every other collection.
     initiativePath,
     record,
   });

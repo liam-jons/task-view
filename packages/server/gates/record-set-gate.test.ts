@@ -525,3 +525,148 @@ describe("initiatives 'projects' collection descriptor (ID-148.10, INV-13)", () 
     ).toEqual({ ok: true });
   });
 });
+
+// ── ID-156.8: initiatives "initiatives" collection descriptor ───────────────
+//
+// The OTHER addressable initiatives node shape (parent-or-root
+// initiative/sub-initiative create). Unlike a project's globally-unique
+// slug, a bare initiative/sub-initiative id is only LOCALLY unique (the
+// same bare id legitimately recurs at unrelated tree positions —
+// initiatives-tree.ts's siblingInitiativeIds). The record-set gate cannot
+// use a flattened bare-id Set for this collection (collisions would mask a
+// genuine drop), so it guards the flattened dotted-PATH set instead
+// (`allInitiativePaths`) — every path is globally unique by construction.
+
+describe("initiatives 'initiatives' collection descriptor (ID-156.8)", () => {
+  test("topLevelCollectionFor('initiatives', 'initiative') guards the flattened path set", () => {
+    expect(topLevelCollectionFor("initiatives", "initiative")).toEqual({
+      collection: "initiatives",
+    });
+  });
+
+  test("topLevelCollectionFor('initiatives') with no nodeKind still defaults to the projects descriptor", () => {
+    expect(topLevelCollectionFor("initiatives")).toEqual({
+      collection: "projects",
+    });
+  });
+
+  test("collectionIds extracts the flattened dotted-path set, not bare ids", () => {
+    const ids = collectionIds(initiativesDoc(["1", "2"], ["a", "b"]), {
+      collection: "initiatives",
+    });
+    expect(ids).toEqual(new Set(["1", "2", "1.a", "1.b"]));
+  });
+
+  test("collectionIds returns null for 'initiatives' when the initiatives array is absent", () => {
+    expect(
+      collectionIds({ document_name: "x" }, { collection: "initiatives" }),
+    ).toBeNull();
+  });
+
+  test("beforeCollectionIds captures the flattened path set from the typed detected doc", () => {
+    const init = {
+      kind: "initiatives",
+      data: initiativesDoc(["1", "2"], ["a"]),
+    } as unknown as KnownDetected;
+    expect(beforeCollectionIds(init, { collection: "initiatives" })).toEqual(
+      new Set(["1", "2", "1.a"]),
+    );
+  });
+
+  test("create (add delta): a new TOP-LEVEL initiative path landing correctly passes", () => {
+    const before = new Set<string | number>(["1", "2"]);
+    const withNew = {
+      ...initiativesDoc(["1", "2"]),
+      initiatives: [
+        ...initiativesDoc(["1", "2"]).initiatives,
+        {
+          id: "3",
+          title: "New",
+          description: "d",
+          status: "proposed",
+          projects: [],
+          originating_session: [],
+          "sub-initiatives": [],
+        },
+      ],
+    };
+    expect(
+      checkRecordSet(
+        "initiatives",
+        JSON.stringify(withNew, null, 2),
+        before,
+        { collection: "initiatives" },
+        { kind: "add", id: "3" },
+      ),
+    ).toEqual({ ok: true });
+  });
+
+  test("create (add delta): a new SUB-initiative path landing correctly passes; a dropped survivor path rejects", () => {
+    const before = new Set<string | number>(["1", "2", "1.a"]);
+    const doc = initiativesDoc(["1", "2"], ["a"]);
+    const withNewSub = {
+      ...doc,
+      initiatives: [
+        {
+          ...doc.initiatives[0],
+          "sub-initiatives": [
+            ...doc.initiatives[0]["sub-initiatives"],
+            {
+              id: "c",
+              title: "New sub",
+              description: "d",
+              status: "proposed",
+              projects: [],
+              originating_session: [],
+              "sub-initiatives": [],
+            },
+          ],
+        },
+        doc.initiatives[1],
+      ],
+    };
+    expect(
+      checkRecordSet(
+        "initiatives",
+        JSON.stringify(withNewSub, null, 2),
+        before,
+        { collection: "initiatives" },
+        { kind: "add", id: "1.c" },
+      ),
+    ).toEqual({ ok: true });
+
+    // Same batch, but the pre-existing "1.a" sub-initiative silently dropped
+    // alongside the new "1.c" landing — a bare-id flatten would MISS this
+    // (both "a" and "c" are still present as bare ids at SOME position),
+    // but the path-set catches it because "1.a" specifically vanished.
+    const droppedSurvivor = {
+      ...doc,
+      initiatives: [
+        {
+          ...doc.initiatives[0],
+          "sub-initiatives": [
+            {
+              id: "c",
+              title: "New sub",
+              description: "d",
+              status: "proposed",
+              projects: [],
+              originating_session: [],
+              "sub-initiatives": [],
+            },
+          ],
+        },
+        doc.initiatives[1],
+      ],
+    };
+    const check = checkRecordSet(
+      "initiatives",
+      JSON.stringify(droppedSurvivor, null, 2),
+      before,
+      { collection: "initiatives" },
+      { kind: "add", id: "1.c" },
+    );
+    expect(check.ok).toBe(false);
+    if (!check.ok) expect(check.detail).toBe("initiatives: missing [1.a]");
+  });
+});

@@ -35,7 +35,11 @@
  */
 
 import type { DetectSchemaResult } from "../detect-schema";
-import { allProjectSlugs, type TreeDoc } from "../initiatives-tree";
+import {
+  allProjectSlugs,
+  allInitiativePaths,
+  type TreeDoc,
+} from "../initiatives-tree";
 
 type KnownDetected = Exclude<DetectSchemaResult, { kind: "unknown" }>;
 
@@ -59,10 +63,17 @@ export type RecordSetDelta =
  * the record-level id-set; `subtasks` guards one task's subtask id-set;
  * `projects` (ID-148.10, INV-13) guards the GLOBALLY-UNIQUE project-slug set
  * flattened across the WHOLE initiatives tree (not a single top-level
- * array — see `collectionIds`).
+ * array — see `collectionIds`). `initiatives` (ID-156.8) guards the
+ * flattened dotted-PATH set across the same tree — the OTHER addressable
+ * node shape (initiative/sub-initiative). A bare initiative/sub-initiative
+ * id is only LOCALLY unique (siblings under the same parent — see
+ * `initiatives-tree.ts`'s `siblingInitiativeIds`), so a flattened bare-id
+ * Set would collapse distinct nodes and mask a genuine drop; the full
+ * dotted PATH is globally unique by construction, so it is the id this
+ * descriptor's collection guards instead.
  */
 export type CollectionDescriptor =
-  | { collection: "tasks" | "projects" | "items" | "retros" }
+  | { collection: "tasks" | "projects" | "items" | "retros" | "initiatives" }
   | { collection: "subtasks"; taskId: string };
 
 /**
@@ -93,6 +104,13 @@ export function collectionIds(
     if (!Array.isArray((doc as TreeDoc).initiatives)) return null;
     return new Set(allProjectSlugs(doc as TreeDoc));
   }
+  if (descriptor.collection === "initiatives") {
+    // ID-156.8: the tree-flattened dotted-PATH set (see the type doc above
+    // for why paths, not bare ids). A malformed/absent `initiatives` array
+    // is still a genuine "could not locate" violation.
+    if (!Array.isArray((doc as TreeDoc).initiatives)) return null;
+    return new Set(allInitiativePaths(doc as TreeDoc));
+  }
   const arr = doc[descriptor.collection];
   if (!Array.isArray(arr)) return null;
   return new Set(arr.map((r) => (r as { id: IdValue }).id));
@@ -122,6 +140,14 @@ export function beforeCollectionIds(
     detected.kind === "initiatives"
   ) {
     return new Set(allProjectSlugs(detected.data as unknown as TreeDoc));
+  }
+  // ID-156.8: tree-flattened dotted-PATH set (the OTHER addressable node
+  // shape — initiative/sub-initiative).
+  if (
+    descriptor.collection === "initiatives" &&
+    detected.kind === "initiatives"
+  ) {
+    return new Set(allInitiativePaths(detected.data as unknown as TreeDoc));
   }
   if (descriptor.collection === "items" && detected.kind === "backlog") {
     return new Set(detected.data.items.map((it) => it.id));
@@ -216,13 +242,20 @@ export function checkRecordSet(
 
 /** Map a detected document kind to its top-level record collection.
  * ID-148.10: `initiatives` maps to the tree-flattened `projects` descriptor
- * (see `CollectionDescriptor` / `collectionIds`), not a literal top-level
- * array key. */
+ * by default (see `CollectionDescriptor` / `collectionIds`), not a literal
+ * top-level array key. ID-156.8: `nodeKind: "initiative"` maps instead to
+ * the `initiatives` descriptor — the OTHER addressable node shape a create
+ * can target (parent-or-root); ignored for every other `kind`. */
 export function topLevelCollectionFor(
   kind: KnownDetected["kind"],
+  nodeKind: "project" | "initiative" = "project",
 ): CollectionDescriptor {
   if (kind === "task-list") return { collection: "tasks" };
-  if (kind === "initiatives") return { collection: "projects" };
+  if (kind === "initiatives") {
+    return nodeKind === "initiative"
+      ? { collection: "initiatives" }
+      : { collection: "projects" };
+  }
   // WS-C C2: the retro kind's id-set lives under the `retros` key.
   if (kind === "retro") return { collection: "retros" };
   return { collection: "items" };
