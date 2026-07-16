@@ -21,6 +21,7 @@ import {
   writePortFile,
   createIdleMonitor,
   createParentDeathMonitor,
+  parseIdleExitMs,
   pickLaunchDocument,
 } from "./daemon-lifecycle";
 import type { ScanResult } from "./path-resolution";
@@ -260,6 +261,39 @@ describe("createParentDeathMonitor — foreground orphan guard", () => {
     monitor.check();
     expect(fired).toBe(1);
     monitor.stop();
+  });
+});
+
+// ── --idle-exit value parsing (minutes back-compat + sub-minute suffix) ──────
+
+describe("parseIdleExitMs — --idle-exit value parsing", () => {
+  test("a bare number is MINUTES, unchanged from prior interpretation", () => {
+    expect(parseIdleExitMs("30")).toBe(30 * 60_000);
+    expect(parseIdleExitMs("0.02")).toBe(0.02 * 60_000); // 1200ms — existing daemon.test.ts fixture value
+  });
+
+  test("an 's' suffix requests SECONDS granularity (sub-minute TTLs)", () => {
+    expect(parseIdleExitMs("30s")).toBe(30_000);
+    expect(parseIdleExitMs("1.5s")).toBe(1_500);
+    expect(parseIdleExitMs("30S")).toBe(30_000); // case-insensitive
+  });
+
+  test("an 'm' suffix is an explicit, equivalent spelling of the bare-number minutes form", () => {
+    expect(parseIdleExitMs("5m")).toBe(5 * 60_000);
+    expect(parseIdleExitMs("5m")).toBe(parseIdleExitMs("5"));
+  });
+
+  test("non-positive or non-finite values are invalid regardless of form", () => {
+    expect(parseIdleExitMs("0")).toBeNull();
+    expect(parseIdleExitMs("-5")).toBeNull();
+    expect(parseIdleExitMs("0s")).toBeNull();
+    expect(parseIdleExitMs("Infinity")).toBeNull();
+  });
+
+  test("garbage / unknown-unit values are invalid", () => {
+    expect(parseIdleExitMs("abc")).toBeNull();
+    expect(parseIdleExitMs("5x")).toBeNull();
+    expect(parseIdleExitMs("")).toBeNull();
   });
 });
 

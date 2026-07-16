@@ -40,6 +40,7 @@ import {
   writePortFile,
   createIdleMonitor,
   createParentDeathMonitor,
+  parseIdleExitMs,
   pickLaunchDocument,
   type IdleMonitor,
   type ParentDeathMonitor,
@@ -70,7 +71,11 @@ type ParsedArgs = {
   serveDir: string | undefined;
   /** ID-90 U9: atomic {port, pid, version, ledgerDir} handle path. */
   portFile: string | undefined;
-  /** ID-90 U9: exit after N minutes without a request (fractions allowed). */
+  /**
+   * ID-90 U9: exit after N minutes without a request (fractions allowed).
+   * ID-156.9: accepts a bare number (minutes, unchanged) or a unit-suffixed
+   * value (`30s`, `5m`) for sub-minute granularity — see parseIdleExitMs.
+   */
   idleExit: string | undefined;
   /** ID-90 U9: arm the inv-34 fail-loud denylist posture. */
   requireDenylist: boolean;
@@ -147,8 +152,10 @@ function printHelp(): void {
       "                       with a positional path.",
       "  --port-file <path>   Write an atomic {port, pid, version, ledgerDir} handle",
       "                       once listening.",
-      "  --idle-exit <mins>   Exit after <mins> minutes without a request",
-      "                       (fractions allowed; must be > 0).",
+      "  --idle-exit <n>      Exit after <n> minutes without a request",
+      "                       (fractions allowed; must be > 0). Append \"s\" for",
+      "                       seconds (e.g. 30s) for sub-minute TTLs, or \"m\" to",
+      "                       spell out minutes explicitly (same as the bare form).",
       "  --require-denylist   Fail loudly on EVERY mutation when the client-name",
       "                       denylist env is unset (CI posture, invariant 34).",
       "  --parent-pid <pid>   Opt a --port-file spawn INTO parent-death reaping:",
@@ -479,14 +486,14 @@ async function main(): Promise<number> {
   }
   let idleExitMs: number | null = null;
   if (parsed.idleExit !== undefined) {
-    const minutes = Number(parsed.idleExit);
-    if (!Number.isFinite(minutes) || minutes <= 0) {
+    idleExitMs = parseIdleExitMs(parsed.idleExit);
+    if (idleExitMs === null) {
       console.error(
-        `task-view: --idle-exit must be a positive number of minutes; got "${parsed.idleExit}".`,
+        `task-view: --idle-exit must be a positive number of minutes, ` +
+          `optionally suffixed "s" (seconds) or "m" (minutes); got "${parsed.idleExit}".`,
       );
       return 64; // EX_USAGE
     }
-    idleExitMs = minutes * 60_000;
   }
 
   // ID-156.9 `--parent-pid`: validate BEFORE any port bind, same posture as
@@ -581,15 +588,19 @@ async function main(): Promise<number> {
     return 1;
   }
 
-  // ID-90 U9 `--idle-exit`: exit after N minutes without a request. The
-  // monitor's poll timer is unref'ed, so it never blocks a normal stop.
+  // ID-90 U9 `--idle-exit`: exit after the idle window without a request.
+  // The monitor's poll timer is unref'ed, so it never blocks a normal stop.
   if (idleExitMs !== null) {
     idleMonitor = createIdleMonitor({
       idleAfterMs: idleExitMs,
       onIdle: () => {
-        console.error(
-          `task-view: idle for ${idleExitMs! / 60_000} minute(s) — exiting.`,
-        );
+        // ID-156.9: humanise as seconds below a minute (a sub-minute
+        // `--idle-exit 30s` would otherwise print a confusing "0.5 minute(s)").
+        const humanised =
+          idleExitMs! >= 60_000
+            ? `${idleExitMs! / 60_000} minute(s)`
+            : `${idleExitMs! / 1_000} second(s)`;
+        console.error(`task-view: idle for ${humanised} — exiting.`);
         void handle.stop(true);
       },
     });

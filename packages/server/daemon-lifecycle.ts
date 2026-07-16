@@ -12,10 +12,13 @@
  *     temp + rename via atomicWriteFile) once the daemon is listening, so a
  *     reader can never observe a torn handle.
  *
- *   - `--idle-exit <minutes>`: {@link createIdleMonitor} — exits the daemon
- *     after N minutes without a request. The clock is injectable so the
- *     unit suite is deterministic; the daemon integration test exercises
- *     the real timer with a short window.
+ *   - `--idle-exit <minutes|Ns|Nm>`: {@link parseIdleExitMs} +
+ *     {@link createIdleMonitor} — exits the daemon after the idle window
+ *     without a request. Bare-number minutes is unchanged; an `s`/`m` unit
+ *     suffix (ID-156.9) adds sub-minute granularity for short-TTL ephemeral
+ *     spawns. The clock is injectable so the unit suite is deterministic;
+ *     the daemon integration test exercises the real timer with a short
+ *     window.
  *
  *   - `--serve-dir <dir>`: {@link pickLaunchDocument} — the daemon serves
  *     ALL known documents via slug routes, but bare `/api/ledger/*`
@@ -81,6 +84,38 @@ export async function writePortFile(
   payload: PortFilePayload,
 ): Promise<void> {
   await atomicWriteFile(path, `${JSON.stringify(payload, null, 2)}\n`);
+}
+
+// ── --idle-exit value parsing ────────────────────────────────────────────────
+
+/**
+ * Parse the `--idle-exit` CLI value into milliseconds.
+ *
+ * Back-compat (unchanged): a bare number is MINUTES — whatever `Number()`
+ * would parse (including `"1e2"`, leading `"+"`, etc.) means exactly what it
+ * meant before this helper existed. That branch is tried FIRST and returned
+ * as-is so no previously-valid value's interpretation shifts.
+ *
+ * New: when the bare-number parse fails (`Number(raw)` is not finite —
+ * previously always a usage error), a trailing unit suffix is accepted —
+ * `"s"` for seconds (sub-minute TTLs for ephemeral spawns that would
+ * otherwise round up to a whole minute) or `"m"` as an explicit, equivalent
+ * spelling of the bare-number minutes form. Case-insensitive; fractions
+ * allowed on either unit.
+ *
+ * Returns `null` when the value is not a finite positive number in either
+ * form — the caller emits the usage error (EX_USAGE).
+ */
+export function parseIdleExitMs(raw: string): number | null {
+  const bare = Number(raw);
+  if (Number.isFinite(bare)) {
+    return bare > 0 ? bare * 60_000 : null;
+  }
+  const match = /^\s*([0-9]*\.?[0-9]+)\s*(s|m)\s*$/i.exec(raw);
+  if (!match) return null;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return match[2].toLowerCase() === "s" ? value * 1_000 : value * 60_000;
 }
 
 // ── Idle-exit monitor ────────────────────────────────────────────────────────

@@ -345,6 +345,45 @@ describe("daemon: --idle-exit", () => {
     expect(await proc.exited).toBe(64);
     proc = null;
   });
+
+  // ID-156.9: sub-minute granularity via a unit suffix — bare-number
+  // minutes semantics (above) are unchanged; this is additive.
+  test("an 's' suffix exits after N SECONDS, not minutes (real timer)", async () => {
+    await writeAllThree(testDir);
+    const portFile = join(testDir, "handle.json");
+    proc = spawnDaemon([
+      "--serve-dir",
+      testDir,
+      "--port",
+      "0",
+      "--port-file",
+      portFile,
+      "--idle-exit",
+      "1s",
+      "--no-browser",
+    ]);
+    await waitForFile(portFile);
+
+    const exited = await Promise.race([
+      proc.exited,
+      Bun.sleep(10_000).then(() => "timeout" as const),
+    ]);
+    expect(exited).toBe(0);
+    proc = null;
+  }, 15_000);
+
+  test("an unrecognised unit suffix is a usage error", async () => {
+    await writeAllThree(testDir);
+    proc = spawnDaemon([
+      "--serve-dir",
+      testDir,
+      "--idle-exit",
+      "5x",
+      "--no-browser",
+    ]);
+    expect(await proc.exited).toBe(64);
+    proc = null;
+  });
 });
 
 // ── --parent-pid (ID-156.9 / S477 ephemeral-spawn parent-death reaping) ──────
